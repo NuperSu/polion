@@ -38,3 +38,11 @@ Android runtime validation requires a connected device or an emulator. `adb devi
 The initial AGP 9.0.1/Gradle 9.1.0 candidate was rejected by Android AAR metadata checks: Compose 1.12.2 resolves AndroidX 1.12.1 components requiring compile SDK 37 and AGP 9.1.0 or newer. The selected baseline satisfies those requirements.
 
 Desktop launch passed with `JAVA_HOME=/usr/lib/jvm/java-21-openjdk ./gradlew :desktopApp:run --offline`: the process emitted `polion:APPLICATION_STARTED` and X11 window inspection identified `WM_NAME="Polion"`. The validation process was then closed. Window creation was verified; the screen contents were not visually inspected.
+
+## Milestone A phases 2–8 — 2026-10-28
+
+Final integrated verification at `f96f9db` ran the full reproduce command above with JDK 21 and the isolated SDK: `BUILD SUCCESSFUL in 9s`, 131 actionable tasks (22 executed, 109 up-to-date). JVM XML reports contain 32 tests and Android host reports contain 10 tests, with zero failures, errors or skipped tests. Android lint reports “No issues found.” The debug APK and desktop runnable JAR both build with the shared SQLite/core dependency graph.
+
+The acceptance map and subsystem decisions are in `milestone-a.md`. Tests include the independent large-integer oracle, 100-address ownership deduplication, persisted ownership, transactional migration rollback/retry, corrupt/future/missing schemas, concurrent ingestion, canonical provider identity, snapshot reopen, append-only ledger revisions, fake Bitcoin/EVM/exchange synchronization and ledger replay, provider routing, cursor cycles, atomic page/checkpoint rollback, process recovery, stale-worker fencing, cancellation, rate limits and competing connections.
+
+SQLite integration tests execute the desktop JDBC driver. The Android driver compiles into the APK; device-level SQLite and lifecycle validation remain unverified because no Android device/emulator is available. Hosted CI has not been executed in this session. Database encryption is an explicitly documented interim limitation. Desktop SQLite snapshots are supported; portable encrypted backups and Android backup integration belong to later work.

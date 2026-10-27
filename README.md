@@ -1,6 +1,6 @@
 # Polion
 
-A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. The foundation displays a shared welcome screen and privacy boundary. It does not import accounts, retrieve balances, sign transactions, or accept private keys.
+A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. The application displays a shared welcome screen and privacy boundary. Its shared core provides exact amounts, ownership scopes, SQLite repositories, raw provenance, a versioned activity ledger, connector contracts, and durable sync jobs. Real provider integrations and portfolio workflows are planned. Polion does not sign transactions or accept private keys.
 
 ## Build and run
 
@@ -17,11 +17,11 @@ The wrapper pins Gradle 9.4.1 with a distribution checksum. Dependency versions 
 
 ## Structure
 
-- `core`: common application information and a logger accepting only fixed event identifiers; common unit tests run on JVM.
+- `core`: shared financial/identity primitives, ownership, transactional storage, provenance, ledger, connector contracts and synchronization; common tests run on JVM and Android host, with SQLite integration tests on JVM.
 - `sharedUi`: shared Compose welcome screen for Android and JVM.
 - `androidApp`: Android activity and manifest.
 - `desktopApp`: Compose desktop window and runnable JAR packaging.
 
 Logs contain fixed event names without free-form messages, exception payloads, or portfolio data. Android requests no network permission. There is no analytics or telemetry integration.
 
-See [architecture](docs/architecture.md), [reference audit](docs/reference-audit.md), and [validation evidence](docs/validation.md) for scope and verification details.
+See [Milestone A acceptance](docs/milestone-a.md), [architecture](docs/architecture.md), [reference audit](docs/reference-audit.md), and [validation evidence](docs/validation.md) for scope and verification details.
