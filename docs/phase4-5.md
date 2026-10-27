@@ -1,0 +1,7 @@
+# Storage and raw provenance
+
+SQLite stores raw records under a canonical source namespace, native identity and network, independently of providers. Each distinct UTF-8 payload is keyed by its SHA-256 checksum; observations retain source identity, retrieval time and context. Duplicate observations are idempotent, conflicting metadata is rejected, and revisions remain available. A namespace must only be shared between providers that use comparable native identities. Payload checksums are validated on ingest.
+
+The common SQL port provides serialized transactions, rollback on exceptions, and foreign-key enforcement on store initialization. Versioned migrations create the raw, activity and ownership schemas transactionally and reject unknown future versions. Opening checks SQLite integrity and foreign keys. Desktop uses SQLite JDBC and Android uses platform SQLite. Retrieval timestamps are validated as UTC instants. Records are durable user data, and this database is not encrypted: protect local files and backups using platform measures. SQLite databases require a consistent backup method that includes committed data; copying an open database file is not a supported backup procedure.
+
+Ownership snapshots persist owners, account hierarchy, tracking targets, tags and portfolio memberships atomically. Encrypted storage and backup/export are not yet implemented. The raw ingestion interface does not itself manage checkpoints; ingestion can be composed into a caller-owned transaction with `ingestInTransaction`.
