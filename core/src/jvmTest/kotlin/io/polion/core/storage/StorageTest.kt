@@ -19,7 +19,7 @@ class StorageTest {
         try {
             Store(JvmSqliteDatabase(path.toString())).use { store ->
                 store.ingest(observation("1", "provider-a"))
-                store.ingest(observation("2", "provider-b"))
+                assertEquals("1", store.ingest(observation("2", "provider-b")).value)
                 store.ingest(observation("1", "provider-a"))
                 store.ingest(observation("1", "provider-a", sha256("updated"), "updated"))
                 assertEquals(1, store.records().size)
@@ -104,6 +104,35 @@ class StorageTest {
             JvmSqliteDatabase(path.toString()).use { db -> Store(db) }
         } finally {
             Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun snapshotReopensWithCommittedData() {
+        val original = Files.createTempFile("polion-source", ".sqlite")
+        val backup = original.resolveSibling(original.fileName.toString() + ".backup")
+        try {
+            JvmSqliteDatabase(original.toString()).use { db ->
+                val store = Store(db)
+                store.ingest(observation("1", "a"))
+                db.snapshot(backup.toString())
+            }
+            Store(JvmSqliteDatabase(backup.toString())).use { store ->
+                assertEquals(1, store.records().size)
+                assertEquals(1, store.observations().size)
+            }
+        } finally {
+            Files.deleteIfExists(original)
+            Files.deleteIfExists(backup)
+        }
+    }
+
+    @Test
+    fun missingTableInCurrentSchemaIsRejected() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            db.execute("DROP TABLE ownership_tags")
+            assertFails { Store(db) }
         }
     }
 }

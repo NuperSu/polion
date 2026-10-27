@@ -1,5 +1,6 @@
 package io.polion.core.storage
 
+import io.polion.core.model.SourceRecordId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -77,6 +78,24 @@ class Store(
                 )
                 db.execute("PRAGMA user_version = 3")
             }
+            val requiredTables =
+                listOf(
+                    "raw_records",
+                    "raw_revisions",
+                    "raw_observations",
+                    "ledger_activities",
+                    "ledger_movements",
+                    "ledger_sources",
+                    "owners",
+                    "accounts",
+                    "targets",
+                    "portfolios",
+                    "portfolio_owners",
+                    "portfolio_accounts",
+                    "ownership_tags",
+                )
+            val tables = db.query("SELECT name FROM sqlite_master WHERE type='table'").mapNotNull { it.single() }.toSet()
+            check(tables.containsAll(requiredTables)) { "Database schema is incomplete" }
             check(db.query("PRAGMA integrity_check").single().single() == "ok") { "Database integrity check failed" }
             check(db.query("PRAGMA foreign_key_check").isEmpty()) { "Database foreign key check failed" }
         }
@@ -86,7 +105,7 @@ class Store(
     fun ingest(record: RawObservation) = db.transaction { ingestInTransaction(record) }
 
     @OptIn(ExperimentalTime::class)
-    fun ingestInTransaction(record: RawObservation) {
+    fun ingestInTransaction(record: RawObservation): SourceRecordId {
         require(
             listOf(record.id, record.namespace, record.externalId, record.sourceId, record.checksum, record.retrievedAt).all {
                 it.isNotBlank()
@@ -131,6 +150,7 @@ class Store(
             "INSERT OR IGNORE INTO raw_observations VALUES (?, ?, ?, ?, ?)",
             listOf(found, record.checksum, record.sourceId, record.retrievedAt, record.context),
         )
+        return SourceRecordId(found)
     }
 
     fun records(): List<List<String?>> = db.query("SELECT id, namespace, external_id, network FROM raw_records ORDER BY id")

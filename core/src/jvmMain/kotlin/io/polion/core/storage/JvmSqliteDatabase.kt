@@ -50,5 +50,15 @@ class JvmSqliteDatabase(
             }
         }
 
+    /** Create a transactionally consistent snapshot in a new file. */
+    fun snapshot(destination: String) =
+        synchronized(lock) {
+            check(connection.autoCommit) { "Snapshot requires no active transaction" }
+            connection.prepareStatement("VACUUM INTO ?").use { statement ->
+                statement.setString(1, destination)
+                statement.execute()
+            }
+        }
+
     override fun close() = synchronized(lock) { connection.close() }
 }
