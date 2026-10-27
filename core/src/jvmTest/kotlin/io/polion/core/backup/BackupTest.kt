@@ -121,6 +121,7 @@ class BackupTest {
             source.execute("INSERT INTO market_metadata VALUES ('btc',0,'BTC','Bitcoin',8)")
             source.execute("INSERT INTO ledger_activities VALUES ('activity',0,'1','a','DEPOSIT','CONFIRMED',NULL,1)")
             source.execute("INSERT INTO ledger_movements VALUES ('activity',0,0,'event','account','btc','123456789','TRANSFER',NULL)")
+            source.execute("INSERT INTO duplicate_decisions VALUES ('activity','activity2',0,'activity','LINKED')")
             source.execute("INSERT INTO overlay_revisions VALUES ('activity',0,'label','note',NULL)")
             source.execute("INSERT INTO accounting_treatments VALUES ('activity',0,'ACQUIRE','event',NULL,NULL,NULL,0)")
             val backup = PortableBackup.discover(source)
@@ -131,6 +132,25 @@ class BackupTest {
                 assertEquals(archive, backup.export(staging))
                 assertEquals(listOf(listOf(null, null)), staging.query("SELECT numerator, denominator FROM accounting_treatments"))
                 assertEquals("note", staging.query("SELECT note FROM overlay_revisions").single().single())
+            }
+        }
+    }
+
+    @Test fun restoreRejectsSchemaVersionMismatchWithoutChangingStaging() {
+        JvmSqliteDatabase(":memory:").use { source ->
+            source.execute("CREATE TABLE example_schema (version INTEGER NOT NULL)")
+            source.execute("INSERT INTO example_schema VALUES (1)")
+            source.execute("CREATE TABLE data (id TEXT)")
+            source.execute("INSERT INTO data VALUES ('saved')")
+            val backup = PortableBackup.discover(source)
+            val archive = backup.export(source)
+            JvmSqliteDatabase(":memory:").use { staging ->
+                staging.execute("CREATE TABLE example_schema (version INTEGER NOT NULL)")
+                staging.execute("INSERT INTO example_schema VALUES (2)")
+                staging.execute("CREATE TABLE data (id TEXT)")
+                assertFails { backup.restoreToStaging(staging, archive) }
+                assertEquals("2", staging.query("SELECT version FROM example_schema").single().single())
+                assertTrue(staging.query("SELECT * FROM data").isEmpty())
             }
         }
     }

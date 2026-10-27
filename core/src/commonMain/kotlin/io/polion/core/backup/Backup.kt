@@ -26,7 +26,7 @@ class PortableBackup(
 
     fun export(db: SqliteDatabase): String =
         db.transaction {
-            val fields = mutableListOf<String?>("POLION", "1", tables.size.toString())
+            val fields = mutableListOf<String?>("POLION", "2", tables.size.toString(), db.query("PRAGMA user_version").single().single())
             tables.forEach { table ->
                 val metadata = db.query("PRAGMA table_info($table)")
                 require(metadata.none { (it[2] ?: "").uppercase().contains("BLOB") }) { "Binary columns require an explicit backup codec" }
@@ -55,9 +55,20 @@ class PortableBackup(
         var i = 0
 
         fun next(): String = requireNotNull(fields.getOrNull(i++)) { "Malformed archive" }
-        require(next() == "POLION" && next() == "1")
+        require(next() == "POLION" && next() == "2")
         require(next().toInt() == tables.size)
+        val userVersion = next()
         db.transaction {
+            require(db.query("PRAGMA user_version").single().single() == userVersion) { "Database schema version mismatch" }
+            val targetTables =
+                db
+                    .query(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+                    ).map {
+                        it.single()!!
+                    }
+            require(targetTables.toSet() == tables.toSet()) { "Staging table set mismatch" }
+            val expectedVersions = tables.filter { it.endsWith("_schema") }.associateWith { db.query("SELECT * FROM $it") }
             db.execute("PRAGMA defer_foreign_keys = ON")
             tables.asReversed().forEach { table ->
                 val count =
@@ -79,8 +90,14 @@ class PortableBackup(
                 require(db.query("SELECT COUNT(*) FROM $table").single().single() == "0") { "Staging database is not empty" }
                 val rowCount = next().toInt()
                 require(rowCount in 0..1_000_000)
+                if (table in expectedVersions) require(rowCount == expectedVersions.getValue(table).size) { "Subsystem schema mismatch" }
                 repeat(rowCount) {
                     val row = List(count) { fields.getOrNull(i++).also { require(i <= fields.size) } }
+                    if (table in
+                        expectedVersions
+                    ) {
+                        require(row == expectedVersions.getValue(table).single()) { "Subsystem schema version mismatch" }
+                    }
                     db.execute("INSERT INTO $table (${columns.joinToString(",")}) VALUES (${List(count) { "?" }.joinToString(",")})", row)
                 }
             }
