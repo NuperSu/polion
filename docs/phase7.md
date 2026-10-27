@@ -1,0 +1,3 @@
+# Connector capabilities
+
+Compiled integrations advertise independent capabilities, networks, account types, authentication requirements, and coverage in a registry. Discovery, balance, history, decoding, import and health each use a narrow interface; connectors implement only supported capabilities. History pages carry raw observations, continuation cursor and explicit coverage. Decoder outputs use the common ledger. The registry rejects duplicate identities and filters by capability and network; it does not load dynamic code. Provider routing, durable checkpointing, retries and orchestration belong to synchronization.
