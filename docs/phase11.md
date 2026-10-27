@@ -1,0 +1,5 @@
+# Accounting
+
+The FIFO engine consumes explicit accounting treatments attached to confirmed ledger movements. Every movement must be assigned once; acquired amounts, disposal proceeds, fees and internal transfers are never inferred from transaction shape. A treatment binds each valuation to a quote currency selected by its caller, which must use one consistent currency for a report. Opening lots may have unknown basis. Transfers require equal asset amounts and a shared owner; they retain original lot age and proportional basis.
+
+Costs and proceeds are arbitrary precision rational totals. FIFO splits basis proportionally without rounding, and reports retain each consumed lot, missing inventory, fee status, and originating activity. Missing inventory or cost propagates unknown basis and gain. Unpriced positions have unknown value and unrealized gain. Current unit prices are quote currency per atomic unit. Totals and fee policy require explicit caller classification; results are tax-independent and do not claim jurisdictional compliance. Inputs plus decisions can be replayed deterministically to rebuild reports.
