@@ -57,10 +57,16 @@ class PortableBackup(
         fun next(): String = requireNotNull(fields.getOrNull(i++)) { "Malformed archive" }
         require(next() == "POLION" && next() == "2")
         val sourceTableCount = next().toInt()
-        require(sourceTableCount in tables.size..tables.size + 1)
-        val userVersion = next()
+        require(sourceTableCount in 1..tables.size + 1)
+        val archiveVersion = next().toInt()
         db.transaction {
-            require(db.query("PRAGMA user_version").single().single() == userVersion) { "Database schema version mismatch" }
+            val stagingVersion =
+                db
+                    .query("PRAGMA user_version")
+                    .single()
+                    .single()!!
+                    .toInt()
+            require(archiveVersion in 0..stagingVersion) { "Database schema version mismatch" }
             val targetTables =
                 db
                     .query(
@@ -95,7 +101,9 @@ class PortableBackup(
                     repeat(platformRows) { next() }
                     return@repeat
                 }
-                require(table == tables.getOrNull(expectedIndex++))
+                val position = tables.indexOf(table)
+                require(position >= expectedIndex) { "Archive table order mismatch" }
+                expectedIndex = position + 1
                 val count = next().toInt()
                 require(count in 1..1000)
                 val columns = List(count) { next() }
@@ -114,7 +122,6 @@ class PortableBackup(
                     db.execute("INSERT INTO $table (${columns.joinToString(",")}) VALUES (${List(count) { "?" }.joinToString(",")})", row)
                 }
             }
-            require(expectedIndex == tables.size)
             require(i == fields.size)
             require(db.query("PRAGMA foreign_key_check").isEmpty())
         }
