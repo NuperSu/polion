@@ -32,6 +32,8 @@ private class DesktopHost(
 ) : PlatformActions {
     private val executor = Executors.newSingleThreadScheduledExecutor()
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
+    private val unlockExecutor = Executors.newSingleThreadExecutor()
+    private val syncQueue = BitcoinSyncQueue()
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
     override val hasLock: Boolean get() = lockStore.hasLock
@@ -40,9 +42,12 @@ private class DesktopHost(
     private val lockStore = SecureLockStore(verifierFile)
     private val files = BackupFiles()
     private var db: JvmSqliteDatabase
+    private var syncDb: JvmSqliteDatabase? = null
+    private var syncApp: PortfolioApplication? = null
     val app: androidx.compose.runtime.MutableState<PortfolioApplication>
     val locked = mutableStateOf(lockStore.hasLock)
     private var refreshTask: java.util.concurrent.ScheduledFuture<*>? = null
+    private val hostLock = Any()
     private val refreshPreference = directory.resolve("background-refresh")
 
     init {
@@ -90,6 +95,10 @@ private class DesktopHost(
         onResult: (String) -> Unit,
     ) {
         executor.execute {
+            if (syncQueue.busy) {
+                SwingUtilities.invokeLater { onResult("Wait for the active sync to finish, then restore") }
+                return@execute
+            }
             var staging: Path? = null
             var result = "Could not restore backup"
             var swapped = false
@@ -133,17 +142,58 @@ private class DesktopHost(
         }
     }
 
+    /**
+     * Runs one network task on the sync worker with its own database connection, so UI reads, saves and unlock
+     * stay on the UI queue. A task is refused while another sync is active.
+     */
+    private fun runSync(
+        start: SyncStatus,
+        onResult: (String) -> Unit,
+        task: (PortfolioApplication) -> SyncStatus,
+    ) {
+        syncStatus.value = start
+        val accepted =
+            syncQueue.tryStart {
+                val status =
+                    try {
+                        task(syncApplication())
+                    } catch (failure: Exception) {
+                        SyncStatus(
+                            SyncPhase.ERROR,
+                            (failure as? BitcoinProviderException)?.reason?.userMessage
+                                ?: "Could not finish sync. Check storage and provider, then retry.",
+                        )
+                    }
+                syncStatus.value = status
+                dataRevision.update { it + 1 }
+                SwingUtilities.invokeLater { onResult(status.message) }
+            }
+        if (!accepted) SwingUtilities.invokeLater { onResult("A sync is already running") }
+    }
+
+    private fun syncApplication(): PortfolioApplication =
+        synchronized(hostLock) {
+            syncApp ?: run {
+                val connection = JvmSqliteDatabase(file.toString())
+                syncDb = connection
+                PortfolioApplication(connection, System::currentTimeMillis).also { syncApp = it }
+            }
+        }
+
+    private fun closeSyncConnection() {
+        synchronized(hostLock) {
+            syncApp = null
+            syncDb?.close()
+            syncDb = null
+        }
+    }
+
     override fun verifyAccountingOrder(onResult: (String) -> Unit) {
-        syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…")
-        executor.execute {
-            val status =
-                runCatching {
-                    app.value.verifyAccountingOrder(BlockstreamTransport(app.value.sourceEndpoint()))
-                    SyncStatus(SyncPhase.SUCCESS, "Bitcoin order verified. Mixed-source chronology may still require review.")
-                }.getOrElse { SyncStatus(SyncPhase.ERROR, "Could not verify order. Check consent, provider and saved history.") }
-            syncStatus.value = status
-            dataRevision.update { it + 1 }
-            SwingUtilities.invokeLater { onResult(status.message) }
+        runSync(SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…"), onResult) { application ->
+            runCatching {
+                application.verifyAccountingOrder(BlockstreamTransport(application.sourceEndpoint()))
+                SyncStatus(SyncPhase.SUCCESS, "Bitcoin order verified. Mixed-source chronology may still require review.")
+            }.getOrElse { SyncStatus(SyncPhase.ERROR, "Could not verify order. Check consent, provider and saved history.") }
         }
     }
 
@@ -151,66 +201,54 @@ private class DesktopHost(
         walletId: io.polion.core.model.TrackingTargetId,
         onResult: (String) -> Unit,
     ) {
-        syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…")
-        executor.execute {
-            val status =
-                runCatching {
-                    val application = app.value
-                    val transport = BlockstreamTransport(application.sourceEndpoint())
-                    val result = application.discoverBitcoinWallet(walletId, transport)
-                    val states = application.refreshBitcoin(transport)
-                    check(states.all { it == io.polion.core.sync.JobState.COMPLETED })
-                    SyncStatus(SyncPhase.SUCCESS, "Wallet discovery complete: ${result.addresses} addresses checked.")
-                }.getOrElse {
-                    SyncStatus(
-                        SyncPhase.ERROR,
-                        "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
-                    )
-                }
-            syncStatus.value = status
-            dataRevision.update { it + 1 }
-            SwingUtilities.invokeLater { onResult(status.message) }
+        runSync(SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…"), onResult) { application ->
+            runCatching {
+                val transport = BlockstreamTransport(application.sourceEndpoint())
+                val result = application.discoverBitcoinWallet(walletId, transport)
+                val states = application.refreshBitcoin(transport)
+                check(states.all { it == io.polion.core.sync.JobState.COMPLETED })
+                SyncStatus(SyncPhase.SUCCESS, "Wallet discovery complete: ${result.addresses} addresses checked.")
+            }.getOrElse {
+                SyncStatus(
+                    SyncPhase.ERROR,
+                    "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
+                )
+            }
         }
     }
 
     override fun refresh(onResult: (String) -> Unit) {
-        syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")
-        executor.execute {
-            val status =
-                runCatching {
-                    val application = app.value
-                    val states =
-                        application.refreshBitcoin(BlockstreamTransport(application.sourceEndpoint())) { progress ->
-                            syncStatus.value =
-                                SyncStatus(
-                                    SyncPhase.SYNCING,
-                                    when (progress.phase) {
-                                        "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                                        "verify" -> "Checking chain consistency…"
-                                        "apply" -> "Applying verified history…"
-                                        else ->
-                                            "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
-                                                "${progress.pages} pages · ${progress.transactions} transactions"
-                                    },
-                                )
-                        }
-                    when {
-                        states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
-                        states.any {
-                            it != io.polion.core.sync.JobState.COMPLETED
-                        } -> SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "History is incomplete; retry.")
-                        else -> SyncStatus(SyncPhase.SUCCESS, "Sync complete; coverage remains unverified")
+        runSync(SyncStatus(SyncPhase.SYNCING, "Fetching public history…"), onResult) { application ->
+            runCatching {
+                val states =
+                    application.refreshBitcoin(BlockstreamTransport(application.sourceEndpoint())) { progress ->
+                        syncStatus.value =
+                            SyncStatus(
+                                SyncPhase.SYNCING,
+                                when (progress.phase) {
+                                    "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
+                                    "verify" -> "Checking chain consistency…"
+                                    "apply" -> "Applying verified history…"
+                                    else ->
+                                        "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
+                                            "${progress.pages} pages · ${progress.transactions} transactions"
+                                },
+                            )
                     }
-                }.getOrElse {
-                    SyncStatus(
-                        SyncPhase.ERROR,
-                        (it as? BitcoinProviderException)?.reason?.userMessage
-                            ?: "Could not finish sync. Check storage and provider, then retry.",
-                    )
+                when {
+                    states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
+                    states.any {
+                        it != io.polion.core.sync.JobState.COMPLETED
+                    } -> SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "History is incomplete; retry.")
+                    else -> SyncStatus(SyncPhase.SUCCESS, "Sync complete; coverage remains unverified")
                 }
-            syncStatus.value = status
-            dataRevision.update { it + 1 }
-            SwingUtilities.invokeLater { onResult(status.message) }
+            }.getOrElse {
+                SyncStatus(
+                    SyncPhase.ERROR,
+                    (it as? BitcoinProviderException)?.reason?.userMessage
+                        ?: "Could not finish sync. Check storage and provider, then retry.",
+                )
+            }
         }
     }
 
@@ -252,7 +290,7 @@ private class DesktopHost(
         password: String,
         onResult: (UnlockResult) -> Unit,
     ) {
-        executor.execute {
+        unlockExecutor.execute {
             val result =
                 runCatching {
                     val verifier = lockStore.read()
@@ -297,8 +335,11 @@ private class DesktopHost(
     }
 
     fun close() {
+        syncQueue.shutdown()
+        closeSyncConnection()
         executor.execute { db.close() }
         executor.shutdown()
+        unlockExecutor.shutdown()
     }
 }
 
