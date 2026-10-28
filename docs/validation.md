@@ -76,3 +76,10 @@ Current outstanding Gate D evidence and implementation requirements are listed i
 On the API 29 emulator, airplane mode was enabled before starting sync through the normal source dialog, followed by switching to Home. Sync completed with the fixed message “The provider could not be reached. Check your connection and endpoint.” A consistent SQLite snapshot confirmed all four fixture activity revisions and every ledger movement/source row were unchanged. Airplane mode was disabled in cleanup. This check did not alter the connected Pixel.
 
 Periodic refresh was enabled for the emulator’s unused public-address fixture. WorkManager logged `RETRY` while the manual foreground sync was active, then `SUCCESS` for `io.polion.android.RefreshWorker`. Android JobScheduler registered the next network-constrained job with a minimum latency of approximately 30 minutes. The emulator’s periodic schedule was disabled after validation. These checks verify offline preservation and real scheduled-worker execution; process death during an active network scan remains a separate acceptance case.
+
+
+### Wallet, secure storage and interrupted-scan checks
+
+The Android emulator’s native harness reports **checks=6, failures=0**, including published Bitcoin public derivation/address/checksum vectors and disposable Android Keystore encryption/tamper tests. Wallet parser/discovery tests and the wallet dialog test pass on JVM. Desktop secure-storage tests use an injected command adapter; actual Secret Service integration is not claimed from those tests.
+
+An active fixture scan was force-stopped after its persisted in-progress marker was observed. After emulator restart, the UI displayed **Sync interrupted** and the ledger matched the saved pre-interruption fixture. The endpoint remained saved; retry completed, cleared the interruption marker/error and left the original ledger unchanged. The first UI assertion was interrupted by emulator disconnection, so the restarted state and recovery were explicitly rechecked before recording this result.
