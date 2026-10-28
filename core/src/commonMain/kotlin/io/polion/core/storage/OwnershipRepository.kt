@@ -77,67 +77,69 @@ class OwnershipRepository(
         }
     }
 
-    fun load(): OwnershipSnapshot =
-        db.transaction {
-            fun tags(
-                type: String,
-                id: String,
-            ): Set<String> =
-                db.query("SELECT tag FROM ownership_tags WHERE entity_type=? AND entity_id=?", listOf(type, id)).map { it[0]!! }.toSet()
-            val owners =
-                db
-                    .query(
-                        "SELECT id, label FROM owners ORDER BY id",
-                    ).map { Owner(OwnerId(it[0]!!), it[1]!!, tags("owner", it[0]!!)) }
-            val accounts =
-                db.query("SELECT id, owner_id, label, kind, parent_id FROM accounts ORDER BY id").map {
-                    Account(
-                        AccountId(it[0]!!),
-                        OwnerId(it[1]!!),
-                        it[2]!!,
-                        AccountKind.valueOf(it[3]!!),
-                        it[4]?.let(::AccountId),
-                        tags("account", it[0]!!),
+    fun load(): OwnershipSnapshot = db.transaction { loadInTransaction() }
+
+    /** Reads within the caller’s existing transaction. */
+    internal fun loadInTransaction(): OwnershipSnapshot {
+        fun tags(
+            type: String,
+            id: String,
+        ): Set<String> =
+            db.query("SELECT tag FROM ownership_tags WHERE entity_type=? AND entity_id=?", listOf(type, id)).map { it[0]!! }.toSet()
+        val owners =
+            db
+                .query(
+                    "SELECT id, label FROM owners ORDER BY id",
+                ).map { Owner(OwnerId(it[0]!!), it[1]!!, tags("owner", it[0]!!)) }
+        val accounts =
+            db.query("SELECT id, owner_id, label, kind, parent_id FROM accounts ORDER BY id").map {
+                Account(
+                    AccountId(it[0]!!),
+                    OwnerId(it[1]!!),
+                    it[2]!!,
+                    AccountKind.valueOf(it[3]!!),
+                    it[4]?.let(::AccountId),
+                    tags("account", it[0]!!),
+                )
+            }
+        val targets =
+            db
+                .query(
+                    "SELECT id, account_id, network, kind, canonical_key, role, label, enabled, wallet_id FROM targets ORDER BY id",
+                ).map {
+                    TrackingTarget(
+                        TrackingTargetId(it[0]!!),
+                        AccountId(it[1]!!),
+                        TargetIdentity(NetworkId(it[2]!!), it[3]!!, it[4]!!),
+                        TargetRole.valueOf(it[5]!!),
+                        it[6]!!,
+                        tags("target", it[0]!!),
+                        it[7] == "1",
+                        it[8]?.let(::TrackingTargetId),
                     )
                 }
-            val targets =
-                db
-                    .query(
-                        "SELECT id, account_id, network, kind, canonical_key, role, label, enabled, wallet_id FROM targets ORDER BY id",
-                    ).map {
-                        TrackingTarget(
-                            TrackingTargetId(it[0]!!),
-                            AccountId(it[1]!!),
-                            TargetIdentity(NetworkId(it[2]!!), it[3]!!, it[4]!!),
-                            TargetRole.valueOf(it[5]!!),
-                            it[6]!!,
-                            tags("target", it[0]!!),
-                            it[7] == "1",
-                            it[8]?.let(::TrackingTargetId),
-                        )
-                    }
-            val portfolios =
-                db.query("SELECT id, label, currency FROM portfolios ORDER BY id").map { row ->
-                    val id = row[0]!!
-                    Portfolio(
-                        PortfolioId(
-                            id,
-                        ),
-                        row[1]!!,
-                        row[2]!!,
-                        db
-                            .query("SELECT owner_id FROM portfolio_owners WHERE portfolio_id=?", listOf(id))
-                            .map {
-                                OwnerId(it[0]!!)
-                            }.toSet(),
-                        db
-                            .query("SELECT account_id FROM portfolio_accounts WHERE portfolio_id=?", listOf(id))
-                            .map {
-                                AccountId(it[0]!!)
-                            }.toSet(),
-                        tags("portfolio", id),
-                    )
-                }
-            OwnershipSnapshot(owners, accounts, targets, portfolios)
-        }
+        val portfolios =
+            db.query("SELECT id, label, currency FROM portfolios ORDER BY id").map { row ->
+                val id = row[0]!!
+                Portfolio(
+                    PortfolioId(
+                        id,
+                    ),
+                    row[1]!!,
+                    row[2]!!,
+                    db
+                        .query("SELECT owner_id FROM portfolio_owners WHERE portfolio_id=?", listOf(id))
+                        .map {
+                            OwnerId(it[0]!!)
+                        }.toSet(),
+                    db
+                        .query("SELECT account_id FROM portfolio_accounts WHERE portfolio_id=?", listOf(id))
+                        .map {
+                            AccountId(it[0]!!)
+                        }.toSet(),
+                    tags("portfolio", id),
+                )
+            }
+        return OwnershipSnapshot(owners, accounts, targets, portfolios)
+    }
 }

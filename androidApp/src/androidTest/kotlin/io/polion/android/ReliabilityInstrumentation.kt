@@ -33,7 +33,38 @@ class ReliabilityInstrumentation : Instrumentation() {
                             files.add(file)
                             AndroidSqliteDatabase(file.path)
                         }
-                    } finally { files.forEach { file -> file.delete(); File(file.path + "-journal").delete() } }
+                    } finally {
+                        files.forEach { file ->
+                            file.delete()
+                            File(file.path + "-journal").delete()
+                        }
+                    }
+                },
+                "dataErasure" to {
+                    for (mode in listOf("DELETE", "PERSIST", "WAL")) {
+                        fixture { file ->
+                            AndroidSqliteDatabase(file.path).use { db ->
+                                db.query("PRAGMA journal_mode = $mode")
+                                val app = PortfolioApplication(db, System::currentTimeMillis)
+                                app.seedDemo()
+                                val canary = "PRIVATE_ANDROID_ERASURE_CANARY_"
+                                app.saveOverlay(
+                                    io.polion.core.reconcile.ActivityOverlay(
+                                        io.polion.core.model
+                                            .ActivityId("demo-deposit"),
+                                        note = canary.repeat(1000),
+                                    ),
+                                )
+                                app.wipe()
+                                check(app.snapshot().activities.isEmpty())
+                                listOf("", "-journal", "-wal", "-shm").forEach { suffix ->
+                                    val active = File(file.path + suffix)
+                                    check(!active.exists() || !active.readBytes().toString(Charsets.ISO_8859_1).contains(canary))
+                                }
+                                check(db.query("PRAGMA integrity_check").single().single() == "ok")
+                            }
+                        }
+                    }
                 },
                 "persistedProjections" to {
                     fixture { file ->

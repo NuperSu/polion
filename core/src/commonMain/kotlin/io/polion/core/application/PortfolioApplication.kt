@@ -888,30 +888,53 @@ class PortfolioApplication(
         id: AccountId,
         archived: Boolean = true,
     ) {
-        val catalog = ownership.load()
-        require(catalog.accounts.any { it.id == id }) { "Unknown account" }
-        val affected = mutableSetOf(id)
-        do {
-            val before = affected.size
-            catalog.accounts.filter { it.parentId in affected }.forEach { affected.add(it.id) }
-        } while (affected.size != before)
         db.transaction {
-            affected.forEach { account ->
-                if (archived) {
-                    db.execute("INSERT OR IGNORE INTO ownership_tags VALUES ('account', ?, 'polion:archived')", listOf(account.value))
+            val catalog = ownership.loadInTransaction()
+            require(catalog.accounts.any { it.id == id }) { "Unknown account" }
+
+            fun descendants(roots: Set<AccountId>): Set<AccountId> {
+                val result = roots.toMutableSet()
+                do {
+                    val before = result.size
+                    catalog.accounts.filter { it.parentId in result }.forEach { result.add(it.id) }
+                } while (result.size != before)
+                return result
+            }
+
+            val prefix = "archive_root:"
+            val roots =
+                db
+                    .query("SELECT key FROM application_settings")
+                    .mapNotNull { row ->
+                        row
+                            .single()
+                            ?.takeIf { it.startsWith(prefix) }
+                            ?.removePrefix(prefix)
+                            ?.let(::AccountId)
+                    }.toMutableSet()
+            val inherited = descendants(roots)
+            roots.addAll(catalog.accounts.filter { "polion:archived" in it.tags && it.id !in inherited }.map { it.id })
+            if (archived) roots.add(id) else roots.remove(id)
+            roots.forEach { putSetting("$prefix${it.value}", "true") }
+            if (!archived) db.execute("DELETE FROM application_settings WHERE key=?", listOf("$prefix${id.value}"))
+
+            val effective = descendants(roots)
+            catalog.accounts.forEach { account ->
+                if (account.id in effective) {
+                    db.execute("INSERT OR IGNORE INTO ownership_tags VALUES ('account', ?, 'polion:archived')", listOf(account.id.value))
                 } else {
                     db.execute(
                         "DELETE FROM ownership_tags WHERE entity_type='account' AND entity_id=? AND tag='polion:archived'",
-                        listOf(account.value),
+                        listOf(account.id.value),
                     )
                 }
             }
-            catalog.targets.filter { it.accountId in affected }.forEach { target ->
+            catalog.targets.forEach { target ->
                 val key = "archived_target:${target.id.value}"
-                if (archived) {
+                if (target.accountId in effective) {
                     if (setting(key) == null) putSetting(key, target.enabled.toString())
                     db.execute("UPDATE targets SET enabled=0 WHERE id=?", listOf(target.id.value))
-                } else {
+                } else if (setting(key) != null) {
                     val enabled = setting(key)?.toBooleanStrictOrNull() ?: target.enabled
                     db.execute("UPDATE targets SET enabled=? WHERE id=?", listOf(if (enabled) "1" else "0", target.id.value))
                     db.execute("DELETE FROM application_settings WHERE key=?", listOf(key))
@@ -1378,14 +1401,21 @@ class PortfolioApplication(
             ).restoreToStaging(staging, BackupEncryption.decrypt(archive, password).decodeToString(throwOnInvalidSequence = true))
     }
 
-    /** Clears all persisted application data while retaining subsystem schema versions. */
-    fun wipe() =
+    /** Erases application rows and purges deleted content from active SQLite files. */
+    fun wipe() {
+        db.query("PRAGMA secure_delete = ON")
+        db.query("PRAGMA journal_size_limit = 0")
         db.transaction {
             val tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map { it.single()!! }
             require(tables.all { it.matches(Regex("[a-z][a-z0-9_]*")) })
             db.execute("PRAGMA defer_foreign_keys = ON")
-            tables.filterNot { it.endsWith("_schema") }.forEach { db.execute("DELETE FROM $it") }
+            tables.filterNot { it.endsWith("_schema") || it == "android_metadata" }.forEach { db.execute("DELETE FROM $it") }
             check(db.query("PRAGMA foreign_key_check").isEmpty())
             invalidate()
         }
+        // Rebuild free pages containing data deleted before secure deletion was enabled.
+        db.execute("VACUUM")
+        val checkpoint = db.query("PRAGMA wal_checkpoint(TRUNCATE)").single()
+        check(checkpoint[0] == "0") { "Database cleanup is busy; retry erasure" }
+    }
 }
