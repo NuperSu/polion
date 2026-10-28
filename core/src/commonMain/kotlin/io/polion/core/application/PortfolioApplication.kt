@@ -3,6 +3,7 @@ package io.polion.core.application
 import io.polion.core.accounting.AccountingReport
 import io.polion.core.accounting.FifoAccounting
 import io.polion.core.accounting.LedgerAccounting
+import io.polion.core.accounting.QuoteValue
 import io.polion.core.accounting.Treatment
 import io.polion.core.accounting.TreatmentRepository
 import io.polion.core.backup.BackupEncryption
@@ -36,8 +37,10 @@ import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.ExactDecimal
+import io.polion.core.model.ExactInteger
 import io.polion.core.model.PortfolioId
 import io.polion.core.model.ProviderId
+import io.polion.core.model.Rational
 import io.polion.core.model.SourceId
 import io.polion.core.model.SyncJobId
 import io.polion.core.model.TrackingTargetId
@@ -389,6 +392,7 @@ class PortfolioApplication(
     }
 
     fun accountingReport(portfolio: PortfolioId? = null): AccountingView {
+        ensureDefaultAssets()
         val catalog = ownership.load()
         val selected = scopedAccounts(catalog, portfolio)
         val missing = mutableListOf<ActivityId>()
@@ -449,6 +453,12 @@ class PortfolioApplication(
             } else {
                 compareBy({ it.at }, { it.order }, { it.activityId.value })
             }
+        val priceAt = now()
+        val unitPrices =
+            confirmed
+                .flatMap { entry -> entry.activity.movements.map { it.amount.assetId } }
+                .toSet()
+                .associateWith { unitPrice(it, quote, priceAt) }
         val calculated =
             FifoAccounting.calculate(
                 actions.filter { action ->
@@ -462,6 +472,7 @@ class PortfolioApplication(
                 },
                 catalog.accounts.associate { it.id to it.ownerId },
                 quote,
+                unitPrices = unitPrices,
                 replayOrder = replayOrder,
             )
         val uncertainAssets = uncertain.flatMap { it.activity.movements.map { movement -> movement.amount.assetId } }.toSet()
@@ -851,6 +862,24 @@ class PortfolioApplication(
         "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
         listOf(key, value),
     )
+
+    /** Returns quote value per atomic unit only for a fresh observation; missing or stale prices stay null. */
+    private fun unitPrice(
+        asset: AssetId,
+        quote: AssetId,
+        atMillis: Long,
+    ): QuoteValue? {
+        val decimals = market.metadataAt(asset, atMillis)?.decimals ?: return null
+        val wholeUnitPrice =
+            if (asset == quote) {
+                Rational.units(ExactInteger.parse("1"))
+            } else {
+                val result = market.lookup(asset, quote, atMillis, atMillis, PricePolicy(emptyList(), 86_400_000L))
+                val observation = result.observation?.takeIf { result.status == PriceStatus.FRESH } ?: return null
+                Rational.fromDecimal(observation.price.value)
+            }
+        return QuoteValue(quote, wholeUnitPrice / Rational.units(ExactInteger.parse("1").timesPowerOfTen(decimals)))
+    }
 
     private fun valuations(
         balance: BalanceView,
