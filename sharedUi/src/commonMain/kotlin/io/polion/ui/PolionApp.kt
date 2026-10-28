@@ -173,6 +173,7 @@ private fun Product(
     val reportScroll = rememberLazyListState()
     val settingsScroll = rememberLazyListState()
     var snapshot by remember(app) { mutableStateOf<PortfolioSnapshot?>(null) }
+    var snapshotFilter by remember(app) { mutableStateOf(ActivityFilter()) }
     var revision by remember { mutableIntStateOf(0) }
     var search by rememberSaveable { mutableStateOf("") }
     var kind by remember { mutableStateOf<ActivityKind?>(null) }
@@ -215,26 +216,28 @@ private fun Product(
     }
     LaunchedEffect(app, page, revision, hostRevision, search, kind, offset, selectedAccount, selectedPortfolio) {
         try {
-            snapshot =
+            val filter =
+                if (page == Page.ACTIVITY) {
+                    ActivityFilter(
+                        search = search,
+                        account = selectedAccount,
+                        kind = kind,
+                        offset = offset,
+                        portfolio = selectedPortfolio,
+                    )
+                } else {
+                    ActivityFilter(portfolio = selectedPortfolio)
+                }
+            val loaded =
                 withContext(host.dispatcher) {
                     if (cacheRevision.value != hostRevision) {
                         app.reload()
                         cacheRevision.value = hostRevision
                     }
-                    app.snapshot(
-                        if (page == Page.ACTIVITY) {
-                            ActivityFilter(
-                                search = search,
-                                account = selectedAccount,
-                                kind = kind,
-                                offset = offset,
-                                portfolio = selectedPortfolio,
-                            )
-                        } else {
-                            ActivityFilter(portfolio = selectedPortfolio)
-                        },
-                    )
+                    app.snapshot(filter)
                 }
+            snapshot = loaded
+            snapshotFilter = filter
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -302,6 +305,10 @@ private fun Product(
                 },
             ) { insets ->
                 val data = snapshot
+                val activityAccounts =
+                    remember(data, snapshotFilter) {
+                        data?.let { activityAccountScope(it.ownership, snapshotFilter) }.orEmpty()
+                    }
                 LazyColumn(
                     Modifier.fillMaxSize().padding(insets).testTag("page-content"),
                     state =
@@ -402,7 +409,7 @@ private fun Product(
                                     }
                                 } else {
                                     items(data.activities.take(5), key = { it.activity.id.value }) {
-                                        ActivityRow(it, data, compact) {
+                                        ActivityRow(it, data, compact, activityAccounts) {
                                             selectedActivity =
                                                 it
                                         }
@@ -464,7 +471,7 @@ private fun Product(
                                     }
                                 } else {
                                     items(data.activities, key = { it.activity.id.value }) {
-                                        ActivityRow(it, data, compact) {
+                                        ActivityRow(it, data, compact, activityAccounts) {
                                             selectedActivity =
                                                 it
                                         }
@@ -1297,9 +1304,11 @@ private fun ActivityRow(
     item: EffectiveActivity,
     data: PortfolioSnapshot,
     compact: Boolean,
+    accounts: Set<AccountId>,
     onClick: () -> Unit,
 ) {
     val a = item.activity
+    val amounts = activityRowAmounts(a, accounts)
     Row(
         Modifier
             .fillMaxWidth()
@@ -1312,15 +1321,7 @@ private fun ActivityRow(
     ) {
         Box(Modifier.size(36.dp).clip(CircleShape).background(Paper), contentAlignment = Alignment.Center) {
             Text(
-                if (a.movements
-                        .first()
-                        .amount.atomicUnits.sign >=
-                    0
-                ) {
-                    "↙"
-                } else {
-                    "↗"
-                },
+                amounts.directionSymbol,
                 fontSize = 21.sp,
                 color = Teal,
             )
@@ -1350,8 +1351,7 @@ private fun ActivityRow(
             }
         }
         Column(horizontalAlignment = Alignment.End, modifier = Modifier.widthIn(max = if (compact) 125.dp else 220.dp)) {
-            a.movements.groupBy { it.amount.assetId }.forEach { (asset, movements) ->
-                val quantity = movements.fold(ExactInteger.ZERO) { sum, m -> sum + m.amount.atomicUnits }
+            amounts.quantities.forEach { (asset, quantity) ->
                 Text(
                     "${if (quantity.sign > 0) "+" else ""}${data.valuations.find { it.asset == asset }?.metadata?.let {
                         "${formatUnits(quantity, it.decimals)} ${it.symbol}"
