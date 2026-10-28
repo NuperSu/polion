@@ -100,3 +100,10 @@ The JVM `BitcoinAccountingWorkflowTest` exercises consented history fetch, raw p
 The same `testSupport` Bitcoin workflow runs against desktop JDBC and native Android SQLite. The native harness reports **checks=7, failures=0**. It verifies decreasing block timestamps, exact FIFO disposal/fee basis, ordinary resync retention of verified order, reorg invalidation and re-verification, and encrypted restore/CSV parity. These are deterministic provider fixtures, not independent chain verification.
 
 The final integrated run passed formatting, core JVM and Android host tests, shared UI and desktop tests, Android lint, both APK builds and desktop packaging: **BUILD SUCCESSFUL in 27s**, 175 actionable tasks. The validated APK was installed successfully on the Pixel and opened in Main profile user 10, preserving existing app data. No phone sync was active at installation. Hosted CI remains unexecuted.
+
+
+### Final responsive review and upgrade acceptance
+
+The final packaged desktop application was launched with disposable sample data and its renders inspected at **360×800, 800×900, 1440×1000 and 800×360**. Layouts use compact bottom navigation or a scrollable sidebar, appropriately stacked/wide content and vertically scrolling pages. Interaction tests also cover 320 dp width at 1.5× text. A full screen-reader audit has not been performed. Direct Xvfb capture was used; no personal desktop or phone contents were captured.
+
+An emulator in-place APK update preserved **all 37 application tables**, including four fixture activity revisions. SQLite integrity passed before and after installation, and reopening preserved ledger/application records. The final XML reports contain **84 core JVM, 28 Android host, 10 shared UI and 3 desktop tests**, with zero failures, errors or skips. The current requirement-by-requirement acceptance map is in [Milestone D](milestone-d.md). Separate Milestone C chain verification and later production hardening are not certified by this product acceptance.
