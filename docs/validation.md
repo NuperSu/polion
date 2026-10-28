@@ -69,3 +69,10 @@ A separate emulator UI check configured a privacy lock, force-stopped and reopen
 The Pixel 8 Pro is connected on Android 17. Polion is installed and opens in the current Main profile (user 10); package updates preserve data. A user-provided address scan on an earlier product build fetched 17,527 raw records and failed before materialization; no successful financial sync is claimed from that attempt. Source settings remained saved. The foreground-service/account-removal update was subsequently installed in Main. Phone interaction is left to the user during development.
 
 Current outstanding Gate D evidence and implementation requirements are listed in [milestone-d.md](milestone-d.md). Hosted CI has not run in this session and no changes have been pushed.
+
+
+### Offline and periodic-worker runtime checks
+
+On the API 29 emulator, airplane mode was enabled before starting sync through the normal source dialog, followed by switching to Home. Sync completed with the fixed message “The provider could not be reached. Check your connection and endpoint.” A consistent SQLite snapshot confirmed all four fixture activity revisions and every ledger movement/source row were unchanged. Airplane mode was disabled in cleanup. This check did not alter the connected Pixel.
+
+Periodic refresh was enabled for the emulator’s unused public-address fixture. WorkManager logged `RETRY` while the manual foreground sync was active, then `SUCCESS` for `io.polion.android.RefreshWorker`. Android JobScheduler registered the next network-constrained job with a minimum latency of approximately 30 minutes. The emulator’s periodic schedule was disabled after validation. These checks verify offline preservation and real scheduled-worker execution; process death during an active network scan remains a separate acceptance case.
