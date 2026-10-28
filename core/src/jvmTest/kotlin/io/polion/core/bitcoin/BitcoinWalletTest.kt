@@ -27,6 +27,16 @@ class BitcoinWalletTest {
         assertEquals("bc1q8c6fshw2dlwun7ekn9qwf37cu2rn755upcp6el", wallet.address(1, 0))
         assertEquals("1JaUQDVNRdhfNsVncGkXedaPSM5Gc54Hso", bitcoinWallet("pkh($xpub/0/*)").address(0, 0))
         assertEquals("3GtVZYzsKF6Feikdjd4bDyPdAiyeHANY9b", bitcoinWallet("sh(wpkh($xpub/0/*))").address(0, 0))
+        val legacyAndNested =
+            listOf(
+                Triple("pkh($xpub/0/*)", 1, "1FGr5rndZHDypjwMWqudNrKtnPHhugFXVg"),
+                Triple("pkh($xpub/1/*)", 0, "16fuuGhkywq9pB7BBxi3btQ3C3s4f4dz1N"),
+                Triple("sh(wpkh($xpub/0/*))", 1, "3F6eH8MTJeGUNvetRLt6RHFdA7oc8PH6r4"),
+                Triple("sh(wpkh($xpub/1/*))", 0, "3EjM76QBfwkwVoPKaHvt1cMz2NXYfQoKUE"),
+            )
+        legacyAndNested.forEach { (expression, index, expected) ->
+            assertEquals(expected, bitcoinWallet(expression).address(0, index), expression)
+        }
         val descriptor = "wpkh([deadbeef/84h/0h/0h]$xpub/0/*)"
         assertEquals(wallet.address(0, 1), bitcoinWallet(descriptor + "#" + descriptorChecksum(descriptor)).address(0, 1))
         assertEquals("89f8spxm", descriptorChecksum("raw(deadbeef)"))
