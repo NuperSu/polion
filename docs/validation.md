@@ -83,3 +83,10 @@ Periodic refresh was enabled for the emulator’s unused public-address fixture.
 The Android emulator’s native harness reports **checks=6, failures=0**, including published Bitcoin public derivation/address/checksum vectors and disposable Android Keystore encryption/tamper tests. Wallet parser/discovery tests and the wallet dialog test pass on JVM. Desktop secure-storage tests use an injected command adapter; actual Secret Service integration is not claimed from those tests.
 
 An active fixture scan was force-stopped after its persisted in-progress marker was observed. After emulator restart, the UI displayed **Sync interrupted** and the ledger matched the saved pre-interruption fixture. The endpoint remained saved; retry completed, cleared the interruption marker/error and left the original ledger unchanged. The first UI assertion was interrupted by emulator disconnection, so the restarted state and recovery were explicitly rechecked before recording this result.
+
+
+### Desktop distribution and representative UI workload
+
+The merged desktop JAR is regenerated without dependency archive signature files, which cannot authenticate a merged archive. Runtime loading initially exposed a signature digest failure despite successful packaging; after regeneration, the actual Secret Service adapter passed disposable store, lookup, password verification and clear operations. The local marker contained no verifier, and the fixture entry/directory were removed.
+
+The shared UI workload seeded 10,000 additional activities, projected and rendered the portfolio, opened paginated history, and searched for one exact ID. All assertions passed; the full seed/projection/render/search sequence measured **3,225 ms** on this machine. It asserts pagination and search correctness rather than a machine-specific latency threshold. Multi-movement correction/reset and the current accessibility/layout tests also pass.
