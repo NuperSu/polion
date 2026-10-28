@@ -94,4 +94,31 @@ class LedgerTest {
             Files.deleteIfExists(file)
         }
     }
+
+    @Test
+    fun unallocatedFeesPersistAcrossRevisions() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = ActivityRepository(db)
+            val fee =
+                UnallocatedFee(
+                    AtomicAmount(btc, ExactInteger.parse("10")),
+                    FeeAllocationReason.MULTIPLE_TRACKED_PAYERS,
+                    setOf(AccountId("wallet"), AccountId("other")),
+                )
+            val shared =
+                activity(
+                    "shared",
+                    movement("a", "wallet", "-100"),
+                    movement("b", "other", "-50"),
+                ).copy(unallocatedFees = listOf(fee))
+            repository.save(shared)
+            repository.save(shared.copy(status = ActivityStatus.REVERSED))
+            val history = repository.history(shared.id)
+            assertEquals(listOf(listOf(fee), listOf(fee)), history.map { it.unallocatedFees })
+            assertFailsWith<IllegalArgumentException> {
+                UnallocatedFee(fee.amount, FeeAllocationReason.MULTIPLE_TRACKED_PAYERS, setOf(AccountId("wallet")))
+            }
+        }
+    }
 }

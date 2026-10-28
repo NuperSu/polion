@@ -27,7 +27,10 @@ class BitcoinScanReconciler(
         db.transaction {
             val missing =
                 activities.current().filter {
-                    !it.manual && it.decoderVersion == decoder.version && it.id !in present && it.status != ActivityStatus.REVERSED
+                    !it.manual &&
+                        it.decoderVersion in BitcoinDecoder.compatibleVersions &&
+                        it.id !in present &&
+                        it.status != ActivityStatus.REVERSED
                 }
             decoded.forEach(activities::saveInTransaction)
             missing.forEach { activities.saveInTransaction(it.copy(status = ActivityStatus.REVERSED)) }

@@ -249,10 +249,11 @@ class BitcoinScanStage(
                 }
                 after = rows.last()[0]!!
             }
+            val decoderPlaceholders = BitcoinDecoder.compatibleVersions.joinToString(",") { "?" }
             val missing =
                 db.query(
-                    "SELECT a.id FROM ledger_activities a WHERE a.manual=0 AND a.decoder=? AND a.status<>'REVERSED' AND a.revision=(SELECT a2.revision FROM ledger_activities a2 WHERE a2.id=a.id ORDER BY CAST(a2.revision AS INTEGER) DESC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bitcoin_scan_present p WHERE p.id=a.id)",
-                    listOf(decoder.version),
+                    "SELECT a.id FROM ledger_activities a WHERE a.manual=0 AND a.decoder IN ($decoderPlaceholders) AND a.status<>'REVERSED' AND a.revision=(SELECT a2.revision FROM ledger_activities a2 WHERE a2.id=a.id ORDER BY CAST(a2.revision AS INTEGER) DESC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bitcoin_scan_present p WHERE p.id=a.id)",
+                    BitcoinDecoder.compatibleVersions.sorted(),
                 )
             missing.forEach { row ->
                 val latest = activities.history(ActivityId(row.single()!!)).last()

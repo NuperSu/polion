@@ -49,6 +49,25 @@ class ActivityRepository(
                     ),
                 )
             }
+            activity.unallocatedFees.forEachIndexed { position, fee ->
+                db.execute(
+                    "INSERT INTO ledger_unallocated_fees VALUES (?, ?, ?, ?, ?, ?)",
+                    listOf(
+                        activity.id.value,
+                        revision,
+                        position.toString(),
+                        fee.amount.assetId.value,
+                        fee.amount.atomicUnits.toString(),
+                        fee.reason.name,
+                    ),
+                )
+                fee.candidateAccounts.sortedBy { it.value }.forEach { account ->
+                    db.execute(
+                        "INSERT INTO ledger_fee_candidates VALUES (?, ?, ?, ?)",
+                        listOf(activity.id.value, revision, position.toString(), account.value),
+                    )
+                }
+            }
             activity.sources.forEach {
                 db.execute("INSERT INTO ledger_sources VALUES (?, ?, ?)", listOf(activity.id.value, revision, it.value))
             }
@@ -84,6 +103,22 @@ class ActivityRepository(
                     }.toSet(),
                 row[6],
                 row[7] == "1",
+                db
+                    .query(
+                        "SELECT position, asset_id, units, reason FROM ledger_unallocated_fees WHERE activity_id=? AND revision=? ORDER BY position",
+                        listOf(id.value, revision),
+                    ).map { fee ->
+                        UnallocatedFee(
+                            AtomicAmount(AssetId(fee[1]!!), ExactInteger.parse(fee[2]!!)),
+                            FeeAllocationReason.valueOf(fee[3]!!),
+                            db
+                                .query(
+                                    "SELECT account_id FROM ledger_fee_candidates WHERE activity_id=? AND revision=? AND fee_position=? ORDER BY account_id",
+                                    listOf(id.value, revision, fee[0]),
+                                ).map { AccountId(it.single()!!) }
+                                .toSet(),
+                        )
+                    },
             )
         }
 

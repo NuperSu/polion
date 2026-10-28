@@ -8,8 +8,10 @@ import io.polion.core.connectors.RawRecordDecoder
 import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityKind
 import io.polion.core.ledger.ActivityStatus
+import io.polion.core.ledger.FeeAllocationReason
 import io.polion.core.ledger.Movement
 import io.polion.core.ledger.MovementRole
+import io.polion.core.ledger.UnallocatedFee
 import io.polion.core.model.AccountId
 import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
@@ -163,7 +165,12 @@ class BitcoinDecoder(
     ownedAddresses: Map<String, AccountId>,
 ) : RawRecordDecoder {
     private val owners = ownedAddresses.mapKeys { bitcoinMainnetAddress(it.key) }
-    override val version = "bitcoin-esplora-1"
+    override val version = "bitcoin-esplora-2"
+
+    companion object {
+        /** Decoder versions whose activity identity and balance semantics belong to this connector. */
+        internal val compatibleVersions = setOf("bitcoin-esplora-1", "bitcoin-esplora-2")
+    }
 
     override fun decode(observation: RawObservation): List<Activity> {
         require(observation.network == BITCOIN_MAINNET.value && observation.namespace == "bitcoin")
@@ -183,6 +190,23 @@ class BitcoinDecoder(
         val inputOwners = tx.inputs.map { it.address?.let(owners::get) }
         val feeAccount =
             inputOwners.singleOrNull()?.let { it } ?: inputOwners.firstOrNull()?.takeIf { owner -> inputOwners.all { it == owner } }
+        val trackedInputAccounts = inputOwners.filterNotNull().toSet()
+        val unallocatedFees =
+            if (feeAccount == null && tx.fee.sign > 0 && trackedInputAccounts.isNotEmpty()) {
+                listOf(
+                    UnallocatedFee(
+                        AtomicAmount(BITCOIN_ASSET, tx.fee),
+                        if (inputOwners.any { it == null }) {
+                            FeeAllocationReason.MIXED_TRACKED_EXTERNAL_PAYERS
+                        } else {
+                            FeeAllocationReason.MULTIPLE_TRACKED_PAYERS
+                        },
+                        trackedInputAccounts,
+                    ),
+                )
+            } else {
+                emptyList()
+            }
         if (feeAccount != null && tx.fee.sign > 0) deltas[feeAccount] = deltas.getValue(feeAccount) + tx.fee
         val movements =
             deltas
@@ -249,6 +273,7 @@ class BitcoinDecoder(
                 movements,
                 sources,
                 version,
+                unallocatedFees = unallocatedFees,
             ),
         )
     }

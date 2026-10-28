@@ -33,7 +33,7 @@ class Store(
                     .single()
                     .single()!!
                     .toInt()
-            require(version in 0..3) { "Unsupported database schema version $version" }
+            require(version in 0..4) { "Unsupported database schema version $version" }
             if (version == 0) {
                 db.execute(
                     "CREATE TABLE raw_records (id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, network TEXT NOT NULL, UNIQUE(namespace, external_id, network))",
@@ -78,6 +78,15 @@ class Store(
                 )
                 db.execute("PRAGMA user_version = 3")
             }
+            if (version < 4) {
+                db.execute(
+                    "CREATE TABLE ledger_unallocated_fees (activity_id TEXT NOT NULL, revision INTEGER NOT NULL, position INTEGER NOT NULL, asset_id TEXT NOT NULL, units TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(activity_id, revision, position), FOREIGN KEY(activity_id, revision) REFERENCES ledger_activities(id, revision))",
+                )
+                db.execute(
+                    "CREATE TABLE ledger_fee_candidates (activity_id TEXT NOT NULL, revision INTEGER NOT NULL, fee_position INTEGER NOT NULL, account_id TEXT NOT NULL, PRIMARY KEY(activity_id, revision, fee_position, account_id), FOREIGN KEY(activity_id, revision, fee_position) REFERENCES ledger_unallocated_fees(activity_id, revision, position))",
+                )
+                db.execute("PRAGMA user_version = 4")
+            }
             val requiredTables =
                 listOf(
                     "raw_records",
@@ -86,6 +95,8 @@ class Store(
                     "ledger_activities",
                     "ledger_movements",
                     "ledger_sources",
+                    "ledger_unallocated_fees",
+                    "ledger_fee_candidates",
                     "owners",
                     "accounts",
                     "targets",

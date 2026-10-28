@@ -21,6 +21,23 @@ data class Movement(
     val counterparty: String? = null,
 )
 
+enum class FeeAllocationReason { MULTIPLE_TRACKED_PAYERS, MIXED_TRACKED_EXTERNAL_PAYERS }
+
+/** Observed transaction fee whose payer allocation is unknown; it does not change ledger balances. */
+data class UnallocatedFee(
+    val amount: AtomicAmount,
+    val reason: FeeAllocationReason,
+    val candidateAccounts: Set<AccountId>,
+) {
+    init {
+        require(amount.atomicUnits.sign > 0) { "An observed fee must be positive" }
+        require(candidateAccounts.isNotEmpty()) { "An unallocated fee needs a tracked payer candidate" }
+        require(reason != FeeAllocationReason.MULTIPLE_TRACKED_PAYERS || candidateAccounts.size > 1) {
+            "Multiple tracked payers require distinct candidate accounts"
+        }
+    }
+}
+
 data class Activity(
     val id: ActivityId,
     val occurredAtEpochMillis: Long,
@@ -31,8 +48,10 @@ data class Activity(
     val sources: Set<SourceRecordId>,
     val decoderVersion: String?,
     val manual: Boolean = false,
+    val unallocatedFees: List<UnallocatedFee> = emptyList(),
 ) {
     init {
+        require(unallocatedFees.distinct().size == unallocatedFees.size) { "Duplicate unallocated fee" }
         require(movements.isNotEmpty())
         require(movements.map { it.id }.distinct().size == movements.size)
         require(orderingKey.isNotBlank())

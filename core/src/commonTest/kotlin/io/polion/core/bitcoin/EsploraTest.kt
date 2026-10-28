@@ -3,6 +3,7 @@ package io.polion.core.bitcoin
 import io.polion.core.connectors.Coverage
 import io.polion.core.connectors.HistoryRequest
 import io.polion.core.ledger.ActivityStatus
+import io.polion.core.ledger.FeeAllocationReason
 import io.polion.core.ledger.LedgerDeltas
 import io.polion.core.ledger.MovementRole
 import io.polion.core.model.AccountId
@@ -173,6 +174,38 @@ class EsploraTest {
         val balances = LedgerDeltas.calculate(listOf(activity))
         assertEquals("-7000", balances.getValue(account).getValue(BITCOIN_ASSET).toString())
         assertEquals("6000", balances.getValue(other).getValue(BITCOIN_ASSET).toString())
+    }
+
+    @Test
+    fun feeFromSeveralPayersIsRecordedWithoutChangingBalances() {
+        val otherAddress = "1BitcoinEaterAddressDontSendf59kuE"
+        val other = AccountId("other")
+        val twoTracked =
+            """{"txid":"$id","vin":[{"is_coinbase":false,"prevout":{"scriptpubkey_address":"$address","value":10000}},{"is_coinbase":false,"prevout":{"scriptpubkey_address":"$otherAddress","value":5000}}],"vout":[{"scriptpubkey_address":"external","value":14000}],"fee":1000,"status":{"confirmed":true,"block_time":123}}"""
+        val mixed = twoTracked.replace("\"$otherAddress\"", "\"external\"")
+        val owners = mapOf(address to account, otherAddress to other)
+
+        fun decode(payload: String) =
+            BitcoinDecoder(owners)
+                .decode(
+                    EsploraHistoryFetcher(
+                        mapOf(account to address),
+                        EsploraTransport { path -> if (path.endsWith("mempool")) "[]" else "[$payload]" },
+                        { "2026-01-01T00:00:00Z" },
+                    ).fetch(request).observations.single(),
+                ).single()
+        val shared = decode(twoTracked)
+        assertEquals(emptyList(), shared.movements.filter { it.role == MovementRole.FEE })
+        val fee = shared.unallocatedFees.single()
+        assertEquals(FeeAllocationReason.MULTIPLE_TRACKED_PAYERS, fee.reason)
+        assertEquals(setOf(account, other), fee.candidateAccounts)
+        assertEquals("1000", fee.amount.atomicUnits.toString())
+        val balances = LedgerDeltas.calculate(listOf(shared))
+        assertEquals("-10000", balances.getValue(account).getValue(BITCOIN_ASSET).toString())
+        assertEquals("-5000", balances.getValue(other).getValue(BITCOIN_ASSET).toString())
+        val partial = decode(mixed).unallocatedFees.single()
+        assertEquals(FeeAllocationReason.MIXED_TRACKED_EXTERNAL_PAYERS, partial.reason)
+        assertEquals(setOf(account), partial.candidateAccounts)
     }
 
     @Test
