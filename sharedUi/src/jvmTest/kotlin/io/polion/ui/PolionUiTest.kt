@@ -6,10 +6,11 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -181,7 +182,7 @@ class PolionUiTest {
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("UI deposit").fetchSemanticsNodes().isNotEmpty() }
                         onNodeWithText("UI deposit").assertIsDisplayed()
                         onAllNodesWithText("Settings").filter(hasClickAction()).onFirst().performClick()
-                        onNode(hasScrollAction()).performScrollToNode(hasText("Manage manual prices →"))
+                        onNodeWithTag("page-content").performScrollToNode(hasText("Manage manual prices →"))
                         onNodeWithText("Manage manual prices →").performClick()
                         onNodeWithText("Price per whole coin in USD").performTextInput("70000")
                         onNodeWithText("Save price observation").performClick()
@@ -219,6 +220,53 @@ class PolionUiTest {
     }
 
     @Test
+    fun shortLandscapeWindowKeepsEveryNavigationDestinationReachable() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                runDesktopComposeUiTest(width = 800, height = 360) {
+                    setContent { PolionApp(app, host) }
+                    onAllNodesWithText("Settings")
+                        .filter(hasClickAction())
+                        .onFirst()
+                        .performScrollTo()
+                        .performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Make it yours").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithText("Make it yours").performScrollTo().assertIsDisplayed()
+                    onAllNodesWithText("Overview")
+                        .filter(hasClickAction())
+                        .onFirst()
+                        .performScrollTo()
+                        .performClick()
+                    onNodeWithText("PORTFOLIO VALUE").performScrollTo().assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun phoneCanRemoveAndRestoreAnAccount() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
+                    onAllNodesWithText("Accounts").filter(hasClickAction()).onFirst().performClick()
+                    onNodeWithText("Remove account").performScrollTo().performClick()
+                    onAllNodesWithText("Remove account").onLast().performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Archived accounts").fetchSemanticsNodes().isNotEmpty() }
+                    assertEquals(0, app.snapshot().activityTotal)
+                    onNodeWithText("Restore account").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Account restored").fetchSemanticsNodes().isNotEmpty() }
+                    assertEquals(4, app.snapshot().activityTotal)
+                }
+            }
+        }
+    }
+
+    @Test
     fun wideLayoutEditsSearchesAndExports() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
@@ -245,7 +293,7 @@ class PolionUiTest {
                         timeoutMillis = 10_000,
                     ) { onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
                     onAllNodesWithText("Reports").filter(hasClickAction()).onFirst().performClick()
-                    onNode(hasScrollAction()).performScrollToNode(hasText("↓  Export exact activity CSV"))
+                    onNodeWithTag("page-content").performScrollToNode(hasText("↓  Export exact activity CSV"))
                     onNodeWithText("↓  Export exact activity CSV").performClick()
                     waitUntil(timeoutMillis = 10_000) { host.exported != null }
                     assertEquals("polion-activities.csv", host.exportedName)

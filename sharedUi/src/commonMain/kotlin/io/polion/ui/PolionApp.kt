@@ -28,8 +28,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -69,6 +72,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -88,8 +92,10 @@ import io.polion.core.model.ExactDecimal
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.PortfolioId
 import io.polion.core.model.Rounding
+import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
 import io.polion.core.reconcile.EffectiveActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
@@ -113,6 +119,10 @@ private val palette =
         onBackground = Ink,
         outline = Line,
     )
+
+private class CacheRevision(
+    var value: Long? = null,
+)
 
 private enum class Page(
     val label: String,
@@ -171,11 +181,13 @@ private fun Product(
     var busy by remember { mutableStateOf(false) }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedActivity by remember { mutableStateOf<EffectiveActivity?>(null) }
+    var removeAccount by remember { mutableStateOf<Account?>(null) }
     var selectedAsset by remember { mutableStateOf<AssetValuation?>(null) }
     var chart by remember { mutableStateOf<List<HistoryPoint>>(emptyList()) }
     var period by rememberSaveable { mutableIntStateOf(30) }
     val hostRevision by host.dataRevision.collectAsState()
     val syncStatus by host.syncStatus.collectAsState()
+    val cacheRevision = remember(app) { CacheRevision() }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
@@ -196,35 +208,51 @@ private fun Product(
             }
         }
     }
-    LaunchedEffect(app, page, revision, hostRevision, search, kind, offset, selectedAccount, selectedPortfolio, period) {
+    LaunchedEffect(app, page, revision, hostRevision, search, kind, offset, selectedAccount, selectedPortfolio) {
         try {
-            val data =
+            snapshot =
                 withContext(host.dispatcher) {
-                    app.reload()
-                    val result =
-                        app.snapshot(
-                            if (page ==
-                                Page.ACTIVITY
-                            ) {
-                                ActivityFilter(
-                                    search = search,
-                                    account = selectedAccount,
-                                    kind = kind,
-                                    offset = offset,
-                                    portfolio = selectedPortfolio,
-                                )
-                            } else {
-                                ActivityFilter(portfolio = selectedPortfolio)
-                            },
-                        )
-                    val end = Clock.System.now().toEpochMilliseconds()
-                    val points = app.historySeries((0..12).map { end - (12L - it) * period * 86_400_000L / 12 }, selectedPortfolio)
-                    result to points
+                    if (cacheRevision.value != hostRevision) {
+                        app.reload()
+                        cacheRevision.value = hostRevision
+                    }
+                    app.snapshot(
+                        if (page == Page.ACTIVITY) {
+                            ActivityFilter(
+                                search = search,
+                                account = selectedAccount,
+                                kind = kind,
+                                offset = offset,
+                                portfolio = selectedPortfolio,
+                            )
+                        } else {
+                            ActivityFilter(portfolio = selectedPortfolio)
+                        },
+                    )
                 }
-            snapshot = data.first
-            chart = data.second
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             message = "Your data could not be loaded. Check storage and reopen the app."
+        }
+    }
+    LaunchedEffect(app, page, revision, hostRevision, selectedPortfolio, period) {
+        if (page != Page.OVERVIEW && page != Page.REPORTS) return@LaunchedEffect
+        chart = emptyList()
+        try {
+            chart =
+                withContext(host.dispatcher) {
+                    if (cacheRevision.value != hostRevision) {
+                        app.reload()
+                        cacheRevision.value = hostRevision
+                    }
+                    val end = Clock.System.now().toEpochMilliseconds()
+                    app.historySeries((0..12).map { end - (12L - it) * period * 86_400_000L / 12 }, selectedPortfolio)
+                }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            message = "Historical values could not be loaded. Saved balances are still available."
         }
     }
     LaunchedEffect(message) {
@@ -270,7 +298,7 @@ private fun Product(
             ) { insets ->
                 val data = snapshot
                 LazyColumn(
-                    Modifier.fillMaxSize().padding(insets),
+                    Modifier.fillMaxSize().padding(insets).testTag("page-content"),
                     state =
                         when (page) {
                             Page.OVERVIEW -> overviewScroll
@@ -469,7 +497,7 @@ private fun Product(
                                         }
                                     }
                                 }
-                                items(data.ownership.accounts, key = { it.id.value }) { account ->
+                                items(data.ownership.accounts.filter { "polion:archived" !in it.tags }, key = { it.id.value }) { account ->
                                     Panel {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             CoinBadge(if (account.kind == AccountKind.GROUP) "▣" else "₿")
@@ -493,6 +521,7 @@ private fun Product(
                                                 target.enabled,
                                             )
                                         }
+                                        TextButton(onClick = { removeAccount = account }) { Text("Remove account", fontSize = 12.sp) }
                                         data.balances.quantities.filterKeys { it.account == account.id }.forEach { (key, units) ->
                                             Text(
                                                 "${formatUnits(
@@ -504,6 +533,25 @@ private fun Product(
                                                 )} ${symbol(key.asset, data)}",
                                                 fontWeight = FontWeight.SemiBold,
                                             )
+                                        }
+                                    }
+                                }
+                                if (data.ownership.accounts.any { "polion:archived" in it.tags }) {
+                                    item { SectionTitle("Archived accounts") }
+                                    items(
+                                        data.ownership.accounts.filter { "polion:archived" in it.tags },
+                                        key = { "archived:${it.id.value}" },
+                                    ) { archived ->
+                                        Panel {
+                                            Text(archived.label, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                "Tracking paused. Saved activity and accounting decisions are retained.",
+                                                fontSize = 12.sp,
+                                                color = Muted,
+                                            )
+                                            OutlinedButton(
+                                                onClick = { execute("Account restored") { app.archiveAccount(archived.id, false) } },
+                                            ) { Text("Restore account") }
                                         }
                                     }
                                 }
@@ -686,6 +734,25 @@ private fun Product(
                 },
             )
         }
+        removeAccount?.let { account ->
+            AlertDialog(
+                onDismissRequest = { removeAccount = null },
+                title = { Text("Remove ${account.label}?") },
+                text = {
+                    Text(
+                        "This archives the account and its subaccounts, hides them from active portfolios, and stops their address queries. Saved history and accounting decisions are retained. You can restore the account under Archived accounts.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        execute("Account removed from active tracking") { app.archiveAccount(account.id) }
+                        selectedAccount = null
+                        removeAccount = null
+                    }) { Text("Remove account") }
+                },
+                dismissButton = { TextButton(onClick = { removeAccount = null }) { Text("Keep account") } },
+            )
+        }
         selectedActivity?.let { item ->
             ActivityDialog(item, snapshot!!, { selectedActivity = null }) { overlay ->
                 execute("Correction saved; original evidence preserved") { app.saveOverlay(overlay) }
@@ -708,81 +775,80 @@ private fun Sidebar(
     onSelect: (Page) -> Unit,
     modifier: Modifier,
 ) {
-    Column(
-        modifier.fillMaxHeight().background(Color.White).padding(horizontal = 16.dp, vertical = 30.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Ink), contentAlignment = Alignment.Center) {
-                Text("p", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 25.sp)
-            }
-            Text(
-                "polion",
-                fontSize = 26.sp,
-                letterSpacing = (-1).sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 10.dp),
-            )
-        }
-        Text(
-            "WORKSPACE",
-            fontSize = 9.sp,
-            letterSpacing = 2.sp,
-            color = Muted,
-            modifier = Modifier.padding(start = 14.dp, top = 34.dp, bottom = 12.dp),
-        )
-        Page.entries.forEach { page ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (selected ==
-                            page
-                        ) {
-                            Mint
-                        } else {
-                            Color.Transparent
-                        },
-                    ).clickable { onSelect(page) }
-                    .padding(horizontal = 14.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(page.glyph, fontSize = 20.sp, color = if (selected == page) Teal else Muted)
+    BoxWithConstraints(modifier.fillMaxHeight().background(Color.White)) {
+        val short = maxHeight < 650.dp
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = if (short) 12.dp else 30.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Ink), contentAlignment = Alignment.Center) {
+                    Text("p", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 25.sp)
+                }
                 Text(
-                    page.label,
-                    fontSize = 13.sp,
-                    color =
-                        if (selected ==
-                            page
-                        ) {
-                            Ink
-                        } else {
-                            Muted
-                        },
-                    fontWeight =
-                        if (selected ==
-                            page
-                        ) {
-                            FontWeight.SemiBold
-                        } else {
-                            FontWeight.Normal
-                        },
-                    modifier = Modifier.padding(start = 12.dp),
+                    "polion",
+                    fontSize = 26.sp,
+                    letterSpacing = (-1).sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 10.dp),
                 )
             }
-        }
-        Spacer(Modifier.weight(1f))
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Paper)
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text("◉  Local first", color = Teal, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-            Text("Your portfolio.\nYour device. Your control.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "WORKSPACE",
+                    fontSize = 9.sp,
+                    letterSpacing = 2.sp,
+                    color = Muted,
+                    modifier = Modifier.padding(start = 14.dp, top = if (short) 8.dp else 34.dp, bottom = 12.dp),
+                )
+                Page.entries.forEach { page ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (selected ==
+                                    page
+                                ) {
+                                    Mint
+                                } else {
+                                    Color.Transparent
+                                },
+                            ).clickable { onSelect(page) }
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(page.glyph, fontSize = 20.sp, color = if (selected == page) Teal else Muted)
+                        Text(
+                            page.label,
+                            fontSize = 13.sp,
+                            color = if (selected == page) Ink else Muted,
+                            fontWeight =
+                                if (selected ==
+                                    page
+                                ) {
+                                    FontWeight.SemiBold
+                                } else {
+                                    FontWeight.Normal
+                                },
+                            modifier = Modifier.padding(start = 12.dp),
+                        )
+                    }
+                }
+            }
+            if (!short) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Paper)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("◉  Local first", color = Teal, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    Text("Your portfolio.\nYour device. Your control.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
+                }
+            }
         }
     }
 }
@@ -1286,7 +1352,7 @@ private fun FilterKinds(
                 onSelect(null)
                 expanded = false
             })
-            data.ownership.accounts.forEach { a ->
+            data.ownership.accounts.filter { "polion:archived" !in it.tags }.forEach { a ->
                 DropdownMenuItem({ Text(a.label) }, {
                     onSelect(a.id)
                     expanded =

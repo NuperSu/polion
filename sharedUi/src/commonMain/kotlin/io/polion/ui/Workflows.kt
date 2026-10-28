@@ -107,7 +107,7 @@ internal fun WorkflowDialog(
     var account by remember {
         mutableStateOf(
             data.ownership.accounts
-                .firstOrNull { it.kind != AccountKind.GROUP }
+                .firstOrNull { it.kind != AccountKind.GROUP && "polion:archived" !in it.tags }
                 ?.id,
         )
     }
@@ -165,7 +165,12 @@ internal fun WorkflowDialog(
                     } else {
                         Text("A personal owner will be created for this account.", fontSize = 12.sp)
                     }
-                    val groups = data.ownership.accounts.filter { it.kind == AccountKind.GROUP && it.ownerId == owner }
+                    val groups =
+                        data.ownership.accounts.filter {
+                            it.kind == AccountKind.GROUP &&
+                                it.ownerId == owner &&
+                                "polion:archived" !in it.tags
+                        }
                     if (groups.isNotEmpty()) {
                         Choice("Group", listOf(null to "No group") + groups.map { it.id to it.label }, parent) {
                             parent =
@@ -176,7 +181,7 @@ internal fun WorkflowDialog(
                 if (type == "account") Field("Public Bitcoin address", address) { address = it }
                 if (type == "portfolio") {
                     Text("Select accounts. Leave empty to include every account.", fontSize = 12.sp)
-                    data.ownership.accounts.forEach { a ->
+                    data.ownership.accounts.filter { "polion:archived" !in it.tags }.forEach { a ->
                         Row {
                             Checkbox(a.id in selectedAccounts, { checked ->
                                 selectedAccounts =
@@ -254,13 +259,13 @@ internal fun WorkflowDialog(
                     "Manual entries affect your local ledger. A positive quantity adds funds; a negative quantity removes them. This does not send a transaction.",
                     fontSize = 13.sp,
                 )
-                if (data.ownership.accounts.none { it.kind != AccountKind.GROUP }) {
+                if (data.ownership.accounts.none { it.kind != AccountKind.GROUP && "polion:archived" !in it.tags }) {
                     Text("Create an account first.")
                 } else {
                     Choice(
                         "Account",
                         data.ownership.accounts
-                            .filter { it.kind != AccountKind.GROUP }
+                            .filter { it.kind != AccountKind.GROUP && "polion:archived" !in it.tags }
                             .map { it.id to it.label },
                         account,
                     ) {
