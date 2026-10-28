@@ -14,3 +14,8 @@ dependencies {
 compose.desktop {
     application { mainClass = "io.polion.desktop.MainKt" }
 }
+
+// Dependency signatures describe their original archives; the merged distribution has its own contents.
+tasks.withType<org.gradle.jvm.tasks.Jar>().configureEach {
+    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA", "META-INF/*.EC", "META-INF/SIG-*")
+}
