@@ -120,7 +120,14 @@ class MarketRepositoryTest {
                 repository.recordPrice(manual)
                 assertEquals(high, repository.lookup(token1, usd, 100, 100, policy).observation)
                 assertEquals(manual, repository.lookup(token1, usd, 100, 101, policy).observation)
+                repository.withdrawManualPrice("manual", 125, 130)
+                repository.withdrawManualPrice("manual", 125, 130)
+                assertEquals(manual, repository.lookup(token1, usd, 127, 129, policy).observation)
+                assertEquals(manual, repository.lookup(token1, usd, 124, 130, policy).observation)
+                assertEquals(high, repository.lookup(token1, usd, 125, 130, policy).observation)
                 assertEquals(PriceStatus.STALE, repository.lookup(token1, usd, 127, 127, policy).status)
+                assertFailsWith<IllegalArgumentException> { repository.withdrawManualPrice("low", 130, 130) }
+                assertFailsWith<IllegalArgumentException> { repository.withdrawManualPrice("manual", 95, 130) }
                 assertFailsWith<IllegalArgumentException> {
                     repository.recordPrice(
                         high.copy(price = Price(token1, usd, ExactDecimal.parse("5"))),

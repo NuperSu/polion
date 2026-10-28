@@ -17,7 +17,7 @@ class MarketRepository(
             db.execute("CREATE TABLE IF NOT EXISTS market_schema (version INTEGER NOT NULL)")
             val rows = db.query("SELECT version FROM market_schema")
             if (rows.isEmpty()) {
-                db.execute("INSERT INTO market_schema VALUES (1)")
+                db.execute("INSERT INTO market_schema VALUES (2)")
                 db.execute(
                     "CREATE TABLE market_assets (id TEXT PRIMARY KEY, kind TEXT NOT NULL, network TEXT NOT NULL, reference TEXT NOT NULL, token_id TEXT NOT NULL, UNIQUE(kind, network, reference, token_id))",
                 )
@@ -31,10 +31,29 @@ class MarketRepository(
                     "CREATE TABLE market_prices (id TEXT PRIMARY KEY, base_asset TEXT NOT NULL REFERENCES market_assets(id), quote_asset TEXT NOT NULL REFERENCES market_assets(id), value TEXT NOT NULL, provider TEXT, valid_at INTEGER NOT NULL, observed_at INTEGER NOT NULL, manual INTEGER NOT NULL)",
                 )
                 db.execute("CREATE INDEX market_prices_pair_time ON market_prices(base_asset, quote_asset, valid_at, observed_at)")
+                db.execute(
+                    "CREATE TABLE market_override_withdrawals (price_id TEXT NOT NULL REFERENCES market_prices(id), effective_at INTEGER NOT NULL, observed_at INTEGER NOT NULL, PRIMARY KEY(price_id, effective_at, observed_at))",
+                )
             } else {
-                require(rows.size == 1 && rows.single().single() == "1") { "Unsupported market schema" }
+                require(rows.size == 1 && rows.single().single() in setOf("1", "2")) { "Unsupported market schema" }
+                if (rows.single().single() == "1") {
+                    db.execute(
+                        "CREATE TABLE market_override_withdrawals (price_id TEXT NOT NULL REFERENCES market_prices(id), effective_at INTEGER NOT NULL, observed_at INTEGER NOT NULL, PRIMARY KEY(price_id, effective_at, observed_at))",
+                    )
+                    db.execute("UPDATE market_schema SET version=2")
+                }
                 val tables = db.query("SELECT name FROM sqlite_master WHERE type='table'").mapNotNull { it.single() }.toSet()
-                check(tables.containsAll(setOf("market_assets", "market_metadata", "market_provider_mappings", "market_prices"))) {
+                check(
+                    tables.containsAll(
+                        setOf(
+                            "market_assets",
+                            "market_metadata",
+                            "market_provider_mappings",
+                            "market_prices",
+                            "market_override_withdrawals",
+                        ),
+                    ),
+                ) {
                     "Market schema is incomplete"
                 }
             }
@@ -174,6 +193,21 @@ class MarketRepository(
             db.execute("INSERT OR IGNORE INTO market_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
         }
 
+    /** Withdraw an override from its effective time without rewriting earlier history. */
+    fun withdrawManualPrice(
+        id: String,
+        effectiveAtMillis: Long,
+        observedAtMillis: Long,
+    ) = db.transaction {
+        val row = db.query("SELECT manual, valid_at FROM market_prices WHERE id=?", listOf(id)).singleOrNull()
+        require(row != null && row[0] == "1") { "Unknown manual price observation" }
+        require(effectiveAtMillis >= row[1]!!.toLong()) { "Withdrawal precedes override" }
+        db.execute(
+            "INSERT OR IGNORE INTO market_override_withdrawals VALUES (?, ?, ?)",
+            listOf(id, effectiveAtMillis.toString(), observedAtMillis.toString()),
+        )
+    }
+
     /** Select manual override first; other observations follow freshness and provider policy. */
     fun lookup(
         base: AssetId,
@@ -186,8 +220,15 @@ class MarketRepository(
         val observations =
             db
                 .query(
-                    "SELECT id, value, provider, valid_at, observed_at, manual FROM market_prices WHERE base_asset=? AND quote_asset=? AND valid_at<=CAST(? AS INTEGER) AND observed_at<=CAST(? AS INTEGER)",
-                    listOf(base.value, quote.value, atMillis.toString(), knownAtMillis.toString()),
+                    "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) AND p.observed_at<=CAST(? AS INTEGER) AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER))",
+                    listOf(
+                        base.value,
+                        quote.value,
+                        atMillis.toString(),
+                        knownAtMillis.toString(),
+                        atMillis.toString(),
+                        knownAtMillis.toString(),
+                    ),
                 ).map { row ->
                     PriceObservation(
                         row[0]!!,
