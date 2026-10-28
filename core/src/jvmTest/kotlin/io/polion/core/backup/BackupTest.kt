@@ -232,4 +232,33 @@ class BackupTest {
             }
         }
     }
+
+    @Test fun olderSchemaArchiveRestoresIntoNewerStagingAndNewerArchiveIsRejected() {
+        JvmSqliteDatabase(":memory:").use { source ->
+            Store(source)
+            source.execute("INSERT INTO owners VALUES ('owner','Alice')")
+            source.execute("INSERT INTO accounts VALUES ('account','owner','Wallet','WALLET',NULL)")
+            source.execute("DROP TABLE ledger_fee_candidates")
+            source.execute("DROP TABLE ledger_unallocated_fees")
+            source.execute("PRAGMA user_version = 3")
+            val archive = PortableBackup.discover(source).export(source)
+            assertTrue(!archive.contains("ledger_unallocated_fees"))
+            JvmSqliteDatabase(":memory:").use { staging ->
+                Store(staging)
+                val backup = PortableBackup.discover(staging)
+                backup.restoreToStaging(staging, archive)
+                assertEquals("4", staging.query("PRAGMA user_version").single().single())
+                assertEquals("Alice", staging.query("SELECT label FROM owners").single().single())
+                assertEquals("0", staging.query("SELECT COUNT(*) FROM ledger_unallocated_fees").single().single())
+                assertEquals("0", staging.query("SELECT COUNT(*) FROM ledger_fee_candidates").single().single())
+            }
+            source.execute("PRAGMA user_version = 5")
+            val newer = PortableBackup.discover(source).export(source)
+            JvmSqliteDatabase(":memory:").use { staging ->
+                Store(staging)
+                assertFails { PortableBackup.discover(staging).restoreToStaging(staging, newer) }
+                assertEquals("0", staging.query("SELECT COUNT(*) FROM owners").single().single())
+            }
+        }
+    }
 }
