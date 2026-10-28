@@ -520,11 +520,14 @@ class PortfolioApplication(
         }
     }
 
-    private fun sync(fetcher: HistoryFetcher): SyncOrchestrator =
+    private fun sync(
+        fetcher: HistoryFetcher,
+        source: SourceId = SourceId("esplora"),
+    ): SyncOrchestrator =
         SyncOrchestrator(
             db,
             store,
-            listOf(SyncProvider(ProviderId("esplora"), fetcher, setOf(BITCOIN_MAINNET), setOf(SourceId("esplora")))),
+            listOf(SyncProvider(ProviderId(source.value), fetcher, setOf(BITCOIN_MAINNET), setOf(source))),
             SyncClock { now() },
         )
 
@@ -616,6 +619,8 @@ class PortfolioApplication(
             require(chain >= 0 && mempool >= 0)
             return chain to mempool
         }
+        val providerSource = SourceId("esplora:" + sha256(sourceEndpoint()))
+        putSetting("provider_endpoint:${providerSource.value}", sourceEndpoint())
         val summaries = addresses.keys.associateWith(::summary)
         val seen = mutableMapOf<String, Pair<MutableSet<String>, MutableSet<String>>>()
         val mempools = mutableMapOf<String, String>()
@@ -633,9 +638,12 @@ class PortfolioApplication(
             }
         val result = mutableListOf<JobState>()
         val cleanup = sync(fetcher { error("No transport configured") })
-        db.query("SELECT id FROM sync_jobs WHERE source='esplora' AND state IN ('READY','RUNNING','PARTIAL','FAILED')").forEach {
-            cleanup.cancel(SyncJobId(it.single()!!))
-        }
+        db
+            .query(
+                "SELECT id FROM sync_jobs WHERE (source='esplora' OR source LIKE 'esplora:%') AND state IN ('READY','RUNNING','PARTIAL','FAILED')",
+            ).forEach {
+                cleanup.cancel(SyncJobId(it.single()!!))
+            }
         var pagesFetched = 0
         var transactionsFetched = 0
         for ((addressIndex, entry) in addresses.entries.withIndex()) {
@@ -671,9 +679,10 @@ class PortfolioApplication(
                             }
                         }
                     },
+                    providerSource,
                 )
             val id = SyncJobId("bitcoin-$counter")
-            orchestrator.enqueue(SyncJob(id, SourceId("esplora"), BITCOIN_MAINNET, account))
+            orchestrator.enqueue(SyncJob(id, providerSource, BITCOIN_MAINNET, account))
             var pages = 0
             while (pages < 1000 && orchestrator.runOne()) pages++
             val state = orchestrator.status(id)?.state ?: JobState.FAILED
@@ -810,6 +819,12 @@ class PortfolioApplication(
     fun sourceConsent(): Boolean = setting("source_consent") == "true"
 
     fun setSourceConsent(accepted: Boolean) = putSetting("source_consent", accepted.toString())
+
+    /** Endpoint identities survive configuration changes and portable backup/restore. */
+    fun bitcoinProviderEndpoints(): Map<String, String> =
+        db
+            .query("SELECT key, value FROM application_settings WHERE key LIKE 'provider_endpoint:%'")
+            .associate { it[0]!!.removePrefix("provider_endpoint:") to it[1]!! }
 
     fun sourceEndpoint(): String = setting("source_endpoint") ?: "https://blockstream.info/api"
 
