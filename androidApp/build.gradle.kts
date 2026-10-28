@@ -23,4 +23,6 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":sharedUi"))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.compose.material3)
+    implementation(libs.androidx.work)
 }

@@ -1,0 +1,53 @@
+package io.polion.ui
+
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.StateFlow
+
+enum class SyncPhase { IDLE, SYNCING, SUCCESS, ERROR }
+
+data class SyncStatus(
+    val phase: SyncPhase = SyncPhase.IDLE,
+    val message: String = "Not synced yet",
+)
+
+/** Host operations share one serial dispatcher with application reads and writes. */
+interface PlatformActions {
+    val dispatcher: CoroutineDispatcher
+    val dataRevision: StateFlow<Long>
+    val syncStatus: StateFlow<SyncStatus>
+    val hasLock: Boolean
+
+    fun saveFile(
+        name: String,
+        bytes: ByteArray,
+        onResult: (String) -> Unit,
+    )
+
+    fun openFile(onResult: (ByteArray?) -> Unit)
+
+    fun restoreBackup(
+        bytes: ByteArray,
+        password: String,
+        onResult: (String) -> Unit,
+    )
+
+    fun refresh(onResult: (String) -> Unit)
+
+    fun setBackgroundRefresh(enabled: Boolean)
+
+    fun backgroundRefreshEnabled(): Boolean
+
+    fun lock()
+
+    fun unlock(
+        password: String,
+        onResult: (Boolean) -> Unit,
+    )
+
+    fun setLockPassword(
+        password: String,
+        onResult: (String) -> Unit,
+    )
+
+    fun removeLockPassword(onResult: (String) -> Unit)
+}

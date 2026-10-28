@@ -8,6 +8,8 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":sharedUi"))
     implementation(compose.desktop.currentOs)
+    implementation(libs.compose.material3)
+    testImplementation(kotlin("test"))
 }
 compose.desktop {
     application { mainClass = "io.polion.desktop.MainKt" }
