@@ -1,15 +1,17 @@
 # Polion
 
-A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. The application displays a shared welcome screen and privacy boundary. Its shared core provides exact amounts, ownership scopes, SQLite repositories, raw provenance, a versioned activity ledger, connector contracts, durable sync jobs, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation, and encrypted portable backup. Real provider integrations and portfolio workflows are planned. Polion does not sign transactions or accept private keys.
+A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. Its shared interface provides portfolio, account, public Bitcoin address, activity, reporting and settings workflows. The shared core provides exact amounts, ownership scopes, SQLite persistence, raw provenance, a versioned activity ledger, Esplora history, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation and encrypted portable backup. Descriptor/xpub discovery and complete Bitcoin integration remain outstanding. Polion does not sign transactions or accept private keys.
 
 ## Build and run
 
 Use JDK 21 and an Android SDK with platform 37 (`platforms;android-37.0`) and build tools 36.0.0. Set `ANDROID_HOME` to the SDK directory or set `sdk.dir` in untracked `local.properties`.
 
 ```sh
-./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :androidApp:lintDebug :androidApp:assembleDebug :desktopApp:packageUberJarForCurrentOS
+./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :sharedUi:jvmTest :desktopApp:test :androidApp:lintDebug :androidApp:assembleDebug :desktopApp:packageUberJarForCurrentOS
 ./gradlew :desktopApp:run
 ```
+
+Headless shared UI tests need an X display; use Xvfb with `SKIKO_RENDER_API=SOFTWARE` on Linux.
 
 Open the project in Android Studio or install `androidApp/build/outputs/apk/debug/androidApp-debug.apk` on an Android 8.0+ device, then launch Polion.
 
@@ -18,10 +20,10 @@ The wrapper pins Gradle 9.4.1 with a distribution checksum. Dependency versions 
 ## Structure
 
 - `core`: shared financial/identity primitives, ownership, transactional storage, provenance, ledger, connector contracts and synchronization, asset/price registry, holdings, accounting, overlays and portable backup; common tests run on JVM and Android host, with SQLite integration tests on JVM.
-- `sharedUi`: shared Compose welcome screen for Android and JVM.
-- `androidApp`: Android activity and manifest.
-- `desktopApp`: Compose desktop window and runnable JAR packaging.
+- `sharedUi`: shared responsive Compose portfolio workflows for Android and JVM.
+- `androidApp`: activity, foreground sync service and notification, document picker, WorkManager refresh and native reliability harness.
+- `desktopApp`: Compose desktop window, file dialogs, scheduled refresh and runnable JAR packaging.
 
-Logs contain fixed event names without free-form messages, exception payloads, or portfolio data. Android requests no network permission. There is no analytics or telemetry integration.
+Source requests require consent and disclose watched addresses to the chosen HTTPS indexer. The live database is plaintext; the optional privacy lock is a screen barrier, while portable backups are encrypted. Logs use fixed event names without free-form messages, exception payloads or portfolio data. There is no analytics or telemetry integration.
 
-See [financial-core acceptance](docs/milestone-b.md), [Milestone A acceptance](docs/milestone-a.md), [architecture](docs/architecture.md), [reference audit](docs/reference-audit.md), and [validation evidence](docs/validation.md) for scope and verification details.
+See [Milestone D acceptance](docs/milestone-d.md), [financial-core acceptance](docs/milestone-b.md), [Milestone A acceptance](docs/milestone-a.md), [architecture](docs/architecture.md), [reference audit](docs/reference-audit.md), and [validation evidence](docs/validation.md) for scope and verification details.

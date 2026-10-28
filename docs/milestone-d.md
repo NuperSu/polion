@@ -1,0 +1,13 @@
+# Milestone D acceptance map
+
+Milestone D covers roadmap phases 21–23. This map distinguishes implemented paths from the roadmap's acceptance requirements; the gate remains open until the outstanding integration, device and reporting work is verified.
+
+| Phase | Current implementation | Acceptance gaps |
+| --- | --- | --- |
+| 21 — shared workflows | Shared Compose screens for ownership, accounts, public Bitcoin addresses, balances, activity, source status, corrections, rules and reconciliation; persisted projections use the shared core. Compact and wide navigation are described in [phase 21](phase21.md). | Descriptor/xpub discovery and complete Bitcoin integration are outstanding. The end-to-end Bitcoin workflow must be verified on both Android and desktop with the same engines. |
+| 22 — platform and privacy | Android WorkManager and desktop scheduled refresh, local file dialogs, consent, privacy lock, data wipe and encrypted backup with staging restore. See [phase 22](phase22.md). | OS credential-store integration remains outstanding; the live database is plaintext. Native Android persistence, SQLite-full rollback, wrong-password restore, privacy lock restart and foreground Home-switch checks pass on the emulator. Periodic-worker, offline and further process-death validation remain open. |
+| 23 — analytics and customization | Shared historical values, allocation, account breakdown, filters, manual prices, CSV and explicit FIFO treatment/reporting. See [phase 23](phase23.md). | Historical allocation, account/category breakdown and provenance are implemented and covered by shared projection tests. Bitcoin FIFO is provisional where timestamps do not preserve chain order. Performance and view-state behavior need representative workload evidence. |
+
+Gate D requires a functional Android and desktop local-first Bitcoin portfolio tracker with a general-purpose core, accounting and user corrections. It depends on the unresolved Milestone C Bitcoin acceptance work as well as these phase requirements. Current test, build, launch and CI evidence is recorded separately in [validation.md](validation.md); do not treat implementation or packaging as device-runtime evidence.
+
+The current automated test coverage includes `core/src/jvmTest/kotlin/io/polion/core/application/PortfolioApplicationTest.kt` for persisted workflows, scope, accounting, consent and staging; `core/src/commonTest/kotlin/io/polion/core/bitcoin/EsploraTest.kt` and `core/src/jvmTest/kotlin/io/polion/core/bitcoin/BitcoinScanReconcilerTest.kt` for adapter and reconciliation behavior; and the existing holdings and backup tests. These tests do not replace platform runtime or independent chain verification.
