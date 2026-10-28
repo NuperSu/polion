@@ -229,14 +229,15 @@ class SyncOrchestrator(
                         row[0],
                     ),
                 )
+                db.execute("INSERT OR IGNORE INTO sync_provider_health VALUES (?, 0, 0)", listOf(provider.id.value))
                 db.execute(
-                    "INSERT INTO sync_provider_health VALUES (?, ?, 0) ON CONFLICT(provider) DO UPDATE SET available_at=excluded.available_at",
+                    "UPDATE sync_provider_health SET available_at=? WHERE provider=?",
                     listOf(
-                        provider.id.value,
                         (
                             now +
                                 provider.minimumIntervalMillis
                         ).toString(),
+                        provider.id.value,
                     ),
                 )
                 return@transaction Claim(

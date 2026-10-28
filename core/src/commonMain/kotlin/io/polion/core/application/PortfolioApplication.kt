@@ -255,7 +255,12 @@ class PortfolioApplication(
         catalog: OwnershipSnapshot,
         portfolioId: PortfolioId?,
     ): Set<AccountId> {
-        if (portfolioId == null) return catalog.accounts.map { it.id }.toSet()
+        if (portfolioId == null) {
+            return catalog.accounts
+                .filter { "polion:archived" !in it.tags }
+                .map { it.id }
+                .toSet()
+        }
         val portfolio = requireNotNull(catalog.portfolios.firstOrNull { it.id == portfolioId }) { "Unknown portfolio" }
         val byId = catalog.accounts.associateBy { it.id }
         return catalog.accounts
@@ -266,7 +271,7 @@ class PortfolioApplication(
                     if (cursor in portfolio.accountIds) within = true
                     cursor = byId[cursor]?.parentId
                 }
-                within && (portfolio.ownerIds.isEmpty() || account.ownerId in portfolio.ownerIds)
+                "polion:archived" !in account.tags && within && (portfolio.ownerIds.isEmpty() || account.ownerId in portfolio.ownerIds)
             }.map { it.id }
             .toSet()
     }
@@ -434,13 +439,14 @@ class PortfolioApplication(
     @OptIn(ExperimentalTime::class)
     fun refreshBitcoin(
         transport: EsploraTransport,
+        verifyBlockPositions: Boolean = false,
         onProgress: (BitcoinScanProgress) -> Unit = {},
     ): List<JobState> {
         require(sourceConsent()) { "Source consent required" }
         putSetting("source_in_progress", "true")
         return try {
             bitcoinStage.reset()
-            refreshBitcoinScan(transport, onProgress)
+            refreshBitcoinScan(transport, verifyBlockPositions, onProgress)
         } catch (failure: Exception) {
             putSetting(
                 "source_error",
@@ -460,6 +466,7 @@ class PortfolioApplication(
     @OptIn(ExperimentalTime::class)
     private fun refreshBitcoinScan(
         transport: EsploraTransport,
+        verifyBlockPositions: Boolean,
         onProgress: (BitcoinScanProgress) -> Unit,
     ): List<JobState> {
         require(sourceConsent()) { "Source consent required" }
@@ -469,8 +476,15 @@ class PortfolioApplication(
                     it.identity.networkId == BITCOIN_MAINNET &&
                     it.identity.kind == "address"
             }
-        require(bitcoinTargets.none { !it.enabled }) { "Resume paused Bitcoin addresses before refreshing" }
-        val targets = bitcoinTargets
+        val targets = bitcoinTargets.filter { it.enabled }
+        val ownedClaims = bitcoinTargets.groupBy { bitcoinMainnetAddress(it.identity.canonicalKey) }
+        require(
+            ownedClaims.values.all { group ->
+                group.map { it.accountId }.distinct().size == 1
+            },
+        ) { "Address assigned to multiple accounts" }
+        val ownedAddresses = ownedClaims.mapValues { it.value.first().accountId }
+        val reconciledAccounts = bitcoinTargets.groupBy { it.accountId }.filterValues { group -> group.all { it.enabled } }.keys
         val claims = targets.groupBy { bitcoinMainnetAddress(it.identity.canonicalKey) }
         require(claims.values.all { group -> group.map { it.accountId }.distinct().size == 1 }) { "Address assigned to multiple accounts" }
         val addresses = claims.mapValues { it.value.first().accountId }
@@ -574,11 +588,13 @@ class PortfolioApplication(
             if (state != JobState.COMPLETED) orchestrator.cancel(id)
         }
         if (result.all { it == JobState.COMPLETED }) {
-            runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "blocks")) }
-            bitcoinStage.resolveBlocks(transport) { resolved, total ->
-                onProgress(
-                    BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "blocks", resolved, total),
-                )
+            if (verifyBlockPositions) {
+                runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "blocks")) }
+                bitcoinStage.resolveBlocks(transport) { resolved, total ->
+                    onProgress(
+                        BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "blocks", resolved, total),
+                    )
+                }
             }
             runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "verify")) }
             require(
@@ -600,7 +616,7 @@ class PortfolioApplication(
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
             runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "apply")) }
-            bitcoinStage.applyComplete(addresses)
+            bitcoinStage.applyComplete(ownedAddresses, reconciledAccounts, requireBlockPositions = verifyBlockPositions)
             invalidate()
             putSetting("source_last_success", now().toString())
             db.execute("DELETE FROM application_settings WHERE key='source_error'")
@@ -637,7 +653,7 @@ class PortfolioApplication(
         key: String,
         value: String,
     ) = db.execute(
-        "INSERT INTO application_settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
         listOf(key, value),
     )
 
@@ -687,6 +703,45 @@ class PortfolioApplication(
     fun saveOwner(value: Owner) = updateOwnership { it.copy(owners = it.owners.filterNot { old -> old.id == value.id } + value) }
 
     fun saveAccount(value: Account) = updateOwnership { it.copy(accounts = it.accounts.filterNot { old -> old.id == value.id } + value) }
+
+    /** Removes an account and descendants from active scopes while preserving their financial evidence. */
+    fun archiveAccount(
+        id: AccountId,
+        archived: Boolean = true,
+    ) {
+        val catalog = ownership.load()
+        require(catalog.accounts.any { it.id == id }) { "Unknown account" }
+        val affected = mutableSetOf(id)
+        do {
+            val before = affected.size
+            catalog.accounts.filter { it.parentId in affected }.forEach { affected.add(it.id) }
+        } while (affected.size != before)
+        db.transaction {
+            affected.forEach { account ->
+                if (archived) {
+                    db.execute("INSERT OR IGNORE INTO ownership_tags VALUES ('account', ?, 'polion:archived')", listOf(account.value))
+                } else {
+                    db.execute(
+                        "DELETE FROM ownership_tags WHERE entity_type='account' AND entity_id=? AND tag='polion:archived'",
+                        listOf(account.value),
+                    )
+                }
+            }
+            catalog.targets.filter { it.accountId in affected }.forEach { target ->
+                val key = "archived_target:${target.id.value}"
+                if (archived) {
+                    if (setting(key) == null) putSetting(key, target.enabled.toString())
+                    db.execute("UPDATE targets SET enabled=0 WHERE id=?", listOf(target.id.value))
+                } else {
+                    val enabled = setting(key)?.toBooleanStrictOrNull() ?: target.enabled
+                    db.execute("UPDATE targets SET enabled=? WHERE id=?", listOf(if (enabled) "1" else "0", target.id.value))
+                    db.execute("DELETE FROM application_settings WHERE key=?", listOf(key))
+                }
+            }
+            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        }
+        invalidate()
+    }
 
     fun saveAccountAndTarget(
         account: Account,
@@ -795,7 +850,7 @@ class PortfolioApplication(
         ensureDefaultAssets()
         require(market.asset(currency) != null) { "Unknown currency asset" }
         db.execute(
-            "INSERT INTO application_settings VALUES ('currency', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            "INSERT OR REPLACE INTO application_settings VALUES ('currency', ?)",
             listOf(currency.value),
         )
     }
@@ -832,6 +887,7 @@ class PortfolioApplication(
     /** Seeds example records only when the portfolio is empty and the user explicitly requests them. */
     fun seedDemo() {
         require(ownership.load().owners.isEmpty() && activities.current().isEmpty()) { "Example data requires an empty portfolio" }
+        putSetting("sample_data", "true")
         val at = now()
         val owner =
             io.polion.core.model
@@ -990,7 +1046,6 @@ class PortfolioApplication(
                 ),
             ),
         )
-        putSetting("sample_data", "true")
     }
 
     fun exportCsv(): String {

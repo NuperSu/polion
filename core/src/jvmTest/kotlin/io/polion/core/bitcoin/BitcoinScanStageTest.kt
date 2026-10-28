@@ -58,6 +58,8 @@ class BitcoinScanStageTest {
                 assertEquals(2, ledger.current().count { it.status == ActivityStatus.CONFIRMED })
                 stage.addPage(listOf(original.last()))
                 stage.resolveBlocks(transport)
+                stage.applyComplete(owners, emptySet())
+                assertEquals(2, ledger.current().count { it.status == ActivityStatus.CONFIRMED })
                 db.execute(
                     "CREATE TRIGGER reject_stage_reversal BEFORE INSERT ON ledger_activities WHEN NEW.status='REVERSED' BEGIN SELECT RAISE(ABORT, 'fixture'); END",
                 )

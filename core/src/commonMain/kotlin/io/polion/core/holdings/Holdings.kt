@@ -130,7 +130,7 @@ class HoldingsRepository(
 
     fun observe(observation: ReportedBalance) {
         db.execute(
-            "INSERT INTO balance_observations VALUES (?,?,?,?,?) ON CONFLICT(account,asset,at_millis,provider) DO UPDATE SET units=excluded.units",
+            "INSERT OR REPLACE INTO balance_observations VALUES (?,?,?,?,?)",
             listOf(
                 observation.account.value,
                 observation.asset.value,
@@ -167,7 +167,7 @@ class HoldingsRepository(
                 ?.let(ExactInteger::parse)
                 ?: ExactInteger.ZERO
         db.execute(
-            "INSERT INTO holdings_balances VALUES (?,?,?) ON CONFLICT(account,asset) DO UPDATE SET units=excluded.units",
+            "INSERT OR REPLACE INTO holdings_balances VALUES (?,?,?)",
             listOf(
                 account,
                 asset,

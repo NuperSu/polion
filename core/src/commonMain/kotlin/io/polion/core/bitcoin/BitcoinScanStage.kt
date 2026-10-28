@@ -177,9 +177,15 @@ class BitcoinScanStage(
     }
 
     /** Apply all staged transactions and reversals together after the caller's scan validation. */
-    fun applyComplete(ownedAddresses: Map<String, AccountId>) {
+    fun applyComplete(
+        ownedAddresses: Map<String, AccountId>,
+        reconciledAccounts: Set<AccountId> = ownedAddresses.values.toSet(),
+        requireBlockPositions: Boolean = true,
+    ) {
         require(ownedAddresses.isNotEmpty())
-        require(db.query("SELECT hash FROM bitcoin_scan_blocks WHERE resolved=0 LIMIT 1").isEmpty()) { "Block positions are incomplete" }
+        require(!requireBlockPositions || db.query("SELECT hash FROM bitcoin_scan_blocks WHERE resolved=0 LIMIT 1").isEmpty()) {
+            "Block positions are incomplete"
+        }
         val decoder = BitcoinDecoder(ownedAddresses)
         db.transaction {
             db.execute("DELETE FROM bitcoin_scan_present")
@@ -206,7 +212,11 @@ class BitcoinScanStage(
                 )
             missing.forEach { row ->
                 val latest = activities.history(ActivityId(row.single()!!)).last()
-                activities.saveInTransaction(latest.copy(status = ActivityStatus.REVERSED))
+                if (latest.movements.any { it.accountId in reconciledAccounts }) {
+                    activities.saveInTransaction(
+                        latest.copy(status = ActivityStatus.REVERSED),
+                    )
+                }
             }
         }
     }

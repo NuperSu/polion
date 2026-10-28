@@ -388,6 +388,54 @@ class PortfolioApplicationTest {
         }
     }
 
+    @Test fun archivedAccountsCanBeRestoredWithoutLosingHistoryOrTreatments() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 15552000000L }
+            app.seedDemo()
+            val before = app.snapshot()
+            val report = app.accountingReport()
+            app.archiveAccount(
+                io.polion.core.model
+                    .AccountId("demo-wallet"),
+            )
+            check(app.snapshot().valuations.isEmpty())
+            check(app.snapshot().activities.isEmpty())
+            check(
+                "polion:archived" in
+                    app
+                        .snapshot()
+                        .ownership.accounts
+                        .single()
+                        .tags,
+            )
+            app.archiveAccount(
+                io.polion.core.model
+                    .AccountId("demo-wallet"),
+                false,
+            )
+            assertEquals(before.valuations, app.snapshot().valuations)
+            assertEquals(before.activityTotal, app.snapshot().activityTotal)
+            assertEquals(report, app.accountingReport())
+        }
+    }
+
+    @Test fun portableBackupPreservesTheTargetsOwnAndroidLocaleMetadata() {
+        JvmSqliteDatabase(":memory:").use { source ->
+            JvmSqliteDatabase(":memory:").use { target ->
+                source.execute("CREATE TABLE android_metadata (locale TEXT)")
+                source.execute("INSERT INTO android_metadata VALUES ('en_US')")
+                target.execute("CREATE TABLE android_metadata (locale TEXT)")
+                target.execute("INSERT INTO android_metadata VALUES ('de_DE')")
+                val app = PortfolioApplication(source) { 15552000000L }
+                app.seedDemo()
+                val bytes = app.exportBackup("password".toCharArray())
+                app.restoreToStaging(target, bytes, "password".toCharArray())
+                assertEquals("de_DE", target.query("SELECT locale FROM android_metadata").single().single())
+                assertEquals(4, PortfolioApplication(target) { 15552000000L }.snapshot().activityTotal)
+            }
+        }
+    }
+
     @Test fun backupFromBeforeScanTablesRestoresIntoCurrentSchema() {
         JvmSqliteDatabase(":memory:").use { oldDb ->
             val oldApp = PortfolioApplication(oldDb) { 15552000000L }

@@ -13,7 +13,7 @@ class PortableBackup(
             val tables =
                 db
                     .query(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bitcoin_scan_stage','bitcoin_scan_blocks','bitcoin_scan_present') ORDER BY name",
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bitcoin_scan_stage','bitcoin_scan_blocks','bitcoin_scan_present','android_metadata') ORDER BY name",
                     ).map { it.single()!! }
             return PortableBackup(tables)
         }
@@ -56,14 +56,15 @@ class PortableBackup(
 
         fun next(): String = requireNotNull(fields.getOrNull(i++)) { "Malformed archive" }
         require(next() == "POLION" && next() == "2")
-        require(next().toInt() == tables.size)
+        val sourceTableCount = next().toInt()
+        require(sourceTableCount in tables.size..tables.size + 1)
         val userVersion = next()
         db.transaction {
             require(db.query("PRAGMA user_version").single().single() == userVersion) { "Database schema version mismatch" }
             val targetTables =
                 db
                     .query(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bitcoin_scan_stage','bitcoin_scan_blocks','bitcoin_scan_present') ORDER BY name",
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bitcoin_scan_stage','bitcoin_scan_blocks','bitcoin_scan_present','android_metadata') ORDER BY name",
                     ).map {
                         it.single()!!
                     }
@@ -84,9 +85,17 @@ class PortableBackup(
                 require(count == 0 || table.endsWith("_schema") && count == 1) { "Staging database is not empty" }
                 if (count != 0) db.execute("DELETE FROM $table")
             }
-            tables.forEach { expected ->
+            var expectedIndex = 0
+            repeat(sourceTableCount) {
                 val table = next()
-                require(table == expected)
+                if (table == "android_metadata") {
+                    require(next().toInt() == 1 && next() == "locale")
+                    val platformRows = next().toInt()
+                    require(platformRows in 0..1)
+                    repeat(platformRows) { next() }
+                    return@repeat
+                }
+                require(table == tables.getOrNull(expectedIndex++))
                 val count = next().toInt()
                 require(count in 1..1000)
                 val columns = List(count) { next() }
@@ -105,6 +114,7 @@ class PortableBackup(
                     db.execute("INSERT INTO $table (${columns.joinToString(",")}) VALUES (${List(count) { "?" }.joinToString(",")})", row)
                 }
             }
+            require(expectedIndex == tables.size)
             require(i == fields.size)
             require(db.query("PRAGMA foreign_key_check").isEmpty())
         }
