@@ -30,68 +30,139 @@ class BitcoinScanStage(
             "CREATE TABLE IF NOT EXISTS bitcoin_scan_blocks (hash TEXT PRIMARY KEY, height INTEGER NOT NULL, resolved INTEGER NOT NULL)",
         )
         db.execute("CREATE TABLE IF NOT EXISTS bitcoin_scan_present (id TEXT PRIMARY KEY)")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS bitcoin_scan_session (id INTEGER PRIMARY KEY CHECK (id = 1), generation INTEGER NOT NULL, fingerprint TEXT NOT NULL, anchor_hash TEXT NOT NULL, anchor_height INTEGER NOT NULL)",
+        )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS bitcoin_scan_addresses (address TEXT PRIMARY KEY, account_id TEXT NOT NULL, mempool_digest TEXT)",
+        )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS bitcoin_scan_seen (address TEXT NOT NULL, tx_id TEXT NOT NULL, confirmed INTEGER NOT NULL, PRIMARY KEY(address, tx_id))",
+        )
     }
 
-    /** Discard any incomplete scan after process death before starting a new scan. */
-    fun reset() = clear()
+    companion object {
+        /** Transient scan tables: excluded from backups, empty in restore staging, and cleared when a scan completes or is discarded. */
+        val SCRATCH_TABLES =
+            listOf(
+                "bitcoin_scan_stage",
+                "bitcoin_scan_blocks",
+                "bitcoin_scan_present",
+                "bitcoin_scan_session",
+                "bitcoin_scan_addresses",
+                "bitcoin_scan_seen",
+            )
+    }
 
     fun clear() =
         db.transaction {
-            db.execute("DELETE FROM bitcoin_scan_present")
-            db.execute("DELETE FROM bitcoin_scan_stage")
-            db.execute("DELETE FROM bitcoin_scan_blocks")
+            SCRATCH_TABLES.forEach { db.execute("DELETE FROM $it") }
         }
 
-    fun addPage(observations: List<RawObservation>) =
-        db.transaction {
-            observations.forEach { observation ->
-                require(observation.namespace == "bitcoin" && observation.network == BITCOIN_MAINNET.value)
-                require(observation.id == "bitcoin:${observation.externalId}" && observation.checksum == sha256(observation.payload))
-                val previous = db.query("SELECT payload FROM bitcoin_scan_stage WHERE id=?", listOf(observation.id)).singleOrNull()
-                require(previous == null || previous.single() == observation.payload) { "Transaction changed during address scan" }
-                if (previous == null) {
-                    val status =
-                        Json
-                            .parseToJsonElement(observation.payload)
-                            .jsonObject
-                            .getValue("status")
-                            .jsonObject
-                    val confirmed = status.getValue("confirmed").jsonPrimitive.boolean
-                    val hash = if (confirmed) status.getValue("block_hash").jsonPrimitive.content else null
-                    val height = if (confirmed) status.getValue("block_height").jsonPrimitive.long else null
-                    if (hash != null) {
-                        require(hash.matches(Regex("[0-9a-f]{64}")) && height != null && height >= 0)
-                        db.execute("INSERT OR IGNORE INTO bitcoin_scan_blocks VALUES (?, ?, 0)", listOf(hash, height.toString()))
-                        val recorded =
-                            db
-                                .query(
-                                    "SELECT height FROM bitcoin_scan_blocks WHERE hash=?",
-                                    listOf(hash),
-                                ).single()
-                                .single()!!
-                                .toLong()
-                        require(recorded == height) { "Conflicting block height" }
-                    }
-                    db.execute(
-                        "INSERT INTO bitcoin_scan_stage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-                        listOf(
-                            observation.id,
-                            observation.namespace,
-                            observation.externalId,
-                            observation.network,
-                            observation.sourceId,
-                            observation.retrievedAt,
-                            observation.payload,
-                            observation.payloadVersion,
-                            observation.checksum,
-                            observation.context,
-                            hash,
-                            height?.toString(),
-                        ),
-                    )
+    /** The pending scan whose staged pages and per-address progress may be resumed; null when none is pending. */
+    fun session(): BitcoinScanSession? =
+        db
+            .query("SELECT generation, fingerprint, anchor_hash, anchor_height FROM bitcoin_scan_session WHERE id=1")
+            .singleOrNull()
+            ?.let { BitcoinScanSession(it[0]!!.toLong(), it[1]!!, it[2]!!, it[3]!!.toLong()) }
+
+    fun createSession(
+        session: BitcoinScanSession,
+        addresses: List<BitcoinScanAddress>,
+    ) = db.transaction {
+        SCRATCH_TABLES.forEach { db.execute("DELETE FROM $it") }
+        db.execute(
+            "INSERT INTO bitcoin_scan_session VALUES (1, ?, ?, ?, ?)",
+            listOf(session.generation.toString(), session.fingerprint, session.anchorHash, session.anchorHeight.toString()),
+        )
+        addresses.forEach { address ->
+            db.execute("INSERT INTO bitcoin_scan_addresses VALUES (?, ?, NULL)", listOf(address.address, address.accountId.value))
+        }
+    }
+
+    fun scanAddresses(): List<BitcoinScanAddress> =
+        db
+            .query("SELECT address, account_id, mempool_digest FROM bitcoin_scan_addresses ORDER BY address")
+            .map { BitcoinScanAddress(it[0]!!, AccountId(it[1]!!), it[2]) }
+
+    /** Records the digest of the unconfirmed-transaction list observed for an address on its first page. */
+    fun recordMempool(
+        address: String,
+        digest: String,
+    ) = db.execute("UPDATE bitcoin_scan_addresses SET mempool_digest=? WHERE address=?", listOf(digest, address))
+
+    /** Returns confirmed and unconfirmed transaction counts observed for an address across all resumed pages. */
+    fun seenCounts(address: String): Pair<Long, Long> {
+        fun count(confirmed: Int) =
+            db
+                .query("SELECT COUNT(*) FROM bitcoin_scan_seen WHERE address=? AND confirmed=?", listOf(address, confirmed.toString()))
+                .single()
+                .single()!!
+                .toLong()
+        return count(1) to count(0)
+    }
+
+    /** Stages observations; a non-null [address] also records its transactions for that address's verification. */
+    fun addPage(
+        observations: List<RawObservation>,
+        address: String? = null,
+    ) = db.transaction {
+        observations.forEach { observation ->
+            require(observation.namespace == "bitcoin" && observation.network == BITCOIN_MAINNET.value)
+            require(observation.id == "bitcoin:${observation.externalId}" && observation.checksum == sha256(observation.payload))
+            val status =
+                Json
+                    .parseToJsonElement(observation.payload)
+                    .jsonObject
+                    .getValue("status")
+                    .jsonObject
+            val confirmed = status.getValue("confirmed").jsonPrimitive.boolean
+            val previous = db.query("SELECT payload FROM bitcoin_scan_stage WHERE id=?", listOf(observation.id)).singleOrNull()
+            require(previous == null || previous.single() == observation.payload) {
+                throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+            }
+            if (previous == null) {
+                val hash = if (confirmed) status.getValue("block_hash").jsonPrimitive.content else null
+                val height = if (confirmed) status.getValue("block_height").jsonPrimitive.long else null
+                if (hash != null) {
+                    require(hash.matches(Regex("[0-9a-f]{64}")) && height != null && height >= 0)
+                    db.execute("INSERT OR IGNORE INTO bitcoin_scan_blocks VALUES (?, ?, 0)", listOf(hash, height.toString()))
+                    val recorded =
+                        db
+                            .query(
+                                "SELECT height FROM bitcoin_scan_blocks WHERE hash=?",
+                                listOf(hash),
+                            ).single()
+                            .single()!!
+                            .toLong()
+                    require(recorded == height) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
                 }
+                db.execute(
+                    "INSERT INTO bitcoin_scan_stage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+                    listOf(
+                        observation.id,
+                        observation.namespace,
+                        observation.externalId,
+                        observation.network,
+                        observation.sourceId,
+                        observation.retrievedAt,
+                        observation.payload,
+                        observation.payloadVersion,
+                        observation.checksum,
+                        observation.context,
+                        hash,
+                        height?.toString(),
+                    ),
+                )
+            }
+            address?.let {
+                db.execute(
+                    "INSERT OR REPLACE INTO bitcoin_scan_seen VALUES (?, ?, ?)",
+                    listOf(it, observation.id, if (confirmed) "1" else "0"),
+                )
             }
         }
+    }
 
     /** Fetch each block list once; keep one block and a bounded number of transaction payloads in memory. */
     fun resolveBlocks(
@@ -266,6 +337,19 @@ class BitcoinScanStage(
         }
     }
 }
+
+data class BitcoinScanSession(
+    val generation: Long,
+    val fingerprint: String,
+    val anchorHash: String,
+    val anchorHeight: Long,
+)
+
+data class BitcoinScanAddress(
+    val address: String,
+    val accountId: AccountId,
+    val mempoolDigest: String?,
+)
 
 private fun List<String?>.toObservation() =
     RawObservation(this[0]!!, this[1]!!, this[2]!!, this[3]!!, this[4]!!, this[5]!!, this[6]!!, this[7]!!, this[8]!!, this[9]!!)

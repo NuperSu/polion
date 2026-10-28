@@ -12,6 +12,8 @@ import io.polion.core.bitcoin.BITCOIN_ASSET
 import io.polion.core.bitcoin.BITCOIN_MAINNET
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
+import io.polion.core.bitcoin.BitcoinScanAddress
+import io.polion.core.bitcoin.BitcoinScanSession
 import io.polion.core.bitcoin.BitcoinScanStage
 import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
@@ -71,7 +73,6 @@ import io.polion.core.sync.SyncJob
 import io.polion.core.sync.SyncOrchestrator
 import io.polion.core.sync.SyncProvider
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
@@ -553,7 +554,6 @@ class PortfolioApplication(
         require(sourceConsent()) { "Source consent required" }
         putSetting("source_in_progress", "true")
         return try {
-            bitcoinStage.reset()
             refreshBitcoinScan(transport, verifyBlockPositions, onProgress)
         } catch (failure: Exception) {
             putSetting(
@@ -563,11 +563,7 @@ class PortfolioApplication(
             )
             throw failure
         } finally {
-            try {
-                bitcoinStage.clear()
-            } finally {
-                db.execute("DELETE FROM application_settings WHERE key='source_in_progress'")
-            }
+            db.execute("DELETE FROM application_settings WHERE key='source_in_progress'")
         }
     }
 
@@ -596,7 +592,10 @@ class PortfolioApplication(
         val claims = targets.groupBy { bitcoinMainnetAddress(it.identity.canonicalKey) }
         require(claims.values.all { group -> group.map { it.accountId }.distinct().size == 1 }) { "Address assigned to multiple accounts" }
         val addresses = claims.mapValues { it.value.first().accountId }
-        if (addresses.isEmpty()) return emptyList()
+        if (addresses.isEmpty()) {
+            bitcoinStage.clear()
+            return emptyList()
+        }
         if (market.asset(BITCOIN_ASSET) == null) {
             registerAsset(
                 AssetDefinition(
@@ -633,14 +632,36 @@ class PortfolioApplication(
         }
         val providerSource = SourceId("esplora:" + sha256(sourceEndpoint()))
         putSetting("provider_endpoint:${providerSource.value}", sourceEndpoint())
-        val summaries = addresses.keys.associateWith(::summary)
-        val seen = mutableMapOf<String, Pair<MutableSet<String>, MutableSet<String>>>()
-        val mempools = mutableMapOf<String, String>()
+        val fingerprint =
+            sha256(
+                "${providerSource.value}|" + addresses.entries.sortedBy { it.key }.joinToString("|") { "${it.key}=${it.value.value}" },
+            )
+        val pending = bitcoinStage.session()
+        val resumable = pending != null && pending.fingerprint == fingerprint && pending.anchorHeight <= anchorHeight
+        if (!resumable) {
+            bitcoinStage.createSession(
+                BitcoinScanSession(
+                    (pending?.generation ?: 0L) + 1,
+                    fingerprint,
+                    startTip,
+                    anchorHeight,
+                ),
+                addresses.map { (address, account) -> BitcoinScanAddress(address, account, null) },
+            )
+            db.execute("DELETE FROM sync_jobs WHERE source='esplora' OR source LIKE 'esplora:%'")
+        }
+        val session = requireNotNull(bitcoinStage.session())
+        val scanned = bitcoinStage.scanAddresses()
         var providerFailure: BitcoinProviderException? = null
+        var integrityFailure: BitcoinProviderException? = null
         val recordingTransport =
             EsploraTransport { path ->
                 try {
-                    transport.get(path).also { if (path.endsWith("/txs/mempool")) mempools[path] = it }
+                    transport.get(path).also { contents ->
+                        if (path.endsWith("/txs/mempool")) {
+                            bitcoinStage.recordMempool(path.removePrefix("/address/").removeSuffix("/txs/mempool"), sha256(contents))
+                        }
+                    }
                 } catch (
                     failure: BitcoinProviderException,
                 ) {
@@ -649,88 +670,74 @@ class PortfolioApplication(
                 }
             }
         val result = mutableListOf<JobState>()
-        val cleanup = sync(fetcher { error("No transport configured") })
-        db
-            .query(
-                "SELECT id FROM sync_jobs WHERE (source='esplora' OR source LIKE 'esplora:%') AND state IN ('READY','RUNNING','PARTIAL','FAILED')",
-            ).forEach {
-                cleanup.cancel(SyncJobId(it.single()!!))
-            }
         var pagesFetched = 0
         var transactionsFetched = 0
-        for ((addressIndex, entry) in addresses.entries.withIndex()) {
-            val (address, account) = entry
+        for ((addressIndex, scan) in scanned.withIndex()) {
             val counter = (setting("sync_sequence")?.toLong() ?: 0L) + 1
             putSetting("sync_sequence", counter.toString())
             val historyFetcher =
-                EsploraHistoryFetcher(mapOf(account to address), recordingTransport) { Instant.fromEpochMilliseconds(now()).toString() }
+                EsploraHistoryFetcher(mapOf(scan.accountId to scan.address), recordingTransport) {
+                    Instant.fromEpochMilliseconds(now()).toString()
+                }
+            val jobId = SyncJobId("bitcoin-${session.generation}-${sha256(scan.address).take(16)}")
             val orchestrator =
                 sync(
                     fetcher { request ->
-                        historyFetcher.fetch(request).also { page ->
-                            bitcoinStage.addPage(page.observations)
-                            pagesFetched++
-                            transactionsFetched += page.observations.size
-                            runCatching {
-                                onProgress(
-                                    BitcoinScanProgress(addressIndex + 1, addresses.size, pagesFetched, transactionsFetched),
-                                )
+                        try {
+                            historyFetcher.fetch(request).also { page ->
+                                bitcoinStage.addPage(page.observations, scan.address)
+                                pagesFetched++
+                                transactionsFetched += page.observations.size
+                                runCatching {
+                                    onProgress(BitcoinScanProgress(addressIndex + 1, scanned.size, pagesFetched, transactionsFetched))
+                                }
                             }
-                            val sets = seen.getOrPut(address) { mutableSetOf<String>() to mutableSetOf() }
-                            page.observations.forEach { observation ->
-                                val confirmed =
-                                    Json
-                                        .parseToJsonElement(
-                                            observation.payload,
-                                        ).jsonObject
-                                        .getValue("status")
-                                        .jsonObject
-                                        .getValue("confirmed")
-                                        .jsonPrimitive.boolean
-                                (if (confirmed) sets.first else sets.second).add(observation.id)
+                        } catch (failure: BitcoinProviderException) {
+                            if (failure.reason == BitcoinProviderFailure.HISTORY_CHANGED ||
+                                failure.reason == BitcoinProviderFailure.REORGANIZED
+                            ) {
+                                bitcoinStage.clear()
+                                integrityFailure = failure
                             }
+                            throw failure
                         }
                     },
                     providerSource,
                 )
-            val id = SyncJobId("bitcoin-$counter")
-            orchestrator.enqueue(SyncJob(id, providerSource, BITCOIN_MAINNET, account))
-            var pages = 0
-            while (pages < 1000 && orchestrator.runOne()) pages++
-            val state = orchestrator.status(id)?.state ?: JobState.FAILED
+            if (orchestrator.status(jobId) == null) {
+                orchestrator.enqueue(SyncJob(jobId, providerSource, BITCOIN_MAINNET, scan.accountId))
+            }
+            orchestrator.retry(jobId)
+            while (orchestrator.runOne()) Unit
+            val state = orchestrator.status(jobId)?.state ?: JobState.FAILED
             result.add(state)
-            if (state != JobState.COMPLETED) orchestrator.cancel(id)
+            if (state != JobState.COMPLETED) break
         }
-        if (result.all { it == JobState.COMPLETED }) {
+        integrityFailure?.let { throw it }
+        if (result.size == scanned.size && result.all { it == JobState.COMPLETED }) {
             if (verifyBlockPositions) {
-                runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "blocks")) }
+                runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "blocks")) }
                 bitcoinStage.resolveBlocks(transport) { resolved, total ->
                     onProgress(
-                        BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "blocks", resolved, total),
+                        BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "blocks", resolved, total),
                     )
                 }
             }
-            runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "verify")) }
+            runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "verify")) }
             require(
-                mempools.size == addresses.size &&
-                    mempools.all { (path, contents) ->
-                        transport.get(path) == contents
-                    },
-            ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
-            require(
-                addresses.keys.all { address ->
-                    val counts = summaries.getValue(address)
-                    val observed = seen[address] ?: (emptySet<String>() to emptySet<String>())
-                    summary(address) == counts &&
-                        observed.first.size.toLong() == counts.first &&
-                        observed.second.size.toLong() == counts.second
+                bitcoinStage.scanAddresses().all { scan ->
+                    scan.mempoolDigest != null && scan.mempoolDigest == sha256(transport.get("/address/${scan.address}/txs/mempool"))
                 },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
-            require(transport.get("/block-height/$anchorHeight").trim() == startTip) {
+            require(
+                scanned.all { scan -> summary(scan.address) == bitcoinStage.seenCounts(scan.address) },
+            ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+            require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
-            runCatching { onProgress(BitcoinScanProgress(addresses.size, addresses.size, pagesFetched, transactionsFetched, "apply")) }
+            runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "apply")) }
             bitcoinStage.applyComplete(ownedAddresses, reconciledAccounts, requireBlockPositions = verifyBlockPositions)
+            bitcoinStage.clear()
             invalidate()
             putSetting("source_last_success", now().toString())
             db.execute("DELETE FROM application_settings WHERE key='source_error'")
@@ -766,7 +773,7 @@ class PortfolioApplication(
             }
         putSetting("source_in_progress", "true")
         try {
-            bitcoinStage.reset()
+            bitcoinStage.clear()
             val canonicalHashes = mutableMapOf<Long, String>()
             entries.forEach { activity ->
                 val rows =

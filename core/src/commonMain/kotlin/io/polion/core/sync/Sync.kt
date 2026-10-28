@@ -134,10 +134,16 @@ class SyncOrchestrator(
             )
         }
 
+    /** An explicit retry clears job and provider backoff for jobs that are not running; a running job's lease remains authoritative. */
     fun retry(id: SyncJobId) =
         db.transaction {
             db.execute(
-                "UPDATE sync_jobs SET state='READY', attempts=0, next_run=0, lease_until=0, token=token+1 WHERE id=? AND state IN ('FAILED','PARTIAL','CANCELLED')",
+                "UPDATE sync_provider_health SET available_at=0 WHERE provider=(SELECT last_provider FROM sync_jobs WHERE id=? AND state IN ('READY','FAILED','PARTIAL','CANCELLED'))",
+                listOf(id.value),
+            )
+            db.execute("DELETE FROM sync_cursors WHERE job_id=?", listOf(id.value))
+            db.execute(
+                "UPDATE sync_jobs SET state='READY', attempts=0, next_run=0, lease_until=0, cursor=NULL, cursor_provider=NULL, token=token+1 WHERE id=? AND state IN ('READY','FAILED','PARTIAL','CANCELLED')",
                 listOf(id.value),
             )
         }

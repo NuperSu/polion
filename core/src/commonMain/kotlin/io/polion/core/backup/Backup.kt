@@ -1,5 +1,6 @@
 package io.polion.core.backup
 
+import io.polion.core.bitcoin.BitcoinScanStage
 import io.polion.core.storage.SqliteDatabase
 import io.polion.core.storage.sha256
 
@@ -8,12 +9,14 @@ class PortableBackup(
     private val tables: List<String>,
 ) {
     companion object {
+        private val excludedTables = (BitcoinScanStage.SCRATCH_TABLES + "android_metadata").joinToString(",") { "'$it'" }
+
         /** Discover durable application tables; transient Bitcoin scan working tables are excluded. */
         fun discover(db: SqliteDatabase): PortableBackup {
             val tables =
                 db
                     .query(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bitcoin_scan_stage','bitcoin_scan_blocks','bitcoin_scan_present','android_metadata') ORDER BY name",
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ($excludedTables) ORDER BY name",
                     ).map { it.single()!! }
             return PortableBackup(tables)
         }
@@ -70,12 +73,12 @@ class PortableBackup(
             val targetTables =
                 db
                     .query(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('bitcoin_scan_stage','bitcoin_scan_blocks','bitcoin_scan_present','android_metadata') ORDER BY name",
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ($excludedTables) ORDER BY name",
                     ).map {
                         it.single()!!
                     }
             require(targetTables.toSet() == tables.toSet()) { "Staging table set mismatch" }
-            listOf("bitcoin_scan_stage", "bitcoin_scan_blocks", "bitcoin_scan_present").forEach { table ->
+            BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
                 val exists = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", listOf(table)).isNotEmpty()
                 require(!exists || db.query("SELECT COUNT(*) FROM $table").single().single() == "0") { "Staging database is not empty" }
             }
