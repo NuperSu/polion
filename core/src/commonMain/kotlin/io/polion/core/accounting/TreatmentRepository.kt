@@ -1,6 +1,7 @@
 package io.polion.core.accounting
 
 import io.polion.core.model.ActivityId
+import io.polion.core.model.AssetId
 import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.Rational
@@ -15,6 +16,8 @@ class TreatmentRepository(
             db.execute(
                 "CREATE TABLE IF NOT EXISTS accounting_treatments (activity_id TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL, movement TEXT NOT NULL, other_movement TEXT, numerator TEXT, denominator TEXT, flag INTEGER NOT NULL, PRIMARY KEY(activity_id, position))",
             )
+            val columns = db.query("PRAGMA table_info(accounting_treatments)").map { it[1] }
+            if ("quote_asset" !in columns) db.execute("ALTER TABLE accounting_treatments ADD COLUMN quote_asset TEXT")
         }
     }
 
@@ -27,7 +30,7 @@ class TreatmentRepository(
             val kind: String
             val movement: EventId
             val other: EventId?
-            val value: Rational?
+            val value: QuoteValue?
             val flag: Boolean
             when (item) {
                 is Treatment.Acquire -> {
@@ -54,16 +57,17 @@ class TreatmentRepository(
                 }
             }
             db.execute(
-                "INSERT INTO accounting_treatments VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO accounting_treatments (activity_id, position, kind, movement, other_movement, numerator, denominator, flag, quote_asset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 listOf(
                     activity.value,
                     index.toString(),
                     kind,
                     movement.value,
                     other?.value,
-                    value?.numerator?.toString(),
-                    value?.denominator?.toString(),
+                    value?.amount?.numerator?.toString(),
+                    value?.amount?.denominator?.toString(),
                     if (flag) "1" else "0",
+                    value?.asset?.value,
                 ),
             )
         }
@@ -72,10 +76,20 @@ class TreatmentRepository(
     fun load(activity: ActivityId): List<Treatment> =
         db
             .query(
-                "SELECT kind, movement, other_movement, numerator, denominator, flag FROM accounting_treatments WHERE activity_id=? ORDER BY position",
+                "SELECT kind, movement, other_movement, numerator, denominator, flag, quote_asset FROM accounting_treatments WHERE activity_id=? ORDER BY position",
                 listOf(activity.value),
             ).map { row ->
-                val value = row[3]?.let { Rational(ExactInteger.parse(it), ExactInteger.parse(requireNotNull(row[4]))) }
+                val value =
+                    row[3]?.let {
+                        QuoteValue(
+                            AssetId(
+                                requireNotNull(row[6]) {
+                                    "Legacy amount has no quote asset; reclassify explicitly"
+                                },
+                            ),
+                            Rational(ExactInteger.parse(it), ExactInteger.parse(requireNotNull(row[4]))),
+                        )
+                    }
                 when (row[0]) {
                     "ACQUIRE" -> Treatment.Acquire(EventId(row[1]!!), value, row[5] == "1")
                     "DISPOSE" -> Treatment.Dispose(EventId(row[1]!!), value, row[5] == "1")

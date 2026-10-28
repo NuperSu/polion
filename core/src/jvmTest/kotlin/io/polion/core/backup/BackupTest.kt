@@ -121,9 +121,11 @@ class BackupTest {
             source.execute("INSERT INTO market_metadata VALUES ('btc',0,'BTC','Bitcoin',8)")
             source.execute("INSERT INTO ledger_activities VALUES ('activity',0,'1','a','DEPOSIT','CONFIRMED',NULL,1)")
             source.execute("INSERT INTO ledger_movements VALUES ('activity',0,0,'event','account','btc','123456789','TRANSFER',NULL)")
-            source.execute("INSERT INTO duplicate_decisions VALUES ('activity','activity2',0,'activity','LINKED')")
+            source.execute("INSERT INTO ledger_activities VALUES ('activity2',0,'1','b','DEPOSIT','CONFIRMED',NULL,1)")
+            source.execute("INSERT INTO ledger_movements VALUES ('activity2',0,0,'event2','account','btc','123456789','TRANSFER',NULL)")
+            source.execute("INSERT INTO duplicate_decisions VALUES ('activity','activity2',0,'activity','ACCEPTED')")
             source.execute("INSERT INTO overlay_revisions VALUES ('activity',0,'label','note',NULL)")
-            source.execute("INSERT INTO accounting_treatments VALUES ('activity',0,'ACQUIRE','event',NULL,NULL,NULL,0)")
+            source.execute("INSERT INTO accounting_treatments VALUES ('activity',0,'ACQUIRE','event',NULL,NULL,NULL,0,NULL)")
             val backup = PortableBackup.discover(source)
             val archive = backup.export(source)
             JvmSqliteDatabase(":memory:").use { staging ->
@@ -132,6 +134,44 @@ class BackupTest {
                 assertEquals(archive, backup.export(staging))
                 assertEquals(listOf(listOf(null, null)), staging.query("SELECT numerator, denominator FROM accounting_treatments"))
                 assertEquals("note", staging.query("SELECT note FROM overlay_revisions").single().single())
+                val ledger =
+                    io.polion.core.ledger
+                        .ActivityRepository(staging)
+                        .current()
+                val effective =
+                    io.polion.core.reconcile
+                        .OverlayRepository(staging)
+                        .replayForLedger(ledger)
+                assertEquals(1, effective.activities.size)
+                val actions =
+                    effective.activities.flatMap {
+                        io.polion.core.accounting.LedgerAccounting.actions(
+                            it.activity,
+                            io.polion.core.accounting
+                                .TreatmentRepository(staging)
+                                .load(it.activity.id),
+                        )
+                    }
+                val report =
+                    io.polion.core.accounting.FifoAccounting.calculate(
+                        actions,
+                        mapOf(
+                            io.polion.core.model
+                                .AccountId("account") to
+                                io.polion.core.model
+                                    .OwnerId("owner"),
+                        ),
+                        io.polion.core.model
+                            .AssetId("usd"),
+                    )
+                assertEquals(null, report.lots.single().basis)
+                assertEquals(
+                    "123456789",
+                    report.lots
+                        .single()
+                        .quantity
+                        .toString(),
+                )
             }
         }
     }

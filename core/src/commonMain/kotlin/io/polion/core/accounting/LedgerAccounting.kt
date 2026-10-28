@@ -3,19 +3,18 @@ package io.polion.core.accounting
 import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityStatus
 import io.polion.core.model.EventId
-import io.polion.core.model.Rational
 
 /** Decisions bind every movement to an accounting treatment and total quote amount. */
 sealed interface Treatment {
     data class Acquire(
         val movement: EventId,
-        val cost: Rational?,
+        val cost: QuoteValue?,
         val opening: Boolean = false,
     ) : Treatment
 
     data class Dispose(
         val movement: EventId,
-        val proceeds: Rational?,
+        val proceeds: QuoteValue?,
         val fee: Boolean = false,
     ) : Treatment
 

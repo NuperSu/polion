@@ -3,6 +3,7 @@ package io.polion.core.harness
 import io.polion.core.accounting.AccountingAction
 import io.polion.core.accounting.FifoAccounting
 import io.polion.core.accounting.LedgerAccounting
+import io.polion.core.accounting.QuoteValue
 import io.polion.core.accounting.Treatment
 import io.polion.core.accounting.TreatmentRepository
 import io.polion.core.holdings.BalanceCoverage
@@ -98,7 +99,12 @@ class FinancialHarnessTest {
                             "1",
                         )
                     ledger.save(activity)
-                    TreatmentRepository(db).save(activity.id, listOf(Treatment.Acquire(activity.movements.single().id, Rational.of("2"))))
+                    TreatmentRepository(
+                        db,
+                    ).save(
+                        activity.id,
+                        listOf(Treatment.Acquire(activity.movements.single().id, QuoteValue(AssetId("usd"), Rational.of("2")))),
+                    )
                 }
                 val overlays = OverlayRepository(db)
                 overlays.saveOverlay(
@@ -134,7 +140,7 @@ class FinancialHarnessTest {
                 market.registerAsset(AssetDefinition(usd, AssetIdentity(AssetKind.FIAT, null, "USD")), AssetMetadata("USD", "Dollar", 2, 0))
                 val owners = names.associate { AccountId(it) to OwnerId("owner") }
                 val actions = mutableListOf<AccountingAction>()
-                val prices = mutableMapOf<AssetId, Rational?>()
+                val prices = mutableMapOf<AssetId, QuoteValue?>()
                 names.forEach { family ->
                     val asset = AssetId(family)
                     market.registerAsset(
@@ -147,7 +153,7 @@ class FinancialHarnessTest {
                             .lookup(asset, usd, 10, 10, PricePolicy(listOf(ProviderId(family)), 20))
                             .observation!!
                             .price.value
-                    prices[asset] = Rational.fromDecimal(price)
+                    prices[asset] = QuoteValue(usd, Rational.fromDecimal(price))
                     val activity = effective.single { it.activity.id.value == family }.activity
                     actions += LedgerAccounting.actions(activity, TreatmentRepository(db).load(activity.id))
                     assertEquals(
@@ -167,7 +173,7 @@ class FinancialHarnessTest {
                             .toString(),
                     )
                 }
-                val report = FifoAccounting.calculate(actions, owners, prices)
+                val report = FifoAccounting.calculate(actions, owners, usd, prices)
                 assertEquals(Rational.of("13"), report.valuations.single { it.lot.asset.value == "new-chain" }.unrealizedGain)
                 assertEquals(Rational.of("16"), report.valuations.single { it.lot.asset.value == "exchange" }.unrealizedGain)
             }

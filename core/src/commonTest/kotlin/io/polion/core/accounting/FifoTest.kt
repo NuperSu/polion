@@ -12,6 +12,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class FifoTest {
+    private val usd = AssetId("usd")
+
+    private fun v(n: String) = QuoteValue(usd, q(n))
+
     private val btc = AssetId("btc")
     private val eth = AssetId("eth")
     private val a = AccountId("a")
@@ -25,20 +29,20 @@ class FifoTest {
     @Test fun fifoTransferTradeAndFeesAreExact() {
         val acts =
             listOf(
-                AccountingAction.Acquisition(ActivityId("open"), 0, "a", a, btc, n("3"), q("10"), true),
-                AccountingAction.Acquisition(ActivityId("buy"), 1, "a", a, btc, n("2"), q("12")),
+                AccountingAction.Acquisition(ActivityId("open"), 0, "a", a, btc, n("3"), v("10"), true),
+                AccountingAction.Acquisition(ActivityId("buy"), 1, "a", a, btc, n("2"), v("12")),
                 AccountingAction.Transfer(ActivityId("transfer"), 2, "a", a, b, btc, n("2")),
-                AccountingAction.Disposal(ActivityId("trade"), 3, "a", b, btc, n("1"), q("8")),
-                AccountingAction.Acquisition(ActivityId("trade"), 3, "b", b, eth, n("5"), q("8")),
-                AccountingAction.Disposal(ActivityId("fee"), 4, "a", a, btc, n("1"), q("2"), true),
+                AccountingAction.Disposal(ActivityId("trade"), 3, "a", b, btc, n("1"), v("8")),
+                AccountingAction.Acquisition(ActivityId("trade"), 3, "b", b, eth, n("5"), v("8")),
+                AccountingAction.Disposal(ActivityId("fee"), 4, "a", a, btc, n("1"), v("2"), true),
             )
-        val report = FifoAccounting.calculate(acts, owners, mapOf(eth to q("3")))
+        val report = FifoAccounting.calculate(acts, owners, usd, mapOf(eth to v("3")))
         assertEquals(q("10") / q("3"), report.disposals[0].basis)
         assertEquals(q("14") / q("3"), report.disposals[0].gain)
         assertEquals(q("10") / q("3"), report.disposals[1].basis)
         assertEquals(q("7"), report.valuations.single { it.lot.asset == eth }.unrealizedGain)
         assertEquals(n("3"), report.lots.filter { it.asset == btc }.fold(n("0")) { x, l -> x + l.quantity })
-        assertEquals(report, FifoAccounting.calculate(acts.reversed(), owners, mapOf(eth to q("3"))))
+        assertEquals(report, FifoAccounting.calculate(acts.reversed(), owners, usd, mapOf(eth to v("3"))))
     }
 
     @Test fun unknownBasisAndPriceAreNotInvented() {
@@ -46,10 +50,11 @@ class FifoTest {
             FifoAccounting.calculate(
                 listOf(
                     AccountingAction.Acquisition(ActivityId("missing"), 0, "a", a, btc, n("1"), null),
-                    AccountingAction.Disposal(ActivityId("sale"), 1, "a", a, btc, n("2"), q("5")),
-                    AccountingAction.Acquisition(ActivityId("unpriced"), 2, "a", a, btc, n("1"), q("3")),
+                    AccountingAction.Disposal(ActivityId("sale"), 1, "a", a, btc, n("2"), v("5")),
+                    AccountingAction.Acquisition(ActivityId("unpriced"), 2, "a", a, btc, n("1"), v("3")),
                 ),
                 owners,
+                usd,
             )
         assertNull(report.disposals.single().basis)
         assertNull(report.disposals.single().gain)
@@ -66,6 +71,7 @@ class FifoTest {
             FifoAccounting.calculate(
                 listOf(AccountingAction.Transfer(ActivityId("bad"), 0, "a", a, AccountId("foreign"), btc, n("1"))),
                 owners,
+                usd,
             )
         }
     }
@@ -102,7 +108,7 @@ class FifoTest {
                     Treatment.Dispose(
                         io.polion.core.model
                             .EventId("m"),
-                        q("5"),
+                        v("5"),
                     ),
                 ),
             )
@@ -117,11 +123,12 @@ class FifoTest {
         val report =
             FifoAccounting.calculate(
                 listOf(
-                    AccountingAction.Acquisition(ActivityId("opening"), 0, "a", a, btc, n("1"), q("7"), true),
+                    AccountingAction.Acquisition(ActivityId("opening"), 0, "a", a, btc, n("1"), v("7"), true),
                     AccountingAction.Transfer(ActivityId("move"), 1, "a", a, b, btc, n("2")),
                     AccountingAction.Disposal(ActivityId("fee"), 2, "a", b, btc, n("2"), null, true),
                 ),
                 owners,
+                usd,
             )
         assertNull(report.disposals.single().basis)
         assertNull(report.disposals.single().gain)
@@ -149,5 +156,20 @@ class FifoTest {
         assertEquals(q("-2") / q("3"), q("2") / q("-3"))
         assertEquals(0, (q("0") / q("20")).numerator.sign)
         assertEquals(q("1").hashCode(), (q("2") / q("2")).hashCode())
+    }
+
+    @Test fun mixedQuoteCurrenciesAreRejected() {
+        val action = AccountingAction.Acquisition(ActivityId("x"), 0, "a", a, btc, n("1"), QuoteValue(AssetId("eur"), q("1")))
+        assertFailsWith<IllegalArgumentException> { FifoAccounting.calculate(listOf(action), owners, usd) }
+        assertFailsWith<IllegalArgumentException> {
+            FifoAccounting.calculate(
+                emptyList(),
+                owners,
+                usd,
+                mapOf(
+                    btc to QuoteValue(AssetId("eur"), q("1")),
+                ),
+            )
+        }
     }
 }

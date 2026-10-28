@@ -7,6 +7,11 @@ import io.polion.core.model.ExactInteger
 import io.polion.core.model.OwnerId
 import io.polion.core.model.Rational
 
+data class QuoteValue(
+    val asset: AssetId,
+    val amount: Rational,
+)
+
 /** Valuations are total quote amounts; null means unknown, never zero. */
 sealed interface AccountingAction {
     val activityId: ActivityId
@@ -20,7 +25,7 @@ sealed interface AccountingAction {
         val account: AccountId,
         val asset: AssetId,
         val quantity: ExactInteger,
-        val totalCost: Rational?,
+        val totalCost: QuoteValue?,
         val opening: Boolean = false,
     ) : AccountingAction
 
@@ -31,7 +36,7 @@ sealed interface AccountingAction {
         val account: AccountId,
         val asset: AssetId,
         val quantity: ExactInteger,
-        val proceeds: Rational?,
+        val proceeds: QuoteValue?,
         val fee: Boolean = false,
     ) : AccountingAction
 
@@ -83,6 +88,7 @@ data class LotValuation(
 )
 
 data class AccountingReport(
+    val quoteAsset: AssetId,
     val lots: List<Lot>,
     val disposals: List<DisposalReport>,
     val valuations: List<LotValuation>,
@@ -93,8 +99,23 @@ object FifoAccounting {
     fun calculate(
         actions: List<AccountingAction>,
         owners: Map<AccountId, OwnerId>,
-        unitPrices: Map<AssetId, Rational?> = emptyMap(),
+        quoteAsset: AssetId,
+        unitPrices: Map<AssetId, QuoteValue?> = emptyMap(),
     ): AccountingReport {
+        require(
+            unitPrices.values.filterNotNull().all {
+                it.asset == quoteAsset && it.amount >= Rational.ZERO
+            },
+        ) { "Invalid price quote asset or value" }
+        actions.forEach { action ->
+            val value =
+                when (action) {
+                    is AccountingAction.Acquisition -> action.totalCost
+                    is AccountingAction.Disposal -> action.proceeds
+                    is AccountingAction.Transfer -> null
+                }
+            require(value == null || value.asset == quoteAsset) { "Accounting quote assets must match" }
+        }
         val lots = mutableListOf<Lot>()
         val disposals = mutableListOf<DisposalReport>()
         val seen = mutableSetOf<String>()
@@ -134,7 +155,7 @@ object FifoAccounting {
             require(seen.add(key)) { "Duplicate accounting action" }
             when (action) {
                 is AccountingAction.Acquisition -> {
-                    require(action.quantity.sign > 0 && (action.totalCost == null || action.totalCost >= Rational.ZERO))
+                    require(action.quantity.sign > 0 && (action.totalCost == null || action.totalCost.amount >= Rational.ZERO))
                     val owner = requireNotNull(owners[action.account]) { "Missing owner" }
                     lots +=
                         Lot(
@@ -145,12 +166,12 @@ object FifoAccounting {
                             action.at,
                             action.order,
                             action.quantity,
-                            action.totalCost,
+                            action.totalCost?.amount,
                             action.opening,
                         )
                 }
                 is AccountingAction.Disposal -> {
-                    require(action.quantity.sign > 0 && (action.proceeds == null || action.proceeds >= Rational.ZERO))
+                    require(action.quantity.sign > 0 && (action.proceeds == null || action.proceeds.amount >= Rational.ZERO))
                     require(owners.containsKey(action.account))
                     val taken = take(action.account, action.asset, action.quantity)
                     val consumed = taken.map { (lot, part) -> Consumption(lot?.id, part.first, part.second) }
@@ -168,13 +189,13 @@ object FifoAccounting {
                             action.account,
                             action.asset,
                             action.quantity,
-                            action.proceeds,
+                            action.proceeds?.amount,
                             basis,
                             if (basis !=
                                 null &&
                                 action.proceeds != null
                             ) {
-                                action.proceeds - basis
+                                action.proceeds.amount - basis
                             } else {
                                 null
                             },
@@ -205,10 +226,11 @@ object FifoAccounting {
         }
         val ordered = lots.sortedWith(compareBy({ it.acquiredAt }, { it.order }, { it.id }))
         return AccountingReport(
+            quoteAsset,
             ordered,
             disposals,
             ordered.map { lot ->
-                val value = unitPrices[lot.asset]?.times(Rational.units(lot.quantity))
+                val value = unitPrices[lot.asset]?.amount?.times(Rational.units(lot.quantity))
                 LotValuation(lot, value, if (value != null && lot.basis != null) value - lot.basis else null)
             },
         )
