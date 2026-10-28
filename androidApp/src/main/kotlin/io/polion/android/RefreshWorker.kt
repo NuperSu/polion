@@ -36,6 +36,7 @@ class RefreshWorker(
         fun performRefresh(
             context: Context,
             wrap: (io.polion.core.bitcoin.EsploraTransport) -> io.polion.core.bitcoin.EsploraTransport = { it },
+            walletId: String? = null,
             onProgress: (String) -> Unit = {},
         ): SyncStatus =
             try {
@@ -46,8 +47,16 @@ class RefreshWorker(
                     if (!app.sourceConsent()) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
+                        val transport = wrap(BlockstreamTransport(app.sourceEndpoint()))
+                        if (walletId != null) {
+                            app.discoverBitcoinWallet(
+                                io.polion.core.model
+                                    .TrackingTargetId(walletId),
+                                transport,
+                            )
+                        }
                         val states =
-                            app.refreshBitcoin(wrap(BlockstreamTransport(app.sourceEndpoint()))) { progress ->
+                            app.refreshBitcoin(transport) { progress ->
                                 val detail =
                                     when (progress.phase) {
                                         "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"

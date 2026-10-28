@@ -1,5 +1,6 @@
 package io.polion.ui
 
+import io.polion.core.model.TrackingTargetId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.StateFlow
 
@@ -8,6 +9,11 @@ enum class SyncPhase { IDLE, SYNCING, SUCCESS, ERROR }
 data class SyncStatus(
     val phase: SyncPhase = SyncPhase.IDLE,
     val message: String = "Not synced yet",
+)
+
+data class UnlockResult(
+    val success: Boolean,
+    val message: String? = null,
 )
 
 /** Host operations share one serial dispatcher with application reads and writes. */
@@ -31,6 +37,11 @@ interface PlatformActions {
         onResult: (String) -> Unit,
     )
 
+    fun discoverWallet(
+        walletId: TrackingTargetId,
+        onResult: (String) -> Unit,
+    )
+
     fun refresh(onResult: (String) -> Unit)
 
     fun setBackgroundRefresh(enabled: Boolean)
@@ -41,7 +52,7 @@ interface PlatformActions {
 
     fun unlock(
         password: String,
-        onResult: (Boolean) -> Unit,
+        onResult: (UnlockResult) -> Unit,
     )
 
     fun setLockPassword(

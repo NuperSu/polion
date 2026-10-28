@@ -66,6 +66,11 @@ class PolionUiTest {
             onResult: (String) -> Unit,
         ) = onResult("Not used")
 
+        override fun discoverWallet(
+            walletId: io.polion.core.model.TrackingTargetId,
+            onResult: (String) -> Unit,
+        ) = onResult("Not used")
+
         override fun refresh(onResult: (String) -> Unit) = onResult("Not used")
 
         override fun setBackgroundRefresh(enabled: Boolean) = Unit
@@ -76,8 +81,8 @@ class PolionUiTest {
 
         override fun unlock(
             password: String,
-            onResult: (Boolean) -> Unit,
-        ) = onResult(false)
+            onResult: (UnlockResult) -> Unit,
+        ) = onResult(UnlockResult(false))
 
         override fun setLockPassword(
             password: String,

@@ -33,6 +33,7 @@ import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
+import io.polion.ui.UnlockResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.update
@@ -99,10 +100,11 @@ private class AndroidHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     override val dataRevision = RefreshWorker.dataRevision
     override val syncStatus = RefreshWorker.syncStatus
-    override val hasLock: Boolean get() = preferences.contains("verifier")
+    override val hasLock: Boolean get() = lockStore.hasLock
     private val main = Handler(Looper.getMainLooper())
     private val file = activity.getDatabasePath("portfolio.sqlite").toPath()
     private val preferences = activity.getSharedPreferences("privacy", 0)
+    private val lockStore = SecureLockStore(preferences)
     private val files = BackupFiles(activity)
     private val notificationPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val isChoosing: Boolean get() = files.isChoosing
@@ -111,7 +113,7 @@ private class AndroidHost(
     val openFailed = mutableStateOf(false)
 
     @Volatile private var closed = false
-    val locked = mutableStateOf(preferences.contains("verifier"))
+    val locked = mutableStateOf(lockStore.hasLock)
 
     init {
         executor.execute {
@@ -196,6 +198,22 @@ private class AndroidHost(
         }
     }
 
+    override fun discoverWallet(
+        walletId: io.polion.core.model.TrackingTargetId,
+        onResult: (String) -> Unit,
+    ) {
+        main.post {
+            try {
+                syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…")
+                activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java).putExtra("wallet_id", walletId.value))
+                onResult("Wallet discovery continues in the background.")
+            } catch (_: Exception) {
+                syncStatus.value = SyncStatus(SyncPhase.ERROR, "Could not start wallet discovery. Open Polion and retry.")
+                onResult(syncStatus.value.message)
+            }
+        }
+    }
+
     override fun refresh(onResult: (String) -> Unit) {
         main.post {
             try {
@@ -240,23 +258,32 @@ private class AndroidHost(
             onResult("Unlock first")
             return
         }
-        val success = preferences.edit().remove("verifier").commit()
+        val success = runCatching { lockStore.remove() }.isSuccess
         onResult(if (success) "Privacy lock removed" else "Could not remove privacy lock")
     }
 
     override fun lock() {
-        if (preferences.contains("verifier")) locked.value = true
+        if (lockStore.hasLock) locked.value = true
     }
 
     override fun unlock(
         password: String,
-        onResult: (Boolean) -> Unit,
+        onResult: (UnlockResult) -> Unit,
     ) {
         executor.execute {
-            val ok = LockPassword.verify(password, preferences.getString("verifier", "") ?: "")
+            val result =
+                runCatching {
+                    val verifier = lockStore.read()
+                    if (LockPassword.verify(password, verifier)) {
+                        lockStore.migrate(verifier)
+                        UnlockResult(true)
+                    } else {
+                        UnlockResult(false, "Incorrect password")
+                    }
+                }.getOrElse { UnlockResult(false, "Secure privacy lock storage is unavailable or damaged") }
             main.post {
-                if (ok) locked.value = false
-                onResult(ok)
+                if (result.success) locked.value = false
+                onResult(result)
             }
         }
     }
@@ -266,14 +293,22 @@ private class AndroidHost(
         executor.execute {
             val success =
                 runCatching {
-                    preferences
-                        .edit()
-                        .putString(
-                            "verifier",
-                            LockPassword.create(password),
-                        ).commit()
-                }.getOrDefault(false)
-            main.post { onResult(if (success) "Privacy lock enabled" else "Use a password of at least 8 characters") }
+                    check(!lockStore.hasLock)
+                    lockStore.write(LockPassword.create(password))
+                }.isSuccess
+            main.post {
+                onResult(
+                    if (success) {
+                        "Privacy lock enabled"
+                    } else if (password.length <
+                        8
+                    ) {
+                        "Use a password of at least 8 characters"
+                    } else {
+                        "Secure storage unavailable; privacy lock was not changed"
+                    },
+                )
+            }
         }
     }
 

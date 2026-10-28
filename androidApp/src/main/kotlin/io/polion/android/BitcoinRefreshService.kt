@@ -49,7 +49,7 @@ class BitcoinRefreshService : Service() {
                         check(!stopping) { "Sync stopped" }
                         transport.get(path)
                     }
-                }) { detail ->
+                }, walletId = intent?.getStringExtra("wallet_id")) { detail ->
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastNotification >= 1000) {
                         SyncNotification.update(this, detail)

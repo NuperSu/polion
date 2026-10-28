@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -94,6 +95,7 @@ import io.polion.core.model.PortfolioId
 import io.polion.core.model.Rounding
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
+import io.polion.core.ownership.TrackingTarget
 import io.polion.core.reconcile.EffectiveActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -181,6 +183,7 @@ private fun Product(
     var busy by remember { mutableStateOf(false) }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedActivity by remember { mutableStateOf<EffectiveActivity?>(null) }
+    var addressWallet by remember { mutableStateOf<TrackingTarget?>(null) }
     var removeAccount by remember { mutableStateOf<Account?>(null) }
     var selectedAsset by remember { mutableStateOf<AssetValuation?>(null) }
     var chart by remember { mutableStateOf<List<HistoryPoint>>(emptyList()) }
@@ -484,6 +487,7 @@ private fun Product(
                                 }
                             }
                             Page.ACCOUNTS -> {
+                                item { OutlinedButton(onClick = { dialog = "wallet" }) { Text("+ Track descriptor or xpub") } }
                                 item { SectionTitle("Watch-only accounts", "+ Add") { dialog = "account" } }
                                 if (data.ownership.accounts.isEmpty()) {
                                     item {
@@ -512,15 +516,37 @@ private fun Product(
                                                 )
                                             }
                                         }
-                                        data.ownership.targets.filter { it.accountId == account.id }.forEach { target ->
-                                            HorizontalDivider(color = Line)
-                                            Text(target.label, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                            Text(target.identity.canonicalKey, color = Muted, fontSize = 12.sp)
-                                            StatusPill(
-                                                if (target.enabled) "Watching · ${target.identity.kind}" else "Paused",
-                                                target.enabled,
-                                            )
-                                        }
+                                        data.ownership.targets
+                                            .filter { it.accountId == account.id && it.walletId == null }
+                                            .forEach { target ->
+                                                HorizontalDivider(color = Line)
+                                                Text(target.label, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                                if (target.role ==
+                                                    io.polion.core.ownership.TargetRole.WALLET
+                                                ) {
+                                                    TextButton(onClick = { addressWallet = target }) { Text("View derived addresses") }
+                                                }
+                                                if (target.role ==
+                                                    io.polion.core.ownership.TargetRole.WALLET
+                                                ) {
+                                                    TextButton(onClick = {
+                                                        host.discoverWallet(target.id) {
+                                                            message =
+                                                                it
+                                                            ; revision++
+                                                        }
+                                                    }, enabled = syncStatus.phase != SyncPhase.SYNCING) {
+                                                        Text(
+                                                            "Discover wallet addresses",
+                                                        )
+                                                    }
+                                                }
+                                                Text(target.identity.canonicalKey, color = Muted, fontSize = 12.sp)
+                                                StatusPill(
+                                                    if (target.enabled) "Watching · ${target.identity.kind}" else "Paused",
+                                                    target.enabled,
+                                                )
+                                            }
                                         TextButton(onClick = { removeAccount = account }) { Text("Remove account", fontSize = 12.sp) }
                                         data.balances.quantities.filterKeys { it.account == account.id }.forEach { (key, units) ->
                                             Text(
@@ -711,7 +737,25 @@ private fun Product(
                 }
             }
         }
+        if (dialog == "wallet" && snapshot != null) {
+            WalletDialog(
+                snapshot!!.copy(
+                    sourceEndpoint = sourceDraftEndpoint ?: snapshot!!.sourceEndpoint,
+                    sourceConsent =
+                        sourceDraftConsent ?: snapshot!!.sourceConsent,
+                ),
+                app,
+                host,
+                { dialog = null },
+                {
+                    message = it
+                    revision++
+                },
+                host::discoverWallet,
+            )
+        }
         if (dialog != null &&
+            dialog != "wallet" &&
             snapshot != null
         ) {
             WorkflowDialog(
@@ -732,6 +776,23 @@ private fun Product(
                     sourceDraftEndpoint = endpoint
                     sourceDraftConsent = allowed
                 },
+            )
+        }
+        addressWallet?.let { wallet ->
+            AlertDialog(
+                onDismissRequest = { addressWallet = null },
+                title = { Text(wallet.label) },
+                text = {
+                    LazyColumn(Modifier.heightIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(snapshot!!.ownership.targets.filter { it.walletId == wallet.id }, key = { it.id.value }) { target ->
+                            Column {
+                                Text(target.label, fontWeight = FontWeight.Medium)
+                                Text(target.identity.canonicalKey, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { addressWallet = null }) { Text("Close") } },
             )
         }
         removeAccount?.let { account ->

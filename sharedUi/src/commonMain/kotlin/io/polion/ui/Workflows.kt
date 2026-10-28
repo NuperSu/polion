@@ -717,7 +717,7 @@ internal fun AssetDialog(
 @Composable
 internal fun LockScreen(host: PlatformActions) {
     var password by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
         Column(Modifier.widthIn(max = 400.dp).fillMaxWidth().padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -726,17 +726,17 @@ internal fun LockScreen(host: PlatformActions) {
             Text("Unlock your local portfolio.")
             SecretField("Privacy lock password", password) {
                 password = it
-                error = false
+                error = null
             }
             Button(onClick = {
                 busy = true
-                host.unlock(password) { ok ->
+                host.unlock(password) { result ->
                     busy = false
-                    error = !ok
-                    if (ok) password = ""
+                    error = if (result.success) null else result.message ?: "Incorrect password. Your data has not been changed."
+                    if (result.success) password = ""
                 }
             }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Unlocking…" else "Unlock") }
-            if (error) Text("Incorrect password. Your data has not been changed.", color = MaterialTheme.colorScheme.error)
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }
 }

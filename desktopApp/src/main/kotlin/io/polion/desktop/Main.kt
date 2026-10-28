@@ -14,6 +14,7 @@ import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
+import io.polion.ui.UnlockResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,13 +34,14 @@ private class DesktopHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
-    override val hasLock: Boolean get() = Files.exists(verifierFile)
+    override val hasLock: Boolean get() = lockStore.hasLock
     private val file = directory.resolve("portfolio.sqlite")
     private val verifierFile = directory.resolve("lock-verifier")
+    private val lockStore = SecureLockStore(verifierFile)
     private val files = BackupFiles()
     private var db: JvmSqliteDatabase
     val app: androidx.compose.runtime.MutableState<PortfolioApplication>
-    val locked = mutableStateOf(Files.exists(verifierFile))
+    val locked = mutableStateOf(lockStore.hasLock)
     private var refreshTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val refreshPreference = directory.resolve("background-refresh")
 
@@ -131,6 +133,32 @@ private class DesktopHost(
         }
     }
 
+    override fun discoverWallet(
+        walletId: io.polion.core.model.TrackingTargetId,
+        onResult: (String) -> Unit,
+    ) {
+        syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…")
+        executor.execute {
+            val status =
+                runCatching {
+                    val application = app.value
+                    val transport = BlockstreamTransport(application.sourceEndpoint())
+                    val result = application.discoverBitcoinWallet(walletId, transport)
+                    val states = application.refreshBitcoin(transport)
+                    check(states.all { it == io.polion.core.sync.JobState.COMPLETED })
+                    SyncStatus(SyncPhase.SUCCESS, "Wallet discovery complete: ${result.addresses} addresses checked.")
+                }.getOrElse {
+                    SyncStatus(
+                        SyncPhase.ERROR,
+                        "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
+                    )
+                }
+            syncStatus.value = status
+            dataRevision.update { it + 1 }
+            SwingUtilities.invokeLater { onResult(status.message) }
+        }
+    }
+
     override fun refresh(onResult: (String) -> Unit) {
         syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")
         executor.execute {
@@ -192,23 +220,38 @@ private class DesktopHost(
             onResult("Unlock first")
             return
         }
-        val success = runCatching { Files.deleteIfExists(verifierFile) }.isSuccess
-        onResult(if (success) "Privacy lock removed" else "Could not remove privacy lock")
+        executor.execute {
+            val success = runCatching { lockStore.remove() }.isSuccess
+            SwingUtilities.invokeLater {
+                onResult(
+                    if (success) "Privacy lock removed" else "Secret Service unavailable; privacy lock was not removed",
+                )
+            }
+        }
     }
 
     override fun lock() {
-        if (Files.exists(verifierFile)) locked.value = true
+        if (lockStore.hasLock) locked.value = true
     }
 
     override fun unlock(
         password: String,
-        onResult: (Boolean) -> Unit,
+        onResult: (UnlockResult) -> Unit,
     ) {
         executor.execute {
-            val ok = runCatching { LockPassword.verify(password, Files.readString(verifierFile)) }.getOrDefault(false)
+            val result =
+                runCatching {
+                    val verifier = lockStore.read()
+                    if (LockPassword.verify(password, verifier)) {
+                        lockStore.migrate(verifier)
+                        UnlockResult(true)
+                    } else {
+                        UnlockResult(false, "Incorrect password")
+                    }
+                }.getOrElse { UnlockResult(false, "Secure privacy lock storage is unavailable or damaged") }
             SwingUtilities.invokeLater {
-                if (ok) locked.value = false
-                onResult(ok)
+                if (result.success) locked.value = false
+                onResult(result)
             }
         }
     }
@@ -220,11 +263,22 @@ private class DesktopHost(
         executor.execute {
             val success =
                 runCatching {
-                    val verifier = LockPassword.create(password)
-                    Files.writeString(verifierFile, verifier)
-                    Files.setPosixFilePermissions(verifierFile, setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))
+                    check(!lockStore.hasLock)
+                    lockStore.write(LockPassword.create(password))
                 }.isSuccess
-            SwingUtilities.invokeLater { onResult(if (success) "Privacy lock enabled" else "Use a password of at least 8 characters") }
+            SwingUtilities.invokeLater {
+                onResult(
+                    if (success) {
+                        "Privacy lock enabled"
+                    } else if (password.length <
+                        8
+                    ) {
+                        "Use a password of at least 8 characters"
+                    } else {
+                        "Secret Service unavailable; privacy lock was not changed"
+                    },
+                )
+            }
         }
     }
 
