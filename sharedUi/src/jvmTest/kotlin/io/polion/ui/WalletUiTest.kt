@@ -2,9 +2,12 @@ package io.polion.ui
 
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
@@ -17,7 +20,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.concurrent.Executors
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class WalletUiTest {
@@ -27,8 +32,6 @@ class WalletUiTest {
             val executorDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
             try {
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
-                app.setSourceConsent(true)
                 val data = app.snapshot()
                 val host =
                     object : PlatformActions {
@@ -88,16 +91,38 @@ class WalletUiTest {
                     }
                     onNodeWithText("Wallet name").performTextInput("Savings")
                     onNodeWithText("Public wallet expression").performTextInput("not-a-wallet")
-                    onNodeWithText("Save & discover").performClick()
+                    onNodeWithText("New account").assertIsDisplayed()
+                    onNodeWithText("Save & discover").assertIsNotEnabled()
+                    onNodeWithTag("wallet-source-consent").performScrollTo().performClick()
+                    onNodeWithText("Save & discover").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Unsupported descriptor", substring = true).fetchSemanticsNodes().isNotEmpty()
                     }
                     onNodeWithText("Unsupported descriptor", substring = true).assertIsDisplayed()
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.owners
+                            .isEmpty(),
+                    )
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.accounts
+                            .isEmpty(),
+                    )
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.targets
+                            .isEmpty(),
+                    )
+                    assertFalse(app.sourceConsent())
                     val xpub =
                         "xpub6CatWdiZiodmUeTDp8LT5or8nmbKNcuyvz7WyksVFkKB4RHwCD3XyuvP" +
                             "EbvqAQY3rAPshWcMLoP2fMFMKHPJ4ZeZXYVUhLv1VMrjPC7PW6V"
-                    onNodeWithText("Public wallet expression").performTextReplacement(xpub)
-                    onNodeWithText("Save & discover").performClick()
+                    onNodeWithText("Public wallet expression").performScrollTo().performTextReplacement(xpub)
+                    onNodeWithText("Save & discover").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { discovered != null }
                     val wallet =
                         app
@@ -106,6 +131,26 @@ class WalletUiTest {
                             .single { it.id == discovered }
                     assertEquals(TargetRole.WALLET, wallet.role)
                     assertEquals(xpub, wallet.identity.canonicalKey)
+                    val saved = app.snapshot()
+                    assertEquals(
+                        "Savings",
+                        saved.ownership.accounts
+                            .single()
+                            .label,
+                    )
+                    assertEquals(
+                        wallet.accountId,
+                        saved.ownership.accounts
+                            .single()
+                            .id,
+                    )
+                    assertEquals(
+                        "Personal",
+                        saved.ownership.owners
+                            .single()
+                            .label,
+                    )
+                    assertTrue(saved.sourceConsent)
                     assertNotNull(discovered)
                 }
             } finally {

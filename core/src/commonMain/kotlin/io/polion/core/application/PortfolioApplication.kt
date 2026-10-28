@@ -42,6 +42,7 @@ import io.polion.core.model.SourceId
 import io.polion.core.model.SyncJobId
 import io.polion.core.model.TrackingTargetId
 import io.polion.core.ownership.Account
+import io.polion.core.ownership.AccountKind
 import io.polion.core.ownership.Owner
 import io.polion.core.ownership.Portfolio
 import io.polion.core.ownership.TargetIdentity
@@ -990,6 +991,55 @@ class PortfolioApplication(
         } else {
             value
         }
+
+    /** Saves a consented public wallet and optional ownership records as one local change. */
+    fun saveBitcoinWallet(
+        target: TrackingTarget,
+        newAccount: Account? = null,
+        newOwner: Owner? = null,
+        consentAccepted: Boolean = false,
+    ) {
+        require(target.identity.networkId == BITCOIN_MAINNET && target.identity.kind == "wallet") { "Expected a Bitcoin public wallet" }
+        require(target.label.isNotBlank()) { "Enter a wallet name" }
+        val normalized = normalizeTarget(target)
+        db.transaction {
+            require(sourceConsent() || consentAccepted) { "Source consent required" }
+            val catalog = ownership.loadInTransaction()
+            require(catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
+            require(
+                catalog.targets.none { it.identity == normalized.identity && it.role == TargetRole.WALLET },
+            ) { "Wallet already tracked" }
+            require(newOwner == null || newAccount != null && newAccount.ownerId == newOwner.id) { "Owner requires a matching new account" }
+            if (newOwner != null) {
+                require(newOwner.label.isNotBlank()) { "Enter an owner name" }
+                require(catalog.owners.none { it.id == newOwner.id }) { "Owner already exists" }
+            }
+            if (newAccount != null) {
+                require(newAccount.id == normalized.accountId) { "Wallet account does not match" }
+                require(newAccount.label.isNotBlank()) { "Enter an account name" }
+                require(catalog.accounts.none { it.id == newAccount.id }) { "Account already exists" }
+            }
+            val account = requireNotNull(newAccount ?: catalog.accounts.firstOrNull { it.id == normalized.accountId }) { "Unknown account" }
+            require(account.kind != AccountKind.GROUP && "polion:archived" !in account.tags) { "Select an active account" }
+            val byId = catalog.accounts.associateBy { it.id }
+            var parent = account.parentId
+            while (parent != null) {
+                val ancestor = requireNotNull(byId[parent]) { "Unknown parent account" }
+                require("polion:archived" !in ancestor.tags) { "Select an active account group" }
+                parent = ancestor.parentId
+            }
+            ownership.replaceInTransaction(
+                catalog.copy(
+                    owners = catalog.owners + listOfNotNull(newOwner),
+                    accounts = catalog.accounts + listOfNotNull(newAccount),
+                    targets = catalog.targets + normalized,
+                ),
+            )
+            if (consentAccepted) putSetting("source_consent", "true")
+            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        }
+        invalidate()
+    }
 
     fun saveTarget(value: TrackingTarget) {
         val normalized = normalizeTarget(value)

@@ -24,56 +24,57 @@ data class OwnershipSnapshot(
 class OwnershipRepository(
     private val db: SqliteDatabase,
 ) {
-    fun replace(snapshot: OwnershipSnapshot) {
-        OwnershipCatalog(snapshot.owners, snapshot.accounts, snapshot.targets, snapshot.portfolios)
-        db.transaction {
-            listOf("portfolio_owners", "portfolio_accounts", "ownership_tags", "targets", "accounts", "portfolios", "owners").forEach {
-                db.execute("DELETE FROM $it")
-            }
+    fun replace(snapshot: OwnershipSnapshot) = db.transaction { replaceInTransaction(snapshot) }
 
-            fun tags(
-                type: String,
-                id: String,
-                tags: Set<String>,
-            ) {
-                tags.forEach { db.execute("INSERT INTO ownership_tags VALUES (?, ?, ?)", listOf(type, id, it)) }
+    /** Writes within the caller’s existing transaction. */
+    internal fun replaceInTransaction(snapshot: OwnershipSnapshot) {
+        OwnershipCatalog(snapshot.owners, snapshot.accounts, snapshot.targets, snapshot.portfolios)
+        listOf("portfolio_owners", "portfolio_accounts", "ownership_tags", "targets", "accounts", "portfolios", "owners").forEach {
+            db.execute("DELETE FROM $it")
+        }
+
+        fun tags(
+            type: String,
+            id: String,
+            tags: Set<String>,
+        ) {
+            tags.forEach { db.execute("INSERT INTO ownership_tags VALUES (?, ?, ?)", listOf(type, id, it)) }
+        }
+        snapshot.owners.forEach {
+            db.execute("INSERT INTO owners VALUES (?, ?)", listOf(it.id.value, it.label))
+            tags("owner", it.id.value, it.tags)
+        }
+        snapshot.accounts.forEach {
+            db.execute(
+                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
+                listOf(it.id.value, it.ownerId.value, it.label, it.kind.name, it.parentId?.value),
+            )
+            tags("account", it.id.value, it.tags)
+        }
+        snapshot.targets.forEach {
+            db.execute(
+                "INSERT INTO targets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                listOf(
+                    it.id.value,
+                    it.accountId.value,
+                    it.identity.networkId.value,
+                    it.identity.kind,
+                    it.identity.canonicalKey,
+                    it.role.name,
+                    it.label,
+                    if (it.enabled) "1" else "0",
+                    it.walletId?.value,
+                ),
+            )
+            tags("target", it.id.value, it.tags)
+        }
+        snapshot.portfolios.forEach {
+            db.execute("INSERT INTO portfolios VALUES (?, ?, ?)", listOf(it.id.value, it.label, it.valuationCurrency))
+            it.ownerIds.forEach { owner -> db.execute("INSERT INTO portfolio_owners VALUES (?, ?)", listOf(it.id.value, owner.value)) }
+            it.accountIds.forEach { account ->
+                db.execute("INSERT INTO portfolio_accounts VALUES (?, ?)", listOf(it.id.value, account.value))
             }
-            snapshot.owners.forEach {
-                db.execute("INSERT INTO owners VALUES (?, ?)", listOf(it.id.value, it.label))
-                tags("owner", it.id.value, it.tags)
-            }
-            snapshot.accounts.forEach {
-                db.execute(
-                    "INSERT INTO accounts VALUES (?, ?, ?, ?, ?)",
-                    listOf(it.id.value, it.ownerId.value, it.label, it.kind.name, it.parentId?.value),
-                )
-                tags("account", it.id.value, it.tags)
-            }
-            snapshot.targets.forEach {
-                db.execute(
-                    "INSERT INTO targets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    listOf(
-                        it.id.value,
-                        it.accountId.value,
-                        it.identity.networkId.value,
-                        it.identity.kind,
-                        it.identity.canonicalKey,
-                        it.role.name,
-                        it.label,
-                        if (it.enabled) "1" else "0",
-                        it.walletId?.value,
-                    ),
-                )
-                tags("target", it.id.value, it.tags)
-            }
-            snapshot.portfolios.forEach {
-                db.execute("INSERT INTO portfolios VALUES (?, ?, ?)", listOf(it.id.value, it.label, it.valuationCurrency))
-                it.ownerIds.forEach { owner -> db.execute("INSERT INTO portfolio_owners VALUES (?, ?)", listOf(it.id.value, owner.value)) }
-                it.accountIds.forEach { account ->
-                    db.execute("INSERT INTO portfolio_accounts VALUES (?, ?)", listOf(it.id.value, account.value))
-                }
-                tags("portfolio", it.id.value, it.tags)
-            }
+            tags("portfolio", it.id.value, it.tags)
         }
     }
 
