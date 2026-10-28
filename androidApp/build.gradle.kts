@@ -11,6 +11,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "io.polion.android.ReliabilityInstrumentation"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21

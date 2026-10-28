@@ -14,7 +14,10 @@ object LockPassword {
         return Base64.getEncoder().encodeToString(salt) + ":" + Base64.getEncoder().encodeToString(derive(password, salt))
     }
 
-    fun verify(password: String, verifier: String): Boolean =
+    fun verify(
+        password: String,
+        verifier: String,
+    ): Boolean =
         runCatching {
             val fields = verifier.split(':')
             require(fields.size == 2)
@@ -24,7 +27,10 @@ object LockPassword {
             MessageDigest.isEqual(expected, derive(password, salt))
         }.getOrDefault(false)
 
-    private fun derive(password: String, salt: ByteArray): ByteArray {
+    private fun derive(
+        password: String,
+        salt: ByteArray,
+    ): ByteArray {
         val spec = PBEKeySpec(password.toCharArray(), salt, 210_000, 256)
         try {
             return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded

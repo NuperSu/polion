@@ -1,13 +1,29 @@
 package io.polion.android
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.mutableStateOf
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.view.WindowInsetsControllerCompat
 import io.polion.core.application.PortfolioApplication
@@ -17,11 +33,11 @@ import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.update
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 class MainActivity : ComponentActivity() {
     private var host: AndroidHost? = null
@@ -32,8 +48,31 @@ class MainActivity : ComponentActivity() {
         val opened = runCatching { AndroidHost(this) }.getOrNull()
         host = opened
         setContent {
-            if (opened == null) Text("Could not open local data. Check available storage and database compatibility.")
-            else PolionApp(opened.app.value, opened, opened.locked.value)
+            if (opened == null) {
+                Text("Could not open local data. Check available storage and database compatibility.")
+            } else {
+                val app = opened.app.value
+                if (app != null) {
+                    PolionApp(app, opened, opened.locked.value)
+                } else {
+                    val status by opened.syncStatus.collectAsState()
+                    MaterialTheme {
+                        Surface(Modifier.fillMaxSize()) {
+                            Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Text(if (opened.openFailed.value) "Could not open local data" else "Opening your local portfolio")
+                                if (!opened.openFailed.value) LinearProgressIndicator()
+                                Text(
+                                    if (opened.openFailed.value) {
+                                        "Check storage and app compatibility. Saved data is intact."
+                                    } else {
+                                        status.message
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -53,7 +92,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private class AndroidHost(private val activity: ComponentActivity) : PlatformActions {
+private class AndroidHost(
+    private val activity: ComponentActivity,
+) : PlatformActions {
     private val executor = RefreshWorker.executor
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     override val dataRevision = RefreshWorker.dataRevision
@@ -63,27 +104,46 @@ private class AndroidHost(private val activity: ComponentActivity) : PlatformAct
     private val file = activity.getDatabasePath("portfolio.sqlite").toPath()
     private val preferences = activity.getSharedPreferences("privacy", 0)
     private val files = BackupFiles(activity)
+    private val notificationPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val isChoosing: Boolean get() = files.isChoosing
-    private var db: AndroidSqliteDatabase
-    val app: androidx.compose.runtime.MutableState<PortfolioApplication>
+    private lateinit var db: AndroidSqliteDatabase
+    val app = mutableStateOf<PortfolioApplication?>(null)
+    val openFailed = mutableStateOf(false)
+
+    @Volatile private var closed = false
     val locked = mutableStateOf(preferences.contains("verifier"))
 
     init {
-        Files.createDirectories(file.parent)
-        db = AndroidSqliteDatabase(file.toString())
-        app = try {
-            mutableStateOf(PortfolioApplication(db, System::currentTimeMillis))
-        } catch (failure: Exception) {
-            runCatching { db.close() }
-            throw failure
+        executor.execute {
+            try {
+                Files.createDirectories(file.parent)
+                db = AndroidSqliteDatabase(file.toString())
+                val opened = PortfolioApplication(db, System::currentTimeMillis)
+                main.post { if (!closed) app.value = opened }
+            } catch (_: Exception) {
+                if (::db.isInitialized) runCatching { db.close() }
+                main.post { openFailed.value = true }
+            }
         }
     }
 
-    override fun saveFile(name: String, bytes: ByteArray, onResult: (String) -> Unit) {
+    override fun saveFile(
+        name: String,
+        bytes: ByteArray,
+        onResult: (String) -> Unit,
+    ) {
         main.post { files.save(name, bytes) { onResult(if (it) "File saved" else "File was not saved") } }
     }
-    override fun openFile(onResult: (ByteArray?) -> Unit) { main.post { files.open(onResult) } }
-    override fun restoreBackup(bytes: ByteArray, password: String, onResult: (String) -> Unit) {
+
+    override fun openFile(onResult: (ByteArray?) -> Unit) {
+        main.post { files.open(onResult) }
+    }
+
+    override fun restoreBackup(
+        bytes: ByteArray,
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
         executor.execute {
             var staging: java.nio.file.Path? = null
             var result = "Could not restore backup"
@@ -91,8 +151,12 @@ private class AndroidHost(private val activity: ComponentActivity) : PlatformAct
             var reopened = false
             try {
                 staging = Files.createTempFile(file.parent, "restore-", ".sqlite")
-                AndroidSqliteDatabase(staging.toString()).use { app.value.restoreToStaging(it, bytes, password.toCharArray()) }
-                java.nio.channels.FileChannel.open(staging, java.nio.file.StandardOpenOption.WRITE).use { it.force(true) }
+                AndroidSqliteDatabase(
+                    staging.toString(),
+                ).use { requireNotNull(app.value).restoreToStaging(it, bytes, password.toCharArray()) }
+                java.nio.channels.FileChannel
+                    .open(staging, java.nio.file.StandardOpenOption.WRITE)
+                    .use { it.force(true) }
                 db.close()
                 try {
                     Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
@@ -103,16 +167,26 @@ private class AndroidHost(private val activity: ComponentActivity) : PlatformAct
                 }
                 val replacement = PortfolioApplication(db, System::currentTimeMillis)
                 val updated = java.util.concurrent.CountDownLatch(1)
-                main.post { app.value = replacement; dataRevision.update { it + 1 }; updated.countDown() }
+                main.post {
+                    app.value = replacement
+                    dataRevision.update { it + 1 }
+                    updated.countDown()
+                }
                 updated.await()
                 result = "Backup restored"
             } catch (_: Exception) {
                 if (swapped) result = "Backup restored; reopen the app to load it"
-                if (reopened && !swapped) runCatching {
-                    val replacement = PortfolioApplication(db, System::currentTimeMillis)
-                    val updated = java.util.concurrent.CountDownLatch(1)
-                    main.post { app.value = replacement; dataRevision.update { it + 1 }; updated.countDown() }
-                    updated.await()
+                if (reopened && !swapped) {
+                    runCatching {
+                        val replacement = PortfolioApplication(db, System::currentTimeMillis)
+                        val updated = java.util.concurrent.CountDownLatch(1)
+                        main.post {
+                            app.value = replacement
+                            dataRevision.update { it + 1 }
+                            updated.countDown()
+                        }
+                        updated.await()
+                    }
                 }
             } finally {
                 staging?.let { runCatching { Files.deleteIfExists(it) } }
@@ -121,28 +195,22 @@ private class AndroidHost(private val activity: ComponentActivity) : PlatformAct
             main.post { onResult(message) }
         }
     }
+
     override fun refresh(onResult: (String) -> Unit) {
-        syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")
-        executor.execute {
-            val status = runCatching {
-                val application = app.value
-                val states = application.refreshBitcoin(BlockstreamTransport(application.sourceEndpoint())) { progress ->
-                        syncStatus.value = SyncStatus(SyncPhase.SYNCING, when (progress.phase) {
-                            "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                            "verify" -> "Checking chain consistency…"
-                            "apply" -> "Applying verified history…"
-                            else -> "Address ${progress.addressIndex}/${progress.totalAddresses} · ${progress.pages} pages · ${progress.transactions} transactions"
-                        })
-                    }
-                when {
-                    states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
-                    states.any { it != io.polion.core.sync.JobState.COMPLETED } -> SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "History is incomplete; retry.")
-                    else -> SyncStatus(SyncPhase.SUCCESS, "Sync complete; coverage remains unverified")
+        main.post {
+            try {
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
-            }.getOrElse { SyncStatus(SyncPhase.ERROR, (it as? BitcoinProviderException)?.reason?.userMessage ?: "Could not finish sync. Check storage and provider, then retry.") }
-            syncStatus.value = status
-            dataRevision.update { it + 1 }
-            main.post { onResult(status.message) }
+                syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Starting background sync…")
+                activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java))
+                onResult("Sync continues when you switch apps. Progress appears in the notification.")
+            } catch (_: Exception) {
+                syncStatus.value = SyncStatus(SyncPhase.ERROR, "Android could not start background sync. Open Polion and retry.")
+                onResult(syncStatus.value.message)
+            }
         }
     }
 
@@ -150,33 +218,67 @@ private class AndroidHost(private val activity: ComponentActivity) : PlatformAct
         preferences.edit { putBoolean("background_refresh", enabled) }
         val manager = androidx.work.WorkManager.getInstance(activity)
         if (enabled) {
-            val work = androidx.work.PeriodicWorkRequestBuilder<RefreshWorker>(30, java.util.concurrent.TimeUnit.MINUTES)
-                .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
-                .build()
+            val work =
+                androidx.work
+                    .PeriodicWorkRequestBuilder<RefreshWorker>(30, java.util.concurrent.TimeUnit.MINUTES)
+                    .setConstraints(
+                        androidx.work.Constraints
+                            .Builder()
+                            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                            .build(),
+                    ).build()
             manager.enqueueUniquePeriodicWork("polion-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
         } else {
             manager.cancelUniqueWork("polion-refresh")
         }
     }
+
     override fun backgroundRefreshEnabled(): Boolean = preferences.getBoolean("background_refresh", false)
+
     override fun removeLockPassword(onResult: (String) -> Unit) {
-        if (locked.value) { onResult("Unlock first"); return }
+        if (locked.value) {
+            onResult("Unlock first")
+            return
+        }
         val success = preferences.edit().remove("verifier").commit()
         onResult(if (success) "Privacy lock removed" else "Could not remove privacy lock")
     }
-    override fun lock() { if (preferences.contains("verifier")) locked.value = true }
-    override fun unlock(password: String, onResult: (Boolean) -> Unit) {
+
+    override fun lock() {
+        if (preferences.contains("verifier")) locked.value = true
+    }
+
+    override fun unlock(
+        password: String,
+        onResult: (Boolean) -> Unit,
+    ) {
         executor.execute {
             val ok = LockPassword.verify(password, preferences.getString("verifier", "") ?: "")
-            main.post { if (ok) locked.value = false; onResult(ok) }
+            main.post {
+                if (ok) locked.value = false
+                onResult(ok)
+            }
         }
     }
+
     @SuppressLint("UseKtx") // The commit result is needed to report persistence failure.
     override fun setLockPassword(password: String, onResult: (String) -> Unit) {
         executor.execute {
-            val success = runCatching { preferences.edit().putString("verifier", LockPassword.create(password)).commit() }.getOrDefault(false)
+            val success =
+                runCatching {
+                    preferences
+                        .edit()
+                        .putString(
+                            "verifier",
+                            LockPassword.create(password),
+                        ).commit()
+                }.getOrDefault(false)
             main.post { onResult(if (success) "Privacy lock enabled" else "Use a password of at least 8 characters") }
         }
     }
-    fun close() { executor.execute { db.close() } }
+
+    fun close() {
+        closed = true
+        executor.execute { if (::db.isInitialized) db.close() }
+    }
 }

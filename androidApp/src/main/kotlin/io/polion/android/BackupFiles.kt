@@ -54,7 +54,11 @@ class BackupFiles(
             openResult = null
         }
 
-    fun save(name: String, bytes: ByteArray, result: (Boolean) -> Unit) {
+    fun save(
+        name: String,
+        bytes: ByteArray,
+        result: (Boolean) -> Unit,
+    ) {
         check(pendingSave == null && openResult == null)
         pendingSave = bytes
         saveResult = result
