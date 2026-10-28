@@ -327,7 +327,12 @@ class PortfolioApplication(
         }
     }
 
-    fun treatments(activityId: ActivityId): List<Treatment> = treatments.load(activityId)
+    fun treatments(activityId: ActivityId): List<Treatment> =
+        try {
+            treatments.load(activityId)
+        } catch (_: IllegalArgumentException) {
+            emptyList()
+        }
 
     fun analytics(
         atMillis: Long,
@@ -389,14 +394,16 @@ class PortfolioApplication(
         val invalid = mutableListOf<ActivityId>()
         val actions = mutableListOf<io.polion.core.accounting.AccountingAction>()
         val quote = portfolioCurrency(portfolio)
+        val incompleteAssets = mutableSetOf<AssetId>()
         ledger().activities.forEach { entry ->
             val activity = entry.activity
             if (activity.status != io.polion.core.ledger.ActivityStatus.CONFIRMED) return@forEach
-            val saved = treatments.load(activity.id)
-            if (saved.isEmpty()) {
-                if (activity.movements.any { it.accountId in selected }) missing.add(activity.id)
-            } else {
-                try {
+            try {
+                val saved = treatments.load(activity.id)
+                if (saved.isEmpty()) {
+                    if (activity.movements.any { it.accountId in selected }) missing.add(activity.id)
+                    incompleteAssets.addAll(activity.movements.map { it.amount.assetId })
+                } else {
                     val computed = LedgerAccounting.actions(activity, saved)
                     val quotes =
                         computed.mapNotNull { action ->
@@ -408,9 +415,10 @@ class PortfolioApplication(
                         }
                     require(quotes.all { it.asset == quote })
                     actions.addAll(computed)
-                } catch (_: IllegalArgumentException) {
-                    if (activity.movements.any { it.accountId in selected }) invalid.add(activity.id)
                 }
+            } catch (_: IllegalArgumentException) {
+                if (activity.movements.any { it.accountId in selected }) invalid.add(activity.id)
+                incompleteAssets.addAll(activity.movements.map { it.amount.assetId })
             }
         }
         val confirmed = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
@@ -442,7 +450,15 @@ class PortfolioApplication(
             }
         val calculated =
             FifoAccounting.calculate(
-                actions,
+                actions.filter { action ->
+                    val asset =
+                        when (action) {
+                            is io.polion.core.accounting.AccountingAction.Acquisition -> action.asset
+                            is io.polion.core.accounting.AccountingAction.Disposal -> action.asset
+                            is io.polion.core.accounting.AccountingAction.Transfer -> action.asset
+                        }
+                    asset !in incompleteAssets
+                },
                 catalog.accounts.associate { it.id to it.ownerId },
                 quote,
                 replayOrder = replayOrder,
@@ -492,8 +508,17 @@ class PortfolioApplication(
         )
     }
 
-    fun reconciliationCandidates(windowMillis: Long): List<ReconciliationCandidate> =
-        Reconciliation.suggest(ledger().activities.map { it.activity }, windowMillis)
+    fun reconciliationCandidates(windowMillis: Long): List<ReconciliationCandidate> {
+        val reviewedPairs = overlays.decisions().map { it.first to it.second }.toSet()
+        val pending =
+            Reconciliation
+                .suggest(ledger().activities.map { it.activity }, windowMillis)
+                .filterNot { (it.first to it.second) in reviewedPairs }
+        val counts = pending.flatMap { listOf(it.first, it.second) }.groupingBy { it }.eachCount()
+        return pending.map {
+            it.copy(ambiguous = it.matchedMovements > 1 || counts.getValue(it.first) > 1 || counts.getValue(it.second) > 1)
+        }
+    }
 
     private fun sync(fetcher: HistoryFetcher): SyncOrchestrator =
         SyncOrchestrator(
@@ -1121,16 +1146,18 @@ class PortfolioApplication(
     }
 
     private fun ensureDefaultAssets() {
-        val usd = AssetId("USD")
-        if (market.asset(usd) == null) {
-            market.registerAsset(
-                AssetDefinition(
-                    usd,
-                    io.polion.core.market
-                        .AssetIdentity(io.polion.core.market.AssetKind.FIAT, null, "USD"),
-                ),
-                AssetMetadata("USD", "US Dollar", 2, 0),
-            )
+        for ((code, name) in listOf("USD" to "US Dollar", "EUR" to "Euro", "GBP" to "Pound Sterling")) {
+            val currency = AssetId(code)
+            if (market.asset(currency) == null) {
+                market.registerAsset(
+                    AssetDefinition(
+                        currency,
+                        io.polion.core.market
+                            .AssetIdentity(io.polion.core.market.AssetKind.FIAT, null, code),
+                    ),
+                    AssetMetadata(code, name, 2, 0),
+                )
+            }
         }
         if (market.asset(BITCOIN_ASSET) == null) {
             market.registerAsset(

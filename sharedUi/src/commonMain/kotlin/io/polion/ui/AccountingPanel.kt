@@ -125,7 +125,7 @@ internal fun AccountingPanel(
             val report = current.view.report
             if (current.view.missingTreatments.isNotEmpty()) {
                 Text(
-                    "${current.view.missingTreatments.size} activities need treatments; totals may be incomplete.",
+                    "${current.view.missingTreatments.size} activities need treatments; affected assets are excluded from FIFO results.",
                     color = Color(0xFF936126),
                     fontSize = 12.sp,
                 )
