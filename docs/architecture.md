@@ -4,7 +4,7 @@ Polion is an AGPL-3.0 local-first watch-only portfolio tracker. Initial validati
 
 ## Boundaries
 
-Shared core owns domain and application behavior without Compose or platform framework dependencies. Shared Compose UI consumes core contracts. Separate Android and JVM desktop hosts supply platform entry points. The UI hosts display the initial welcome shell. Shared core provides exact financial primitives, ownership scopes, SQLite persistence, raw provenance, versioned activities, connector contracts and durable synchronization. Portfolio projections, accounting and real provider implementations belong to later roadmap phases.
+Shared core owns domain and application behavior without Compose or platform framework dependencies. Shared Compose UI consumes core contracts. Separate Android and JVM desktop hosts supply platform entry points. The UI hosts display the initial welcome shell. Shared core provides exact financial primitives, ownership scopes, SQLite persistence, raw provenance, versioned activities, connector contracts and durable synchronization. Shared core also provides asset/price selection, replayable holdings, explicit FIFO accounting, user overlays and reviewed reconciliation, encrypted portable backup and import previews. Real provider implementations and financial product screens belong to later roadmap phases.
 
 ## Privacy and threat model
 
