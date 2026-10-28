@@ -74,6 +74,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -550,13 +552,9 @@ private fun Product(
                                         TextButton(onClick = { removeAccount = account }) { Text("Remove account", fontSize = 12.sp) }
                                         data.balances.quantities.filterKeys { it.account == account.id }.forEach { (key, units) ->
                                             Text(
-                                                "${formatUnits(
-                                                    units,
-                                                    data.valuations
-                                                        .find { it.asset == key.asset }
-                                                        ?.metadata
-                                                        ?.decimals ?: 8,
-                                                )} ${symbol(key.asset, data)}",
+                                                data.valuations.find { it.asset == key.asset }?.metadata?.let {
+                                                    "${formatUnits(units, it.decimals)} ${it.symbol}"
+                                                } ?: "$units atomic units (${key.asset.value})",
                                                 fontWeight = FontWeight.SemiBold,
                                             )
                                         }
@@ -1030,7 +1028,14 @@ private fun ValueChart(
             Text("Add historical prices to see your value over time", color = if (dark) Color(0xFFAAC6B7) else Muted, fontSize = 12.sp)
         }
     } else {
-        Canvas(modifier) {
+        Canvas(
+            modifier.semantics {
+                contentDescription =
+                    "Portfolio value history chart; ${values.count {
+                        it != null
+                    }} available points, ${values.count { it == null }} unavailable points"
+            },
+        ) {
             val finite = values.filterNotNull().filter { it.isFinite() }
             if (finite.isEmpty()) return@Canvas
             val min = finite.min()
@@ -1095,7 +1100,12 @@ private fun AssetsCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "${formatUnits(asset.amount.atomicUnits, asset.metadata?.decimals ?: 8)} ${asset.metadata?.symbol ?: "units"}",
+                        "${asset.metadata?.let {
+                            "${formatUnits(
+                                asset.amount.atomicUnits,
+                                it.decimals,
+                            )} ${it.symbol}"
+                        } ?: "${asset.amount.atomicUnits} atomic units"}",
                         color = Muted,
                         fontSize = 11.sp,
                         maxLines = 2,
@@ -1343,13 +1353,9 @@ private fun ActivityRow(
             a.movements.groupBy { it.amount.assetId }.forEach { (asset, movements) ->
                 val quantity = movements.fold(ExactInteger.ZERO) { sum, m -> sum + m.amount.atomicUnits }
                 Text(
-                    "${if (quantity.sign > 0) "+" else ""}${formatUnits(
-                        quantity,
-                        data.valuations
-                            .find { it.asset == asset }
-                            ?.metadata
-                            ?.decimals ?: 8,
-                    )} ${symbol(asset, data)}",
+                    "${if (quantity.sign > 0) "+" else ""}${data.valuations.find { it.asset == asset }?.metadata?.let {
+                        "${formatUnits(quantity, it.decimals)} ${it.symbol}"
+                    } ?: "$quantity atomic units (${asset.value})"}",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color =

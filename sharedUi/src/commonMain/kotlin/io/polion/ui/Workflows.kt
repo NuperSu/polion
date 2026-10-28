@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,6 +59,7 @@ import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.EventId
 import io.polion.core.model.ExactDecimal
+import io.polion.core.model.ExactInteger
 import io.polion.core.model.NetworkId
 import io.polion.core.model.OwnerId
 import io.polion.core.model.PortfolioId
@@ -600,7 +601,7 @@ internal fun ActivityDialog(
     var label by remember { mutableStateOf(item.label.orEmpty()) }
     var note by remember { mutableStateOf(item.note.orEmpty()) }
     var kind by remember { mutableStateOf(item.activity.kind) }
-    var correction by remember { mutableStateOf("") }
+    val corrections = remember(item.activity.id) { mutableStateMapOf<EventId, String>() }
     var error by remember { mutableStateOf<String?>(null) }
     FormDialog("Activity details", close) {
         Text(item.activity.id.value, fontSize = 11.sp)
@@ -643,39 +644,48 @@ internal fun ActivityDialog(
         Field("Label", label) { label = it }
         Field("Private note", note) { note = it }
         Choice("Classification correction", ActivityKind.entries.map { it to it.name.lowercase() }, kind) { kind = it }
-        if (item.activity.movements.size == 1) Field("Correct quantity (whole coins; empty = keep)", correction) { correction = it }
+        item.activity.movements.forEachIndexed { index, movement ->
+            val metadata = data.valuations.find { it.asset == movement.amount.assetId }?.metadata
+            val unit = if (metadata == null) "atomic units" else "whole ${metadata.symbol}"
+            Field("Correct quantity ${index + 1} ($unit; empty = keep)", corrections[movement.id].orEmpty()) {
+                corrections[movement.id] = it
+            }
+            item.original.movements.find { it.id == movement.id }?.let { original ->
+                TextButton(onClick = {
+                    corrections[movement.id] = metadata?.let { original.amount.decimal(it.decimals).toString() }
+                        ?: original.amount.atomicUnits.toString()
+                }) { Text("Reset quantity ${index + 1} to source") }
+            }
+        }
         Text("Corrections are saved separately. Original source amounts and provenance remain available.", fontSize = 12.sp)
         Button(onClick = {
-            val amounts =
-                if (correction.isBlank()) {
-                    item.activity.movements
-                        .filter { m ->
-                            item.original.movements
-                                .find { it.id == m.id }
-                                ?.amount !=
-                                m.amount
-                        }.associate { it.id to it.amount }
-                } else {
-                    val m = item.activity.movements.single()
-                    val decimals =
-                        data.valuations
-                            .find { it.asset == m.amount.assetId }
-                            ?.metadata
-                            ?.decimals ?: 8
-                    val amount =
+            val amounts = mutableMapOf<EventId, AtomicAmount>()
+            for (movement in item.activity.movements) {
+                val input = corrections[movement.id].orEmpty()
+                val original = item.original.movements.find { it.id == movement.id }
+                val amount =
+                    if (input.isBlank()) {
+                        movement.amount
+                    } else {
                         runCatching {
-                            AtomicAmount.fromDecimal(
-                                m.amount.assetId,
-                                ExactDecimal.parse(correction),
-                                decimals,
-                            )
+                            val decimals =
+                                data.valuations
+                                    .find { it.asset == movement.amount.assetId }
+                                    ?.metadata
+                                    ?.decimals
+                            if (decimals == null) {
+                                AtomicAmount(movement.amount.assetId, ExactInteger.parse(input))
+                            } else {
+                                AtomicAmount.fromDecimal(movement.amount.assetId, ExactDecimal.parse(input), decimals)
+                            }
                         }.getOrNull()
-                    if (amount == null) {
-                        error = "Enter an exact decimal quantity for this asset."
-                        return@Button
                     }
-                    mapOf(m.id to amount)
+                if (amount == null) {
+                    error = "Enter an exact quantity in the units shown for each movement."
+                    return@Button
                 }
+                if (original?.amount != amount) amounts[movement.id] = amount
+            }
             save(ActivityOverlay(item.activity.id, label.trim().ifEmpty { null }, note.trim().ifEmpty { null }, kind, amounts))
         }, modifier = Modifier.fillMaxWidth()) { Text("Save correction") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -692,7 +702,7 @@ internal fun AssetDialog(
     FormDialog(asset.metadata?.name ?: asset.asset.value, close) {
         Text(asset.asset.value, fontSize = 12.sp)
         Text(
-            "${asset.amount.decimal(asset.metadata?.decimals ?: 8)} ${asset.metadata?.symbol.orEmpty()}",
+            "${asset.metadata?.let { "${asset.amount.decimal(it.decimals)} ${it.symbol}" } ?: "${asset.amount.atomicUnits} atomic units"}",
             fontSize = 25.sp,
             fontWeight = FontWeight.SemiBold,
         )

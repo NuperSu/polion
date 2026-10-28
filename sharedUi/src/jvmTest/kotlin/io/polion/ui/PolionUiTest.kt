@@ -1,5 +1,7 @@
 package io.polion.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -19,9 +21,15 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
+import androidx.compose.ui.unit.Density
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.model.ActivityId
+import io.polion.core.model.AssetId
+import io.polion.core.model.AtomicAmount
+import io.polion.core.model.EventId
+import io.polion.core.model.ExactInteger
+import io.polion.core.reconcile.ActivityOverlay
 import io.polion.core.storage.JvmSqliteDatabase
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -116,6 +124,29 @@ class PolionUiTest {
                     val image = onRoot().captureToImage()
                     assertEquals(360, image.width)
                     assertEquals(800, image.height)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun narrowPhoneNavigationWorksWithLargeText() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 320, height = 800) {
+                    setContent {
+                        val density = LocalDensity.current
+                        CompositionLocalProvider(LocalDensity provides Density(density.density, 1.5f)) {
+                            PolionApp(app, host)
+                        }
+                    }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
+                    onAllNodesWithText("Activity").filter(hasClickAction()).onFirst().performClick()
+                    onNodeWithText("Search activity").assertIsDisplayed()
+                    onAllNodesWithText("Accounts").filter(hasClickAction()).onFirst().performClick()
+                    onNodeWithText("Watch-only accounts").assertIsDisplayed()
                 }
             }
         }
@@ -250,6 +281,31 @@ class PolionUiTest {
     }
 
     @Test
+    fun activityCorrectionsSupportEveryLegAndResetToSource() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { System.currentTimeMillis() }
+            app.seedDemo()
+            val data = app.snapshot()
+            val base = data.activities.first { it.activity.movements.size == 1 }
+            val first = base.activity.movements.single()
+            val second = first.copy(id = EventId("unknown-leg"), amount = AtomicAmount(AssetId("unknown"), ExactInteger.parse("42")))
+            val source = base.original.copy(movements = listOf(first, second))
+            val item = base.copy(original = source, activity = source)
+            var saved: ActivityOverlay? = null
+            runDesktopComposeUiTest(width = 360, height = 800) {
+                setContent { ActivityDialog(item, data, {}, { saved = it }) }
+                onNodeWithText("Correct quantity 2 (atomic units; empty = keep)").performScrollTo().performTextInput("123")
+                onNodeWithText("Save correction").performScrollTo().performClick()
+                assertEquals(ExactInteger.parse("123"), saved?.amounts?.get(second.id)?.atomicUnits)
+                onNodeWithText("Reset quantity 2 to source").performScrollTo().performClick()
+                onNodeWithText("Save correction").performScrollTo().performClick()
+                assertTrue(saved!!.amounts.isEmpty())
+                assertEquals(ExactInteger.parse("42"), source.movements[1].amount.atomicUnits)
+            }
+        }
+    }
+
+    @Test
     fun phoneCanRemoveAndRestoreAnAccount() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
@@ -267,6 +323,62 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Account restored").fetchSemanticsNodes().isNotEmpty() }
                     assertEquals(4, app.snapshot().activityTotal)
                 }
+            }
+        }
+    }
+
+    @Test
+    fun tenThousandActivitiesRemainPagedAndSearchable() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                val started = System.nanoTime()
+                repeat(10_000) { index ->
+                    val id = "bulk-${index.toString().padStart(5, '0')}"
+                    app.saveManualActivity(
+                        io.polion.core.ledger.Activity(
+                            ActivityId(id),
+                            System.currentTimeMillis(),
+                            id,
+                            io.polion.core.ledger.ActivityKind.DEPOSIT,
+                            io.polion.core.ledger.ActivityStatus.CONFIRMED,
+                            listOf(
+                                io.polion.core.ledger.Movement(
+                                    io.polion.core.model
+                                        .EventId(id),
+                                    io.polion.core.model
+                                        .AccountId("demo-wallet"),
+                                    io.polion.core.model.AtomicAmount(
+                                        io.polion.core.model
+                                            .AssetId("bitcoin:btc"),
+                                        io.polion.core.model.ExactInteger
+                                            .parse("1"),
+                                    ),
+                                    io.polion.core.ledger.MovementRole.TRANSFER,
+                                ),
+                            ),
+                            emptySet(),
+                            null,
+                            true,
+                        ),
+                    )
+                }
+                runDesktopComposeUiTest(width = 1440, height = 1000) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 30_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
+                    onAllNodesWithText("Activity").filter(hasClickAction()).onFirst().performClick()
+                    waitUntil(
+                        timeoutMillis = 30_000,
+                    ) { onAllNodesWithText("10004 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
+                    assertTrue(onAllNodesWithText("Deposit").fetchSemanticsNodes().size <= 51)
+                    onNodeWithText("Search activity").performTextInput("bulk-09999")
+                    waitUntil(
+                        timeoutMillis = 30_000,
+                    ) { onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
+                    assertEquals(1, app.snapshot(ActivityFilter(search = "bulk-09999")).activityTotal)
+                }
+                println("10,000-activity seed, projection, paginated render and search: ${(System.nanoTime() - started) / 1_000_000} ms")
             }
         }
     }
