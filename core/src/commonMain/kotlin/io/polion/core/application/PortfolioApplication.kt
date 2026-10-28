@@ -15,6 +15,7 @@ import io.polion.core.bitcoin.BitcoinScanStage
 import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.bitcoin.bitcoinMainnetAddress
+import io.polion.core.bitcoin.bitcoinWallet
 import io.polion.core.connectors.HistoryFetcher
 import io.polion.core.connectors.HistoryPage
 import io.polion.core.connectors.HistoryRequest
@@ -39,9 +40,12 @@ import io.polion.core.model.PortfolioId
 import io.polion.core.model.ProviderId
 import io.polion.core.model.SourceId
 import io.polion.core.model.SyncJobId
+import io.polion.core.model.TrackingTargetId
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.Owner
 import io.polion.core.ownership.Portfolio
+import io.polion.core.ownership.TargetIdentity
+import io.polion.core.ownership.TargetRole
 import io.polion.core.ownership.TrackingTarget
 import io.polion.core.reconcile.ActivityOverlay
 import io.polion.core.reconcile.ClassificationRule
@@ -56,6 +60,7 @@ import io.polion.core.storage.OwnershipRepository
 import io.polion.core.storage.OwnershipSnapshot
 import io.polion.core.storage.SqliteDatabase
 import io.polion.core.storage.Store
+import io.polion.core.storage.sha256
 import io.polion.core.sync.JobState
 import io.polion.core.sync.SyncClock
 import io.polion.core.sync.SyncJob
@@ -141,6 +146,11 @@ data class BitcoinScanProgress(
     val phase: String = "history",
     val blocksResolved: Int = 0,
     val totalBlocks: Int = 0,
+)
+
+data class BitcoinWalletDiscovery(
+    val addresses: Int,
+    val usedAddresses: Int,
 )
 
 data class PortfolioSnapshot(
@@ -767,6 +777,9 @@ class PortfolioApplication(
     private fun normalizeTarget(value: TrackingTarget): TrackingTarget =
         if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "address") {
             value.copy(identity = value.identity.copy(canonicalKey = bitcoinMainnetAddress(value.identity.canonicalKey)))
+        } else if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "wallet") {
+            require(value.role == TargetRole.WALLET && value.walletId == null) { "Invalid wallet target" }
+            value.copy(identity = value.identity.copy(canonicalKey = bitcoinWallet(value.identity.canonicalKey).canonical))
         } else {
             value
         }
@@ -782,10 +795,118 @@ class PortfolioApplication(
                 "Cannot reassign a tracked target with Bitcoin activity"
             }
         }
+        if (previous?.role == TargetRole.WALLET && catalog.targets.any { it.walletId == previous.id }) {
+            require(
+                previous.identity == normalized.identity && previous.accountId == normalized.accountId && previous.role == normalized.role,
+            ) {
+                "Cannot change a wallet after discovery"
+            }
+        }
         val existing = catalog.targets.filter { it.id != normalized.id && it.identity == normalized.identity && it.role == normalized.role }
         require(existing.all { it.accountId == normalized.accountId }) { "Address assigned to multiple accounts" }
-        updateOwnership { it.copy(targets = it.targets.filterNot { old -> old.id == normalized.id } + normalized) }
+        require(normalized.role != TargetRole.WALLET || existing.isEmpty()) { "Wallet already tracked" }
+        updateOwnership { snapshot ->
+            snapshot.copy(
+                targets =
+                    snapshot.targets.filterNot { old -> old.id == normalized.id }.map { child ->
+                        if (child.walletId == normalized.id) child.copy(enabled = normalized.enabled) else child
+                    } + normalized,
+            )
+        }
         db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+    }
+
+    /** Discovers public addresses; requests disclose each derived address to the selected provider. */
+    fun discoverBitcoinWallet(
+        walletId: TrackingTargetId,
+        transport: EsploraTransport,
+        gapLimit: Int = 20,
+        maxAddressesPerBranch: Int = 1000,
+    ): BitcoinWalletDiscovery {
+        require(sourceConsent()) { "Source consent required" }
+        require(gapLimit in 1..100 && maxAddressesPerBranch in gapLimit..10000)
+        val catalog = ownership.load()
+        val target = requireNotNull(catalog.targets.firstOrNull { it.id == walletId }) { "Unknown wallet" }
+        require(
+            target.enabled &&
+                target.role == TargetRole.WALLET &&
+                target.identity.networkId == BITCOIN_MAINNET &&
+                target.identity.kind == "wallet",
+        ) { "Enabled Bitcoin wallet required" }
+        val wallet = bitcoinWallet(target.identity.canonicalKey)
+        val oldChildren = catalog.targets.filter { it.walletId == walletId }
+        val children = mutableListOf<TrackingTarget>()
+        var used = 0
+        for (branch in 0 until wallet.branchCount) {
+            val prefix = "bitcoin-wallet-child-" + sha256(walletId.value) + ":$branch:"
+            val previousMax =
+                oldChildren
+                    .mapNotNull {
+                        it.id.value
+                            .takeIf { id -> id.startsWith(prefix) }
+                            ?.removePrefix(prefix)
+                            ?.toIntOrNull()
+                    }.maxOrNull() ?: -1
+            var gap = 0
+            var index = 0
+            while (index < maxAddressesPerBranch) {
+                val address = wallet.address(branch, index)
+                val json = Json.parseToJsonElement(transport.get("/address/$address")).jsonObject
+                val chain =
+                    json
+                        .getValue("chain_stats")
+                        .jsonObject
+                        .getValue("tx_count")
+                        .jsonPrimitive.long
+                val mempool =
+                    json
+                        .getValue("mempool_stats")
+                        .jsonObject
+                        .getValue("tx_count")
+                        .jsonPrimitive.long
+                require(chain >= 0 && mempool >= 0) { "Invalid address summary" }
+                val hasActivity = chain > 0 || mempool > 0
+                if (hasActivity) used++
+                gap = if (hasActivity) 0 else gap + 1
+                val id = TrackingTargetId(prefix + index)
+                val existing = catalog.targets.firstOrNull { it.id == id }
+                require(existing == null || existing.walletId == walletId && existing.identity.canonicalKey == address) {
+                    "Wallet child identity conflict"
+                }
+                require(
+                    catalog.targets
+                        .filter {
+                            it.role == TargetRole.LEAF &&
+                                it.identity.networkId == BITCOIN_MAINNET &&
+                                it.identity.kind == "address" &&
+                                it.identity.canonicalKey == address &&
+                                it.id != id
+                        }.all {
+                            it.accountId == target.accountId && (it.walletId == null || it.walletId == walletId)
+                        },
+                ) { "Address assigned to another account or wallet" }
+                children.add(
+                    TrackingTarget(
+                        id,
+                        target.accountId,
+                        TargetIdentity(BITCOIN_MAINNET, "address", address),
+                        TargetRole.LEAF,
+                        "${target.label} / $branch / $index",
+                        enabled = true,
+                        walletId = walletId,
+                    ),
+                )
+                index++
+                if (!wallet.ranged || gap >= gapLimit && index > previousMax) break
+            }
+            require(!wallet.ranged || gap >= gapLimit && index > previousMax) {
+                "Discovery limit reached before the gap was verified; increase the limit"
+            }
+        }
+        val childIds = children.map { it.id }.toSet()
+        ownership.replace(catalog.copy(targets = catalog.targets.filterNot { it.id in childIds } + children))
+        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        return BitcoinWalletDiscovery(children.size, used)
     }
 
     fun savePortfolio(value: Portfolio) =

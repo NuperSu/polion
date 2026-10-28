@@ -13,6 +13,10 @@ kotlin {
     }
     sourceSets.jvmMain.dependencies {
         implementation("org.xerial:sqlite-jdbc:3.49.1.0")
+        implementation("org.bouncycastle:bcprov-jdk18on:1.84")
+    }
+    sourceSets.androidMain.dependencies {
+        implementation("org.bouncycastle:bcprov-jdk18on:1.84")
     }
     sourceSets.commonMain.dependencies {
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
