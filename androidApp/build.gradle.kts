@@ -17,6 +17,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
+    sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin"))
     buildFeatures { compose = true }
     lint { warningsAsErrors = true }
 }

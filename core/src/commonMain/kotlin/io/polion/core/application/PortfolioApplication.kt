@@ -721,6 +721,7 @@ class PortfolioApplication(
         putSetting("source_in_progress", "true")
         try {
             bitcoinStage.reset()
+            val canonicalHashes = mutableMapOf<Long, String>()
             entries.forEach { activity ->
                 val rows =
                     db.query(
@@ -745,7 +746,21 @@ class PortfolioApplication(
                             )
                         }.firstOrNull { observation ->
                             val decoded = runCatching { decoder.decode(observation).singleOrNull() }.getOrNull()
-                            decoded != null && activity.copy(orderingKey = decoded.orderingKey, sources = decoded.sources) == decoded
+                            if (decoded == null ||
+                                activity.copy(orderingKey = decoded.orderingKey, sources = decoded.sources) != decoded
+                            ) {
+                                false
+                            } else {
+                                val status =
+                                    Json
+                                        .parseToJsonElement(observation.payload)
+                                        .jsonObject
+                                        .getValue("status")
+                                        .jsonObject
+                                val height = status.getValue("block_height").jsonPrimitive.long
+                                val hash = status.getValue("block_hash").jsonPrimitive.content
+                                canonicalHashes.getOrPut(height) { transport.get("/block-height/$height").trim() } == hash
+                            }
                         } ?: error("Saved Bitcoin transaction provenance is incomplete; refresh history")
                 bitcoinStage.addPage(listOf(raw))
             }

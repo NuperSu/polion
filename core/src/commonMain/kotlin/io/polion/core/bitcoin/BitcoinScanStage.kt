@@ -194,7 +194,7 @@ class BitcoinScanStage(
                 val row =
                     db
                         .query(
-                            "SELECT id, namespace, external_id, network, source_id, retrieved_at, payload, payload_version, checksum, context FROM bitcoin_scan_stage WHERE id>? ORDER BY id LIMIT 1",
+                            "SELECT id, namespace, external_id, network, source_id, retrieved_at, payload, payload_version, checksum, context, block_hash, block_height FROM bitcoin_scan_stage WHERE id>? ORDER BY id LIMIT 1",
                             listOf(after),
                         ).singleOrNull() ?: break
                 val decoded = decoder.decode(row.toObservation()).single()
@@ -228,14 +228,23 @@ class BitcoinScanStage(
             while (true) {
                 val rows =
                     db.query(
-                        "SELECT id, namespace, external_id, network, source_id, retrieved_at, payload, payload_version, checksum, context FROM bitcoin_scan_stage WHERE id>? ORDER BY id LIMIT 1",
+                        "SELECT id, namespace, external_id, network, source_id, retrieved_at, payload, payload_version, checksum, context, block_hash, block_height FROM bitcoin_scan_stage WHERE id>? ORDER BY id LIMIT 1",
                         listOf(after),
                     )
                 if (rows.isEmpty()) break
                 rows.forEach { row ->
                     decoder.decode(row.toObservation()).forEach { activity ->
                         db.execute("INSERT INTO bitcoin_scan_present VALUES (?)", listOf(activity.id.value))
-                        activities.saveInTransaction(activity)
+                        val previous = activities.history(activity.id).lastOrNull()
+                        val block = row[10]
+                        val sameVerifiedPosition =
+                            activity.status == ActivityStatus.CONFIRMED &&
+                                !activity.orderingKey.startsWith("bitcoin-chain:") &&
+                                previous?.orderingKey?.startsWith("bitcoin-chain:") == true &&
+                                previous.orderingKey.split(':').getOrNull(1) == row[11]?.padStart(20, '0') &&
+                                previous.sources.any { it.value == "bitcoin-block:$block" } &&
+                                previous.copy(orderingKey = activity.orderingKey, sources = activity.sources) == activity
+                        activities.saveInTransaction(if (sameVerifiedPosition) previous!! else activity)
                     }
                 }
                 after = rows.last()[0]!!

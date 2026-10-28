@@ -93,3 +93,10 @@ The shared UI workload seeded 10,000 additional activities, projected and render
 
 
 The JVM `BitcoinAccountingWorkflowTest` exercises consented history fetch, raw provenance, confirmed holdings, explicit treatments, block-order verification across decreasing timestamps, and authenticated backup restore. Before verification, basis is unknown. Afterwards the fixture disposal has basis9USD and gain81USD, the fee consumes basis1USD, and the remaining lot retains basis100USD. Restored accounting and CSV match exactly. The targeted test and formatting pass; this is a deterministic provider fixture, not a claim about independent chain verification.
+
+
+### Shared Bitcoin accounting and final integration
+
+The same `testSupport` Bitcoin workflow runs against desktop JDBC and native Android SQLite. The native harness reports **checks=7, failures=0**. It verifies decreasing block timestamps, exact FIFO disposal/fee basis, ordinary resync retention of verified order, reorg invalidation and re-verification, and encrypted restore/CSV parity. These are deterministic provider fixtures, not independent chain verification.
+
+The final integrated run passed formatting, core JVM and Android host tests, shared UI and desktop tests, Android lint, both APK builds and desktop packaging: **BUILD SUCCESSFUL in 27s**, 175 actionable tasks. The validated APK was installed successfully on the Pixel and opened in Main profile user 10, preserving existing app data. No phone sync was active at installation. Hosted CI remains unexecuted.

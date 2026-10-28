@@ -11,6 +11,7 @@ kotlin {
         minSdk = 26
         withHostTestBuilder {}
     }
+    sourceSets.named("jvmTest") { kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin")) }
     sourceSets.jvmMain.dependencies {
         implementation("org.xerial:sqlite-jdbc:3.49.1.0")
         implementation("org.bouncycastle:bcprov-jdk18on:1.84")

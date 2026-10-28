@@ -10,6 +10,7 @@ import io.polion.core.bitcoin.descriptorChecksum
 import io.polion.core.model.OwnerId
 import io.polion.core.ownership.Owner
 import io.polion.core.storage.AndroidSqliteDatabase
+import io.polion.testing.verifyBitcoinAccountingWorkflow
 import java.io.File
 
 /** Exercises the actual Android SQLite and crypto bindings using disposable fixture databases. */
@@ -24,6 +25,16 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "bitcoinAccountingWorkflow" to {
+                    val files = mutableListOf<File>()
+                    try {
+                        verifyBitcoinAccountingWorkflow {
+                            val file = File.createTempFile("polion-chain-fixture-", ".sqlite", targetContext.cacheDir)
+                            files.add(file)
+                            AndroidSqliteDatabase(file.path)
+                        }
+                    } finally { files.forEach { file -> file.delete(); File(file.path + "-journal").delete() } }
+                },
                 "persistedProjections" to {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
