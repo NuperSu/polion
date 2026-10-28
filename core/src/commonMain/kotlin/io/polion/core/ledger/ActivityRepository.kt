@@ -13,46 +13,47 @@ import io.polion.core.storage.SqliteDatabase
 class ActivityRepository(
     private val db: SqliteDatabase,
 ) {
-    fun save(activity: Activity) =
-        db.transaction {
-            val previous = history(activity.id)
-            if (previous.lastOrNull() != activity) {
-                require(previous.isEmpty() || previous.last().manual == activity.manual) { "Manual/source origin cannot change" }
-                val revision = previous.size.toString()
+    fun save(activity: Activity) = db.transaction { saveInTransaction(activity) }
+
+    fun saveInTransaction(activity: Activity) {
+        val previous = history(activity.id)
+        if (previous.lastOrNull() != activity) {
+            require(previous.isEmpty() || previous.last().manual == activity.manual) { "Manual/source origin cannot change" }
+            val revision = previous.size.toString()
+            db.execute(
+                "INSERT INTO ledger_activities VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                listOf(
+                    activity.id.value,
+                    revision,
+                    activity.occurredAtEpochMillis.toString(),
+                    activity.orderingKey,
+                    activity.kind.name,
+                    activity.status.name,
+                    activity.decoderVersion,
+                    if (activity.manual) "1" else "0",
+                ),
+            )
+            activity.movements.forEachIndexed { index, movement ->
                 db.execute(
-                    "INSERT INTO ledger_activities VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO ledger_movements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     listOf(
                         activity.id.value,
                         revision,
-                        activity.occurredAtEpochMillis.toString(),
-                        activity.orderingKey,
-                        activity.kind.name,
-                        activity.status.name,
-                        activity.decoderVersion,
-                        if (activity.manual) "1" else "0",
+                        index.toString(),
+                        movement.id.value,
+                        movement.accountId.value,
+                        movement.amount.assetId.value,
+                        movement.amount.atomicUnits.toString(),
+                        movement.role.name,
+                        movement.counterparty,
                     ),
                 )
-                activity.movements.forEachIndexed { index, movement ->
-                    db.execute(
-                        "INSERT INTO ledger_movements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        listOf(
-                            activity.id.value,
-                            revision,
-                            index.toString(),
-                            movement.id.value,
-                            movement.accountId.value,
-                            movement.amount.assetId.value,
-                            movement.amount.atomicUnits.toString(),
-                            movement.role.name,
-                            movement.counterparty,
-                        ),
-                    )
-                }
-                activity.sources.forEach {
-                    db.execute("INSERT INTO ledger_sources VALUES (?, ?, ?)", listOf(activity.id.value, revision, it.value))
-                }
+            }
+            activity.sources.forEach {
+                db.execute("INSERT INTO ledger_sources VALUES (?, ?, ?)", listOf(activity.id.value, revision, it.value))
             }
         }
+    }
 
     fun history(id: ActivityId): List<Activity> =
         db.query("SELECT * FROM ledger_activities WHERE id=? ORDER BY revision", listOf(id.value)).map { row ->

@@ -36,6 +36,44 @@ class BackupTest {
         }
     }
 
+    @Test fun scanWorkingTablesAreExcludedAndOlderBackupsRestore() {
+        JvmSqliteDatabase(":memory:").use { source ->
+            val store = Store(source)
+            store.ingest(
+                RawObservation("id", "btc", "tx", "main", "provider", "2026-10-28T00:00:00Z", "payload", "1", sha256("payload"), "{}"),
+            )
+            val oldArchive = PortableBackup.discover(source).export(source)
+            io.polion.core.bitcoin
+                .BitcoinScanStage(
+                    source,
+                    store,
+                    io.polion.core.ledger
+                        .ActivityRepository(source),
+                )
+            source.execute("INSERT INTO bitcoin_scan_blocks VALUES ('scratch-sensitive', 42, 0)")
+            val archiveWithScratch = PortableBackup.discover(source).export(source)
+            assertEquals(oldArchive, archiveWithScratch)
+            assertTrue(!archiveWithScratch.contains("scratch-sensitive"))
+            JvmSqliteDatabase(":memory:").use { staging ->
+                val target = Store(staging)
+                io.polion.core.bitcoin
+                    .BitcoinScanStage(
+                        staging,
+                        target,
+                        io.polion.core.ledger
+                            .ActivityRepository(staging),
+                    )
+                val backup = PortableBackup.discover(staging)
+                staging.execute("INSERT INTO bitcoin_scan_blocks VALUES ('unrelated', 42, 0)")
+                assertFails { backup.restoreToStaging(staging, oldArchive) }
+                staging.execute("DELETE FROM bitcoin_scan_blocks")
+                backup.restoreToStaging(staging, oldArchive)
+                assertEquals(store.records(), target.records())
+                assertEquals("0", staging.query("SELECT COUNT(*) FROM bitcoin_scan_blocks").single().single())
+            }
+        }
+    }
+
     @Test fun importPreviewJournalAndRollback() {
         JvmSqliteDatabase(":memory:").use { db ->
             db.execute("CREATE TABLE imported (id TEXT PRIMARY KEY, value TEXT NOT NULL)")
