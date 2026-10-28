@@ -101,6 +101,7 @@ object FifoAccounting {
         owners: Map<AccountId, OwnerId>,
         quoteAsset: AssetId,
         unitPrices: Map<AssetId, QuoteValue?> = emptyMap(),
+        replayOrder: Comparator<AccountingAction> = compareBy({ it.at }, { it.order }, { it.activityId.value }),
     ): AccountingReport {
         require(
             unitPrices.values.filterNotNull().all {
@@ -119,6 +120,7 @@ object FifoAccounting {
         val lots = mutableListOf<Lot>()
         val disposals = mutableListOf<DisposalReport>()
         val seen = mutableSetOf<String>()
+        val lotRanks = mutableMapOf<String, Int>()
 
         fun take(
             account: AccountId,
@@ -131,7 +133,7 @@ object FifoAccounting {
                 lots
                     .filter {
                         it.account == account && it.asset == asset
-                    }.sortedWith(compareBy({ it.acquiredAt }, { it.order }, { it.id }))
+                    }.sortedWith(compareBy({ lotRanks.getValue(it.id) }, { it.id }))
             for (lot in candidates) {
                 if (remaining.sign == 0) break
                 val qty = if (lot.quantity <= remaining) lot.quantity else remaining
@@ -149,7 +151,7 @@ object FifoAccounting {
             if (remaining.sign > 0) chunks += null to (remaining to null)
             return chunks
         }
-        actions.sortedWith(compareBy<AccountingAction>({ it.at }, { it.order }, { it.activityId.value })).forEach { action ->
+        actions.sortedWith(replayOrder).forEachIndexed { rank, action ->
             require(action.order.isNotBlank())
             val key = "${action.activityId.value}:${action.order}"
             require(seen.add(key)) { "Duplicate accounting action" }
@@ -157,6 +159,7 @@ object FifoAccounting {
                 is AccountingAction.Acquisition -> {
                     require(action.quantity.sign > 0 && (action.totalCost == null || action.totalCost.amount >= Rational.ZERO))
                     val owner = requireNotNull(owners[action.account]) { "Missing owner" }
+                    lotRanks[key] = rank
                     lots +=
                         Lot(
                             key,
@@ -208,6 +211,7 @@ object FifoAccounting {
                     val owner = requireNotNull(owners[action.from])
                     require(owners[action.to] == owner) { "Transfer requires same owner" }
                     take(action.from, action.asset, action.quantity).forEachIndexed { index, (lot, part) ->
+                        lotRanks["$key:$index"] = lot?.let { lotRanks.getValue(it.id) } ?: rank
                         lots +=
                             Lot(
                                 "$key:$index",
@@ -224,7 +228,7 @@ object FifoAccounting {
                 }
             }
         }
-        val ordered = lots.sortedWith(compareBy({ it.acquiredAt }, { it.order }, { it.id }))
+        val ordered = lots.sortedWith(compareBy({ lotRanks.getValue(it.id) }, { it.id }))
         return AccountingReport(
             quoteAsset,
             ordered,

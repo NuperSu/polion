@@ -413,15 +413,73 @@ class PortfolioApplication(
                 }
             }
         }
-        val report = FifoAccounting.calculate(actions, catalog.accounts.associate { it.id to it.ownerId }, quote)
+        val confirmed = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
+        val bitcoin = confirmed.filter { !it.original.manual && it.original.decoderVersion?.startsWith("bitcoin-") == true }
+        val bitcoinAssets = bitcoin.flatMap { it.activity.movements.map { movement -> movement.amount.assetId } }.toSet()
+        val mixed =
+            confirmed.filter { entry ->
+                entry !in bitcoin && entry.activity.movements.any { it.amount.assetId in bitcoinAssets }
+            }
+        val unverified = bitcoin.filter { !it.original.orderingKey.startsWith("bitcoin-chain:") }
+        val uncertain = (unverified + if (mixed.isNotEmpty()) bitcoin + mixed else emptyList()).distinct()
         val orderingUncertain =
-            ledger()
-                .activities
-                .filter { item ->
-                    !item.original.manual &&
-                        item.original.decoderVersion?.startsWith("bitcoin-") == true &&
-                        item.activity.movements.any { it.accountId in selected }
+            uncertain
+                .filter { entry ->
+                    entry.activity.movements.any { it.accountId in selected }
                 }.map { it.activity.id }
+        // Chain positions establish relative order only among Bitcoin activities. Mixed sources
+        // use the timestamp fallback and remain uncertain until cross-source order is explicit.
+        val chainOrder = bitcoin.associate { it.activity.id to it.original.orderingKey }
+        val replayOrder =
+            if (bitcoin.isNotEmpty() && unverified.isEmpty() && mixed.isEmpty()) {
+                compareBy<io.polion.core.accounting.AccountingAction>(
+                    { chainOrder[it.activityId] ?: "" },
+                    { it.order },
+                    { it.activityId.value },
+                )
+            } else {
+                compareBy({ it.at }, { it.order }, { it.activityId.value })
+            }
+        val calculated =
+            FifoAccounting.calculate(
+                actions,
+                catalog.accounts.associate { it.id to it.ownerId },
+                quote,
+                replayOrder = replayOrder,
+            )
+        val uncertainAssets = uncertain.flatMap { it.activity.movements.map { movement -> movement.amount.assetId } }.toSet()
+        val report =
+            if (uncertain.isEmpty()) {
+                calculated
+            } else {
+                calculated.copy(
+                    lots = calculated.lots.map { if (it.asset in uncertainAssets) it.copy(basis = null) else it },
+                    disposals =
+                        calculated.disposals.map { disposal ->
+                            if (disposal.asset in
+                                uncertainAssets
+                            ) {
+                                disposal.copy(
+                                    basis = null,
+                                    gain = null,
+                                    consumed = disposal.consumed.map { it.copy(lotId = null, basis = null) },
+                                )
+                            } else {
+                                disposal
+                            }
+                        },
+                    valuations =
+                        calculated.valuations.map {
+                            if (it.lot.asset in
+                                uncertainAssets
+                            ) {
+                                it.copy(lot = it.lot.copy(basis = null), unrealizedGain = null)
+                            } else {
+                                it
+                            }
+                        },
+                )
+            }
         return AccountingView(
             report.copy(
                 lots = report.lots.filter { it.account in selected },
@@ -634,6 +692,77 @@ class PortfolioApplication(
             putSetting("source_error", providerFailure?.reason?.userMessage ?: "History is incomplete. Saved data is unchanged; retry.")
         }
         return result
+    }
+
+    /** Verify saved confirmed transactions against active block lists without refetching address history. */
+    fun verifyAccountingOrder(
+        transport: EsploraTransport,
+        onProgress: (BitcoinScanProgress) -> Unit = {},
+    ) {
+        require(sourceConsent()) { "Source consent required" }
+        val targets =
+            ownership.load().targets.filter {
+                it.role == io.polion.core.ownership.TargetRole.LEAF &&
+                    it.identity.networkId == BITCOIN_MAINNET &&
+                    it.identity.kind == "address"
+            }
+        val claims = targets.groupBy { bitcoinMainnetAddress(it.identity.canonicalKey) }
+        require(claims.values.all { group -> group.map { it.accountId }.distinct().size == 1 })
+        val addresses = claims.mapValues { it.value.first().accountId }
+        val decoder =
+            io.polion.core.bitcoin
+                .BitcoinDecoder(addresses)
+        val entries =
+            ledger().activities.map { it.original }.filter {
+                !it.manual &&
+                    it.decoderVersion?.startsWith("bitcoin-") == true &&
+                    it.status == io.polion.core.ledger.ActivityStatus.CONFIRMED
+            }
+        putSetting("source_in_progress", "true")
+        try {
+            bitcoinStage.reset()
+            entries.forEach { activity ->
+                val rows =
+                    db.query(
+                        "SELECT r.id, r.namespace, r.external_id, r.network, o.source_id, o.retrieved_at, v.payload, v.payload_version, v.checksum, o.context FROM raw_records r JOIN raw_revisions v ON v.record_id=r.id JOIN raw_observations o ON o.record_id=v.record_id AND o.checksum=v.checksum WHERE r.id=? ORDER BY o.retrieved_at DESC, o.source_id DESC",
+                        listOf(activity.id.value),
+                    )
+                val raw =
+                    rows
+                        .asSequence()
+                        .map { row ->
+                            io.polion.core.storage.RawObservation(
+                                row[0]!!,
+                                row[1]!!,
+                                row[2]!!,
+                                row[3]!!,
+                                row[4]!!,
+                                row[5]!!,
+                                row[6]!!,
+                                row[7]!!,
+                                row[8]!!,
+                                row[9]!!,
+                            )
+                        }.firstOrNull { observation ->
+                            val decoded = runCatching { decoder.decode(observation).singleOrNull() }.getOrNull()
+                            decoded != null && activity.copy(orderingKey = decoded.orderingKey, sources = decoded.sources) == decoded
+                        } ?: error("Saved Bitcoin transaction provenance is incomplete; refresh history")
+                bitcoinStage.addPage(listOf(raw))
+            }
+            bitcoinStage.validateBlocks(transport)
+            bitcoinStage.resolveBlocks(transport) { resolved, total ->
+                onProgress(BitcoinScanProgress(0, 0, 0, entries.size, "blocks", resolved, total))
+            }
+            bitcoinStage.validateBlocks(transport)
+            bitcoinStage.applyVerifiedOrder(addresses)
+            invalidate()
+        } finally {
+            try {
+                bitcoinStage.clear()
+            } finally {
+                db.execute("DELETE FROM application_settings WHERE key='source_in_progress'")
+            }
+        }
     }
 
     fun sourceFailureMessage(): String? = setting("source_error")

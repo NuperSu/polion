@@ -45,6 +45,21 @@ class FifoTest {
         assertEquals(report, FifoAccounting.calculate(acts.reversed(), owners, usd, mapOf(eth to v("3"))))
     }
 
+    @Test fun explicitReplayOrderPreservesAcquisitionAgeAcrossTransfers() {
+        val actions =
+            listOf(
+                AccountingAction.Acquisition(ActivityId("first"), 200, "01", a, btc, n("3"), v("9")),
+                AccountingAction.Acquisition(ActivityId("second"), 100, "02", a, btc, n("3"), v("30")),
+                AccountingAction.Transfer(ActivityId("move"), 50, "03", a, b, btc, n("2")),
+                AccountingAction.Disposal(ActivityId("sell"), 0, "04", b, btc, n("1"), v("8")),
+            )
+        val report = FifoAccounting.calculate(actions.reversed(), owners, usd, replayOrder = compareBy { it.order })
+        assertEquals(q("3"), report.disposals.single().basis)
+        assertEquals(q("5"), report.disposals.single().gain)
+        assertEquals(200, report.lots.single { it.account == b }.acquiredAt)
+        assertEquals(q("3"), report.lots.single { it.account == b }.basis)
+    }
+
     @Test fun unknownBasisAndPriceAreNotInvented() {
         val report =
             FifoAccounting.calculate(

@@ -176,6 +176,41 @@ class BitcoinScanStage(
         }
     }
 
+    /** Confirm every recorded block is still on the provider's active chain. */
+    fun validateBlocks(transport: EsploraTransport) {
+        db.query("SELECT hash, height FROM bitcoin_scan_blocks ORDER BY height").forEach { row ->
+            require(transport.get("/block-height/${row[1]}").trim() == row[0]) {
+                throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
+            }
+        }
+    }
+
+    /** Replace only the ordering provenance of matching active activities. */
+    fun applyVerifiedOrder(ownedAddresses: Map<String, AccountId>) {
+        val decoder = BitcoinDecoder(ownedAddresses)
+        db.transaction {
+            var after = ""
+            while (true) {
+                val row =
+                    db
+                        .query(
+                            "SELECT id, namespace, external_id, network, source_id, retrieved_at, payload, payload_version, checksum, context FROM bitcoin_scan_stage WHERE id>? ORDER BY id LIMIT 1",
+                            listOf(after),
+                        ).singleOrNull() ?: break
+                val decoded = decoder.decode(row.toObservation()).single()
+                val previous = activities.history(decoded.id).last()
+                require(
+                    previous.status == ActivityStatus.CONFIRMED &&
+                        previous.copy(orderingKey = decoded.orderingKey, sources = decoded.sources) == decoded,
+                ) {
+                    "Saved Bitcoin transaction no longer matches its decoded activity; refresh history"
+                }
+                activities.saveInTransaction(decoded)
+                after = row[0]!!
+            }
+        }
+    }
+
     /** Apply all staged transactions and reversals together after the caller's scan validation. */
     fun applyComplete(
         ownedAddresses: Map<String, AccountId>,
