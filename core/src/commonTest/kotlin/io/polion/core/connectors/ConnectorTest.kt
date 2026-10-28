@@ -76,13 +76,16 @@ class ConnectorTest {
         val registry =
             ConnectorRegistry(
                 families.map {
-                    IntegrationManifest(
-                        it,
-                        setOf(NetworkId(it)),
-                        setOf("account"),
-                        setOf(Capability.HISTORY, Capability.DECODING),
-                        it == "exchange",
-                        Coverage.COMPLETE,
+                    RegisteredConnector(
+                        IntegrationManifest(
+                            it,
+                            setOf(NetworkId(it)),
+                            setOf("account"),
+                            setOf(Capability.HISTORY, Capability.DECODING),
+                            it == "exchange",
+                            Coverage.COMPLETE,
+                        ),
+                        Fake(it),
                     )
                 },
             )
@@ -90,14 +93,19 @@ class ConnectorTest {
             families.flatMap { family ->
                 val connector = Fake(family)
                 assertEquals(1, registry.supporting(NetworkId(family), Capability.HISTORY).size)
+                val request = HistoryRequest(SourceId(family), ProviderId(family), NetworkId(family), AccountId(family))
+                assertEquals(connector.fetch(request), registry.historyFetcher(NetworkId(family)).fetch(request))
                 connector
-                    .fetch(
-                        HistoryRequest(SourceId(family), ProviderId(family), NetworkId(family), AccountId(family)),
-                    ).observations
+                    .fetch(request)
+                    .observations
                     .flatMap(connector::decode)
             }
         val balances = LedgerDeltas.calculate(activities)
         families.forEach { assertEquals("42", balances.getValue(AccountId(it)).getValue(AssetId(it)).toString()) }
-        assertFailsWith<IllegalArgumentException> { ConnectorRegistry(listOf(registry.find("btc")!!, registry.find("btc")!!)) }
+        val btc = registry.find("btc")!!
+        assertFailsWith<IllegalArgumentException> {
+            ConnectorRegistry(listOf(RegisteredConnector(btc, Fake("btc")), RegisteredConnector(btc, Fake("btc"))))
+        }
+        assertFailsWith<IllegalArgumentException> { registry.historyFetcher(NetworkId("missing")) }
     }
 }

@@ -35,6 +35,9 @@ import kotlinx.serialization.json.long
 val BITCOIN_MAINNET = NetworkId("bitcoin-mainnet")
 val BITCOIN_ASSET = AssetId("bitcoin:btc")
 
+/** Registry identity of the Esplora history connector for Bitcoin mainnet. */
+const val BITCOIN_CONNECTOR_ID = "bitcoin-esplora"
+
 fun interface EsploraTransport {
     fun get(path: String): String
 }

@@ -84,20 +84,38 @@ interface ProviderHealthChecker {
     fun health(provider: ProviderId): ProviderHealth
 }
 
-/** Registration is explicit and duplicate integration identities are rejected. */
+/**
+ * Explicit registration of integrations. Each entry pairs manifest metadata with the connector that executes its
+ * capabilities; duplicate integration identities are rejected.
+ */
 class ConnectorRegistry(
-    entries: List<IntegrationManifest>,
+    entries: List<RegisteredConnector>,
 ) {
-    private val entries = entries.associateBy { it.id }
+    private val byId = entries.associateBy { it.manifest.id }
 
     init {
-        require(this.entries.size == entries.size) { "Duplicate integration ID" }
+        require(byId.size == entries.size) { "Duplicate integration ID" }
     }
 
-    fun find(id: String): IntegrationManifest? = entries[id]
+    val manifests: List<IntegrationManifest> get() = byId.values.map { it.manifest }.sortedBy { it.id }
+
+    fun find(id: String): IntegrationManifest? = byId[id]?.manifest
 
     fun supporting(
         network: NetworkId,
         capability: Capability,
-    ): List<IntegrationManifest> = entries.values.filter { network in it.networks && capability in it.capabilities }.sortedBy { it.id }
+    ): List<IntegrationManifest> = manifests.filter { network in it.networks && capability in it.capabilities }
+
+    /** Returns the history connector registered for the network; failing when none or several are registered keeps routing explicit. */
+    fun historyFetcher(network: NetworkId): HistoryFetcher {
+        val candidates = byId.values.filter { network in it.manifest.networks && Capability.HISTORY in it.manifest.capabilities }
+        require(candidates.size == 1) { "Exactly one history connector must support the network" }
+        return candidates.single().history
+    }
 }
+
+/** A manifest with the history connector that executes it. */
+class RegisteredConnector(
+    val manifest: IntegrationManifest,
+    val history: HistoryFetcher,
+)

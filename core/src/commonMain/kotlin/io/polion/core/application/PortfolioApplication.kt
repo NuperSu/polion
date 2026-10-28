@@ -9,6 +9,7 @@ import io.polion.core.accounting.TreatmentRepository
 import io.polion.core.backup.BackupEncryption
 import io.polion.core.backup.PortableBackup
 import io.polion.core.bitcoin.BITCOIN_ASSET
+import io.polion.core.bitcoin.BITCOIN_CONNECTOR_ID
 import io.polion.core.bitcoin.BITCOIN_MAINNET
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
@@ -19,9 +20,14 @@ import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.bitcoin.bitcoinMainnetAddress
 import io.polion.core.bitcoin.bitcoinWallet
+import io.polion.core.connectors.Capability
+import io.polion.core.connectors.ConnectorRegistry
+import io.polion.core.connectors.Coverage
 import io.polion.core.connectors.HistoryFetcher
 import io.polion.core.connectors.HistoryPage
 import io.polion.core.connectors.HistoryRequest
+import io.polion.core.connectors.IntegrationManifest
+import io.polion.core.connectors.RegisteredConnector
 import io.polion.core.holdings.BalanceCoverage
 import io.polion.core.holdings.BalanceView
 import io.polion.core.holdings.HoldingsRepository
@@ -672,13 +678,27 @@ class PortfolioApplication(
         val result = mutableListOf<JobState>()
         var pagesFetched = 0
         var transactionsFetched = 0
+        val historyFetcher =
+            ConnectorRegistry(
+                listOf(
+                    RegisteredConnector(
+                        IntegrationManifest(
+                            BITCOIN_CONNECTOR_ID,
+                            setOf(BITCOIN_MAINNET),
+                            setOf("address"),
+                            setOf(Capability.HISTORY, Capability.DECODING),
+                            requiresAuthentication = false,
+                            coverage = Coverage.PARTIAL,
+                        ),
+                        EsploraHistoryFetcher(scanned.associate { it.accountId to it.address }, recordingTransport) {
+                            Instant.fromEpochMilliseconds(now()).toString()
+                        },
+                    ),
+                ),
+            ).historyFetcher(BITCOIN_MAINNET)
         for ((addressIndex, scan) in scanned.withIndex()) {
             val counter = (setting("sync_sequence")?.toLong() ?: 0L) + 1
             putSetting("sync_sequence", counter.toString())
-            val historyFetcher =
-                EsploraHistoryFetcher(mapOf(scan.accountId to scan.address), recordingTransport) {
-                    Instant.fromEpochMilliseconds(now()).toString()
-                }
             val jobId = SyncJobId("bitcoin-${session.generation}-${sha256(scan.address).take(16)}")
             val orchestrator =
                 sync(
