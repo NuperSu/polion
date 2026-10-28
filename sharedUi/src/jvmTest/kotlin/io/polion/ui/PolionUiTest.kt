@@ -74,6 +74,8 @@ class PolionUiTest {
             onResult: (String) -> Unit,
         ) = onResult("Not used")
 
+        override fun verifyAccountingOrder(onResult: (String) -> Unit) = onResult("Not used")
+
         override fun discoverWallet(
             walletId: io.polion.core.model.TrackingTargetId,
             onResult: (String) -> Unit,

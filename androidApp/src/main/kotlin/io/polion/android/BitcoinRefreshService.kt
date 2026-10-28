@@ -44,12 +44,20 @@ class BitcoinRefreshService : Service() {
         RefreshWorker.executor.execute {
             var lastNotification = 0L
             val status =
-                RefreshWorker.performRefresh(applicationContext, { transport ->
-                    EsploraTransport { path ->
-                        check(!stopping) { "Sync stopped" }
-                        transport.get(path)
-                    }
-                }, walletId = intent?.getStringExtra("wallet_id")) { detail ->
+                RefreshWorker.performRefresh(
+                    applicationContext,
+                    { transport ->
+                        EsploraTransport { path ->
+                            check(!stopping) { "Sync stopped" }
+                            transport.get(path)
+                        }
+                    },
+                    walletId =
+                        intent?.getStringExtra(
+                            "wallet_id",
+                        ),
+                    verifyOrder = intent?.getBooleanExtra("verify_order", false) == true,
+                ) { detail ->
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastNotification >= 1000) {
                         SyncNotification.update(this, detail)

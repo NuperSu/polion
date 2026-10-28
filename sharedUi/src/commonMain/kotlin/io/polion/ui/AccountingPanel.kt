@@ -74,6 +74,7 @@ internal fun AccountingPanel(
 ) {
     val scope = rememberCoroutineScope()
     var data by remember { mutableStateOf<AccountingData?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<Pair<EffectiveActivity, List<Treatment>>?>(null) }
     var activityPage by remember(portfolio, revision) { mutableIntStateOf(0) }
@@ -115,6 +116,7 @@ internal fun AccountingPanel(
             fontSize = 12.sp,
             color = Color(0xFF667873),
         )
+        notice?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         val current = data
         if (current == null) {
@@ -129,6 +131,12 @@ internal fun AccountingPanel(
                 )
             }
             if (current.view.orderingUncertain.isNotEmpty()) {
+                TextButton(onClick = {
+                    host.verifyAccountingOrder {
+                        notice = it
+                        onSaved()
+                    }
+                }) { Text("Verify Bitcoin transaction order") }
                 Text(
                     "Bitcoin block timestamps can affect FIFO order. Basis and gains are provisional.",
                     color = Color(0xFF936126),

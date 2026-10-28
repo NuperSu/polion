@@ -37,6 +37,8 @@ interface PlatformActions {
         onResult: (String) -> Unit,
     )
 
+    fun verifyAccountingOrder(onResult: (String) -> Unit)
+
     fun discoverWallet(
         walletId: TrackingTargetId,
         onResult: (String) -> Unit,

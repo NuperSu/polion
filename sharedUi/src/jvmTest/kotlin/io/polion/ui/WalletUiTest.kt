@@ -51,6 +51,8 @@ class WalletUiTest {
                             onResult: (String) -> Unit,
                         ) = Unit
 
+                        override fun verifyAccountingOrder(onResult: (String) -> Unit) = onResult("Not used")
+
                         override fun discoverWallet(
                             walletId: TrackingTargetId,
                             onResult: (String) -> Unit,

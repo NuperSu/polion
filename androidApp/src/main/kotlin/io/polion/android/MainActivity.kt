@@ -198,6 +198,17 @@ private class AndroidHost(
         }
     }
 
+    override fun verifyAccountingOrder(onResult: (String) -> Unit) {
+        main.post {
+            try {
+                activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java).putExtra("verify_order", true))
+                onResult("Order verification started in the background.")
+            } catch (_: Exception) {
+                onResult("Could not start order verification. Open Polion and retry.")
+            }
+        }
+    }
+
     override fun discoverWallet(
         walletId: io.polion.core.model.TrackingTargetId,
         onResult: (String) -> Unit,

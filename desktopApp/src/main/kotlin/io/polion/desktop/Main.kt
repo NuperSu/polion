@@ -133,6 +133,20 @@ private class DesktopHost(
         }
     }
 
+    override fun verifyAccountingOrder(onResult: (String) -> Unit) {
+        syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…")
+        executor.execute {
+            val status =
+                runCatching {
+                    app.value.verifyAccountingOrder(BlockstreamTransport(app.value.sourceEndpoint()))
+                    SyncStatus(SyncPhase.SUCCESS, "Bitcoin order verified. Mixed-source chronology may still require review.")
+                }.getOrElse { SyncStatus(SyncPhase.ERROR, "Could not verify order. Check consent, provider and saved history.") }
+            syncStatus.value = status
+            dataRevision.update { it + 1 }
+            SwingUtilities.invokeLater { onResult(status.message) }
+        }
+    }
+
     override fun discoverWallet(
         walletId: io.polion.core.model.TrackingTargetId,
         onResult: (String) -> Unit,

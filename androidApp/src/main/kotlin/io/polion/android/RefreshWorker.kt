@@ -37,6 +37,7 @@ class RefreshWorker(
             context: Context,
             wrap: (io.polion.core.bitcoin.EsploraTransport) -> io.polion.core.bitcoin.EsploraTransport = { it },
             walletId: String? = null,
+            verifyOrder: Boolean = false,
             onProgress: (String) -> Unit = {},
         ): SyncStatus =
             try {
@@ -53,6 +54,17 @@ class RefreshWorker(
                                 io.polion.core.model
                                     .TrackingTargetId(walletId),
                                 transport,
+                            )
+                        }
+                        if (verifyOrder) {
+                            app.verifyAccountingOrder(transport) { progress ->
+                                val detail = "Verifying blocks ${progress.blocksResolved}/${progress.totalBlocks}"
+                                syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
+                                onProgress(detail)
+                            }
+                            return SyncStatus(
+                                SyncPhase.SUCCESS,
+                                "Bitcoin order verified. Mixed-source chronology may still require review.",
                             )
                         }
                         val states =
