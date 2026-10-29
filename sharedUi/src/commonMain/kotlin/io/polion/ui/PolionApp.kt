@@ -431,7 +431,15 @@ private fun Product(
                                         modifier = Modifier.testTag("customize-dashboard"),
                                     ) { Text("Customize dashboard") }
                                 }
-                                widgets.filter { it.visible }.forEach { preference ->
+                                val visibleWidgets = widgets.filter { it.visible }
+                                visibleWidgets.forEachIndexed { index, preference ->
+                                    if (wide &&
+                                        preference.widget == DashboardWidget.HEALTH &&
+                                        index > 0 &&
+                                        visibleWidgets[index - 1].widget == DashboardWidget.ASSETS
+                                    ) {
+                                        return@forEachIndexed
+                                    }
                                     when (preference.widget) {
                                         DashboardWidget.ALLOCATION ->
                                             item(key = "dashboard-allocation") {
@@ -443,7 +451,22 @@ private fun Product(
                                             }
                                         DashboardWidget.ASSETS ->
                                             item(key = "dashboard-assets") {
-                                                AssetsCard(data, { selectedAsset = it }, { dialog = "price" })
+                                                if (wide && visibleWidgets.getOrNull(index + 1)?.widget == DashboardWidget.HEALTH) {
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                    ) {
+                                                        Column(Modifier.weight(1.5f)) {
+                                                            AssetsCard(data, { selectedAsset = it }, { dialog = "price" })
+                                                        }
+                                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                                            HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
+                                                            QuickActions({ dialog = "account" }, { dialog = "activity" })
+                                                        }
+                                                    }
+                                                } else {
+                                                    AssetsCard(data, { selectedAsset = it }, { dialog = "price" })
+                                                }
                                             }
                                         DashboardWidget.HEALTH ->
                                             item(key = "dashboard-health") {
