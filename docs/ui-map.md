@@ -83,7 +83,7 @@ Accepted source state → holdings projection
 
 Changing the portfolio updates scope-dependent figures together. Filtering Activity changes its result page, not the accounting ownership policy or historical chart definition. Changing a method in a future accounting strategy recalculates derived reports, never raw source evidence.
 
-The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. ALL begins with the first confirmed activity in the selected account scope; missing historical prices leave gaps. The chart shows portfolio value, not a return measure.
+The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. ALL begins with the first confirmed activity in the selected account scope; missing historical prices leave gaps. Previous and Next inspect sampled UTC timestamps and show a total only when every holding at that point has a price. The chart shows portfolio value, not a return measure.
 
 ## Presentation contract and acceptance
 

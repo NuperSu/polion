@@ -1053,6 +1053,7 @@ private fun BalanceHero(
             }
         }
         Text("Historical portfolio value · not investment return", color = Color(0xFFB6CFC2), fontSize = 11.sp)
+        HistoryInspector(points, data.currency)
         val missing = data.valuations.count { it.value == null }
         if (missing >
             0
