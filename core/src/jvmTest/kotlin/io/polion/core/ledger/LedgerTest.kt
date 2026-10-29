@@ -116,9 +116,45 @@ class LedgerTest {
             repository.save(shared.copy(status = ActivityStatus.REVERSED))
             val history = repository.history(shared.id)
             assertEquals(listOf(listOf(fee), listOf(fee)), history.map { it.unallocatedFees })
+            assertEquals(history.last(), repository.currentPage().single())
             assertFailsWith<IllegalArgumentException> {
                 UnallocatedFee(fee.amount, FeeAllocationReason.MULTIPLE_TRACKED_PAYERS, setOf(AccountId("wallet")))
             }
+        }
+    }
+
+    @Test
+    fun currentPagesReturnLatestNumericRevisionWithoutSkippingIds() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = ActivityRepository(db)
+            val first = activity("a", movement("one", "wallet", "1"))
+            repeat(12) { index ->
+                repository.save(first.copy(status = if (index % 2 == 0) ActivityStatus.CONFIRMED else ActivityStatus.REVERSED))
+            }
+            repository.save(activity("b", movement("two", "wallet", "2")))
+            repository.save(activity("c", movement("three", "wallet", "3")))
+            val page = repository.currentPage(limit = 2)
+            assertEquals(listOf("a", "b"), page.map { it.id.value })
+            assertEquals(ActivityStatus.REVERSED, page.first().status)
+            assertEquals(listOf("c"), repository.currentPage(page.last().id, 2).map { it.id.value })
+            assertEquals(emptyList(), repository.currentPage(ActivityId("c"), 2))
+            assertEquals(repository.current().map { it.id.value }, listOf("a", "b", "c"))
+            assertFailsWith<IllegalArgumentException> { repository.currentPage(limit = 0) }
+            repeat(260) { index ->
+                val id = "id-${index.toString().padStart(3, '0')}"
+                repository.save(activity(id, movement("event-$id", "wallet", "1")))
+            }
+            val ids = mutableListOf<ActivityId>()
+            var cursor: ActivityId? = null
+            while (true) {
+                val batch = repository.currentPage(cursor, 128)
+                if (batch.isEmpty()) break
+                ids.addAll(batch.map { it.id })
+                cursor = batch.last().id
+            }
+            assertEquals(263, ids.size)
+            assertEquals(ids, repository.current().map { it.id })
         }
     }
 }
