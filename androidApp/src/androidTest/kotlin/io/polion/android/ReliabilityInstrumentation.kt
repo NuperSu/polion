@@ -66,6 +66,34 @@ class ReliabilityInstrumentation : Instrumentation() {
                         }
                     }
                 },
+                "historicalPriceWorkflow" to {
+                    fixture { file ->
+                        AndroidSqliteDatabase(file.path).use { db ->
+                            val at = System.currentTimeMillis()
+                            val day = at / 86_400_000L * 86_400_000L
+                            val app = PortfolioApplication(db) { at }
+                            app.setPriceSourceConsent(true)
+                            val result =
+                                app.fetchHistoricalPrice(
+                                    { """{"market_data":{"current_price":{"usd":42000.123456789}}}""" },
+                                    io.polion.core.model
+                                        .AssetId("bitcoin:btc"),
+                                    io.polion.core.model
+                                        .AssetId("USD"),
+                                    day,
+                                )
+                            check(
+                                result.observation
+                                    ?.price
+                                    ?.value
+                                    ?.toString() == "42000.123456789",
+                            )
+                            check(db.query("SELECT COUNT(*) FROM market_prices").single().single() == "1")
+                            app.setPriceSourceConsent(false)
+                            check(db.query("SELECT COUNT(*) FROM market_prices").single().single() == "1")
+                        }
+                    }
+                },
                 "persistedProjections" to {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->

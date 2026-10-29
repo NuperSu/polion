@@ -39,6 +39,12 @@ import io.polion.core.ledger.ActivityKind
 import io.polion.core.ledger.ActivityRepository
 import io.polion.core.market.AssetDefinition
 import io.polion.core.market.AssetMetadata
+import io.polion.core.market.CoingeckoHistoricalResult
+import io.polion.core.market.CoingeckoPriceClient
+import io.polion.core.market.CoingeckoPrices
+import io.polion.core.market.CoingeckoProviderException
+import io.polion.core.market.CoingeckoProviderFailure
+import io.polion.core.market.CoingeckoTransport
 import io.polion.core.market.MarketRepository
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
@@ -869,6 +875,51 @@ class PortfolioApplication(
 
     fun sourceFailureMessage(): String? = setting("source_error")
 
+    fun priceSourceConsent(): Boolean = setting("price_source_consent") == "true"
+
+    fun setPriceSourceConsent(accepted: Boolean) =
+        db.transaction {
+            putSetting("price_source_generation", priceRequestNonce())
+            putSetting("price_source_consent", accepted.toString())
+        }
+
+    private fun priceRequestNonce() = "${kotlin.random.Random.nextLong()}:${kotlin.random.Random.nextLong()}"
+
+    /** Explicit daily market observations do not classify acquisitions or establish their cost basis. */
+    fun fetchHistoricalPrice(
+        transport: CoingeckoTransport,
+        asset: AssetId,
+        quote: AssetId,
+        dayUtcMillis: Long,
+        authorize: () -> Unit = {},
+    ): CoingeckoHistoricalResult {
+        require(priceSourceConsent()) { "Price provider consent required" }
+        require(asset == BITCOIN_ASSET) { "Historical provider mapping is available for Bitcoin only" }
+        require(quote.value in setOf("USD", "EUR", "GBP")) { "Unsupported quote currency" }
+        val observedAt = now()
+        require(dayUtcMillis >= 0 && dayUtcMillis % 86_400_000L == 0L && dayUtcMillis <= observedAt) { "Choose a past or current UTC date" }
+        require(dayUtcMillis >= observedAt - 365L * 86_400_000L) { "Demo historical prices cover the past 365 days" }
+        ensureDefaultAssets()
+        val consentGeneration = requireNotNull(setting("price_source_generation")) { "Renew price provider consent" }
+        return CoingeckoPriceClient(transport, market, now).historical(
+            asset,
+            "bitcoin",
+            quote,
+            quote.value.lowercase(),
+            dayUtcMillis,
+            "coingecko:${quote.value}:$dayUtcMillis:${priceRequestNonce()}",
+            authorize = {
+                authorize()
+                if (!priceSourceConsent() || setting("price_source_generation") != consentGeneration) {
+                    throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+                }
+            },
+        )
+    }
+
+    /** Saved provider quotes remain selectable offline, independently of permission for new requests. */
+    private fun pricePolicy() = PricePolicy(listOf(ProviderId(CoingeckoPrices.PROVIDER_ID)), 86_400_000L)
+
     fun sourceConsent(): Boolean = setting("source_consent") == "true"
 
     fun setSourceConsent(accepted: Boolean) = putSetting("source_consent", accepted.toString())
@@ -915,7 +966,7 @@ class PortfolioApplication(
             if (asset == quote) {
                 Rational.units(ExactInteger.parse("1"))
             } else {
-                val result = market.lookup(asset, quote, atMillis, atMillis, PricePolicy(emptyList(), 86_400_000L))
+                val result = market.lookup(asset, quote, atMillis, atMillis, pricePolicy())
                 val observation = result.observation?.takeIf { result.status == PriceStatus.FRESH } ?: return null
                 Rational.fromDecimal(observation.price.value)
             }
@@ -939,7 +990,7 @@ class PortfolioApplication(
                     ) {
                         null
                     } else {
-                        market.lookup(asset, currency, balance.atMillis, knownAt, PricePolicy(emptyList(), 86_400_000L))
+                        market.lookup(asset, currency, balance.atMillis, knownAt, pricePolicy())
                     }
                 val value =
                     if (asset ==

@@ -34,6 +34,7 @@ private class DesktopHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     private val unlockExecutor = Executors.newSingleThreadExecutor()
     private val syncQueue = BitcoinSyncQueue()
+    private val priceTransport = DesktopCoingeckoTransport()
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
     override val hasLock: Boolean get() = lockStore.hasLock
@@ -213,6 +214,29 @@ private class DesktopHost(
                     SyncPhase.ERROR,
                     "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
                 )
+            }
+        }
+    }
+
+    override fun fetchHistoricalPrice(
+        asset: io.polion.core.model.AssetId,
+        quote: io.polion.core.model.AssetId,
+        dayUtcMillis: Long,
+        apiKey: String,
+        onResult: (String) -> Unit,
+    ) {
+        runSync(SyncStatus(SyncPhase.SYNCING, "Fetching daily historical price…"), onResult) { application ->
+            try {
+                val result = application.fetchHistoricalPrice({ url -> priceTransport.get(url, apiKey) }, asset, quote, dayUtcMillis)
+                if (result.status == io.polion.core.market.PriceStatus.MISSING) {
+                    SyncStatus(SyncPhase.ERROR, "No historical quote was returned. Saved prices are unchanged.")
+                } else {
+                    SyncStatus(SyncPhase.SUCCESS, "Daily historical price saved from CoinGecko.")
+                }
+            } catch (failure: io.polion.core.market.CoingeckoProviderException) {
+                SyncStatus(SyncPhase.ERROR, failure.failure.message)
+            } catch (_: Exception) {
+                SyncStatus(SyncPhase.ERROR, "Could not fetch a historical price. Check consent, date, connection and storage.")
             }
         }
     }

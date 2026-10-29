@@ -61,6 +61,14 @@ class WalletUiTest {
                             onResult: (String) -> Unit,
                         ) = Unit
 
+                        override fun fetchHistoricalPrice(
+                            asset: io.polion.core.model.AssetId,
+                            quote: io.polion.core.model.AssetId,
+                            dayUtcMillis: Long,
+                            apiKey: String,
+                            onResult: (String) -> Unit,
+                        ) = onResult("Daily historical price saved from CoinGecko.")
+
                         override fun refresh(onResult: (String) -> Unit) = Unit
 
                         override fun setBackgroundRefresh(enabled: Boolean) = Unit

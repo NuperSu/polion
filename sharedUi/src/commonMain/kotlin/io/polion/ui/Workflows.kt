@@ -38,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -117,6 +118,11 @@ internal fun WorkflowDialog(
     var matchKind by remember { mutableStateOf(ActivityKind.DEPOSIT) }
     var asset by remember { mutableStateOf(AssetId("bitcoin:btc")) }
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
+    var priceConsent by rememberSaveable { mutableStateOf(false) }
+    var priceApiKey by remember { mutableStateOf("") }
+    var historyDate by rememberSaveable { mutableStateOf("") }
+    var fetchingPrice by remember { mutableStateOf(false) }
+    var priceMessage by remember { mutableStateOf<String?>(null) }
     var background by remember { mutableStateOf(host.backgroundRefreshEnabled()) }
     var candidates by remember { mutableStateOf<List<ReconciliationCandidate>>(emptyList()) }
     var selectedAccounts by remember { mutableStateOf(emptySet<AccountId>()) }
@@ -124,6 +130,7 @@ internal fun WorkflowDialog(
     val syncStatus by host.syncStatus.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(type) {
+        if (type == "price") priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
         if (type == "reconcile") candidates = withContext(host.dispatcher) { app.reconciliationCandidates(86_400_000) }
     }
     val title =
@@ -133,7 +140,7 @@ internal fun WorkflowDialog(
             "owner" -> "Add an owner"
             "portfolio" -> "Create a portfolio"
             "activity" -> "Record an activity"
-            "price" -> "Set a manual price"
+            "price" -> "Price observations"
             "sync" -> "Sources & sync"
             "backup" -> "Encrypted backup"
             "restore" -> "Restore a backup"
@@ -374,6 +381,56 @@ internal fun WorkflowDialog(
                     }
                     close()
                 }, modifier = Modifier.fillMaxWidth()) { Text("Save price observation") }
+                HorizontalDivider()
+                Text("Daily historical prices · Bitcoin", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "CoinGecko receives the requested coin, currency and date, plus your IP address. Wallet addresses are not sent. Daily quotes are not live prices or acquisition costs. Saved prices remain available offline. Demo access covers the past 365 days; the latest completed day may be unavailable until 00:35 UTC.",
+                    fontSize = 13.sp,
+                )
+                Row {
+                    Checkbox(
+                        priceConsent,
+                        { accepted ->
+                            priceConsent = accepted
+                            scope.launch { withContext(host.dispatcher) { app.setPriceSourceConsent(accepted) } }
+                        },
+                        enabled = !fetchingPrice,
+                        modifier = Modifier.testTag("price-source-consent"),
+                    )
+                    Text("Allow CoinGecko price requests", modifier = Modifier.padding(top = 12.dp))
+                }
+                SecretField("Demo API key (session only, optional)", priceApiKey) { priceApiKey = it }
+                Field("Historical UTC date (YYYY-MM-DD)", historyDate) { historyDate = it }
+                Button(
+                    onClick = {
+                        val day =
+                            runCatching {
+                                kotlin.time.Instant
+                                    .parse("${historyDate}T00:00:00Z")
+                                    .toEpochMilliseconds()
+                            }.getOrNull()
+                        if (day == null ||
+                            day < 0 ||
+                            day > Clock.System.now().toEpochMilliseconds() ||
+                            day < Clock.System.now().toEpochMilliseconds() - 365L * 86_400_000L
+                        ) {
+                            error = "Choose a UTC date within the past 365 days."
+                        } else {
+                            fetchingPrice = true
+                            scope.launch {
+                                withContext(host.dispatcher) { app.setPriceSourceConsent(priceConsent) }
+                                host.fetchHistoricalPrice(AssetId("bitcoin:btc"), data.currency, day, priceApiKey) { message ->
+                                    fetchingPrice = false
+                                    priceMessage = message
+                                    notify(message)
+                                }
+                            }
+                        }
+                    },
+                    enabled = priceConsent && !fetchingPrice,
+                    modifier = Modifier.fillMaxWidth().testTag("fetch-historical-price"),
+                ) { Text(if (fetchingPrice) "Fetching daily quote…" else "Fetch Bitcoin daily price") }
+                priceMessage?.let { Text(it, fontSize = 13.sp) }
             }
             "sync" -> {
                 if (syncStatus.phase == SyncPhase.SYNCING) {

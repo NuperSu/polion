@@ -59,6 +59,7 @@ class CoingeckoPriceClient(
         quoteCurrency: String,
         dayUtcMillis: Long,
         observationId: String,
+        authorize: () -> Unit = {},
     ): CoingeckoHistoricalResult {
         require(dayUtcMillis % MILLIS_PER_DAY == 0L) { "Historical lookups are daily; pass midnight UTC" }
         require(coinId.matches(COIN_ID))
@@ -66,7 +67,13 @@ class CoingeckoPriceClient(
         market.mapProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId, base)
         val date = dayUtcDate(dayUtcMillis)
         val url = "$baseUrl/coins/$coinId/history?date=$date&localization=false"
-        val value = CoingeckoPrices.parseHistorical(transport.get(url), quoteCurrency)
+        val payload = transport.get(url)
+        val value =
+            try {
+                CoingeckoPrices.parseHistorical(payload, quoteCurrency)
+            } catch (_: IllegalArgumentException) {
+                throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+            }
         if (value == null) return CoingeckoHistoricalResult(PriceStatus.MISSING, null)
         val observation =
             PriceObservation(
@@ -76,7 +83,7 @@ class CoingeckoPriceClient(
                 dayUtcMillis,
                 clock(),
             )
-        market.recordPrice(observation)
+        market.recordPrice(observation, authorize)
         return CoingeckoHistoricalResult(PriceStatus.FRESH, observation)
     }
 

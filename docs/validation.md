@@ -111,3 +111,11 @@ An emulator in-place APK update preserved **all 37 application tables**, includi
 ## Assessment remediation: account state, erasure and scoped activity
 
 The integrated JDK21 run passes 91 core JVM tests, 28 Android-host tests and 14 shared UI tests, with ktlint checks, Android lint, app and test APK assembly. New regressions cover nested archive intents/reopen/rollback, active SQLite data erasure under DELETE/PERSIST/TRUNCATE/WAL, and exact scoped activity amounts/directions. API29 emulator instrumentation passes 8 checks with 0 failures, including native data erasure under DELETE/PERSIST/WAL. Native erasure verifies private-note canaries are absent from active database/journal files, with integrity retained. The connected phone was not modified. These checks establish the repaired behaviors, not completion of all roadmap gates.
+
+## Integrated UTXO advisory and historical-price workflow
+
+The 2026-10-29 integrated JDK21 run passes 133 core JVM tests, 29 Android-host tests, 15 shared UI tests and 7 desktop tests, with Android lint, app APK and native test APK assembly. The shared financial fixture spends a height42 coinbase at height142, retains decreasing block timestamps and exact FIFO/fee/CSV/restore assertions, and checks UTXO match-to-mismatch-to-match advisory state. A graph regression rejects a spend one block before maturity and accepts the maturity boundary.
+
+API29 emulator instrumentation passes 9 checks with 0 failures, including the shared Bitcoin financial workflow and exact historical-price persistence after consent revocation. Core regressions cover explicit consent, exact provider valuation/manual priority/offline reuse, missing/error prices, request pacing and cancellation after erasure or consent replacement. Desktop transport tests verify sensitive header placement and access/rate-limit failures. UI tests cover historical date/consent flow. Live CoinGecko access with a personal Demo key has not been exercised; fake transports and native persistence establish the local call paths.
+
+Local evidence: `/tmp/polion-integrated-prices-utxo-final.log` and `/tmp/polion-native-prices-utxo.txt`. These checks do not close the remaining descriptor audit, durable Bitcoin graph, operational reorg/RBF, independent chain acceptance, rule-management and broader connector-execution requirements.

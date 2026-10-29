@@ -52,6 +52,8 @@ class PolionUiTest {
         override val syncStatus = MutableStateFlow(SyncStatus())
         override val hasLock = false
 
+        @Volatile var priceRequests = 0
+
         @Volatile var exportedName: String? = null
 
         @Volatile var exported: ByteArray? = null
@@ -80,6 +82,17 @@ class PolionUiTest {
             walletId: io.polion.core.model.TrackingTargetId,
             onResult: (String) -> Unit,
         ) = onResult("Not used")
+
+        override fun fetchHistoricalPrice(
+            asset: io.polion.core.model.AssetId,
+            quote: io.polion.core.model.AssetId,
+            dayUtcMillis: Long,
+            apiKey: String,
+            onResult: (String) -> Unit,
+        ) {
+            priceRequests++
+            onResult("Daily historical price saved from CoinGecko.")
+        }
 
         override fun refresh(onResult: (String) -> Unit) = onResult("Not used")
 
@@ -193,6 +206,36 @@ class PolionUiTest {
                 } finally {
                     release.countDown()
                 }
+            }
+        }
+    }
+
+    @Test
+    fun historicalPriceRequiresExplicitConsentAndDate() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                val data = app.snapshot()
+                runDesktopComposeUiTest(width = 800, height = 900) {
+                    setContent {
+                        WorkflowDialog("price", data, app, host, {}, { _, operation -> operation() }, {}, { _, _ -> })
+                    }
+                    onNodeWithTag("fetch-historical-price").performScrollTo().assertIsNotEnabled()
+                    onNodeWithTag("price-source-consent").performScrollTo().performClick()
+                    onNodeWithText(
+                        "Historical UTC date (YYYY-MM-DD)",
+                    ).performScrollTo().performTextInput(
+                        kotlin.time.Clock.System
+                            .now()
+                            .toString()
+                            .substringBefore('T'),
+                    )
+                    onNodeWithTag("fetch-historical-price").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { host.priceRequests == 1 }
+                    onNodeWithText("Daily historical price saved from CoinGecko.").performScrollTo().assertIsDisplayed()
+                }
+                assertTrue(app.priceSourceConsent())
+                assertEquals(1, host.priceRequests)
             }
         }
     }

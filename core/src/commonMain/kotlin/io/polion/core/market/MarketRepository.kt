@@ -168,30 +168,33 @@ class MarketRepository(
             ?.single()
             ?.let(::AssetId)
 
-    fun recordPrice(observation: PriceObservation) =
-        db.transaction {
-            requireAsset(observation.price.baseAssetId)
-            requireAsset(observation.price.quoteAssetId)
-            val values =
-                listOf(
-                    observation.id,
-                    observation.price.baseAssetId.value,
-                    observation.price.quoteAssetId.value,
-                    observation.price.value.toString(),
-                    observation.providerId?.value,
-                    observation.validAtMillis.toString(),
-                    observation.observedAtMillis.toString(),
-                    if (observation.manual) "1" else "0",
-                )
-            val existing =
-                db
-                    .query(
-                        "SELECT id, base_asset, quote_asset, value, provider, valid_at, observed_at, manual FROM market_prices WHERE id=?",
-                        listOf(observation.id),
-                    ).singleOrNull()
-            require(existing == null || existing == values) { "Price observation ID already exists with different data" }
-            db.execute("INSERT OR IGNORE INTO market_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
-        }
+    fun recordPrice(
+        observation: PriceObservation,
+        authorize: () -> Unit = {},
+    ) = db.transaction {
+        authorize()
+        requireAsset(observation.price.baseAssetId)
+        requireAsset(observation.price.quoteAssetId)
+        val values =
+            listOf(
+                observation.id,
+                observation.price.baseAssetId.value,
+                observation.price.quoteAssetId.value,
+                observation.price.value.toString(),
+                observation.providerId?.value,
+                observation.validAtMillis.toString(),
+                observation.observedAtMillis.toString(),
+                if (observation.manual) "1" else "0",
+            )
+        val existing =
+            db
+                .query(
+                    "SELECT id, base_asset, quote_asset, value, provider, valid_at, observed_at, manual FROM market_prices WHERE id=?",
+                    listOf(observation.id),
+                ).singleOrNull()
+        require(existing == null || existing == values) { "Price observation ID already exists with different data" }
+        db.execute("INSERT OR IGNORE INTO market_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
+    }
 
     /** Withdraw an override from its effective time without rewriting earlier history. */
     fun withdrawManualPrice(

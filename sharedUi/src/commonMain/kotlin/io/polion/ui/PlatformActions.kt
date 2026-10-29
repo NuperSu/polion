@@ -1,5 +1,6 @@
 package io.polion.ui
 
+import io.polion.core.model.AssetId
 import io.polion.core.model.TrackingTargetId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +17,7 @@ data class UnlockResult(
     val message: String? = null,
 )
 
-/** Host operations share one serial dispatcher with application reads and writes. */
+/** Local application work uses dispatcher; hosts run provider requests on a separate worker. */
 interface PlatformActions {
     val dispatcher: CoroutineDispatcher
     val dataRevision: StateFlow<Long>
@@ -41,6 +42,14 @@ interface PlatformActions {
 
     fun discoverWallet(
         walletId: TrackingTargetId,
+        onResult: (String) -> Unit,
+    )
+
+    fun fetchHistoricalPrice(
+        asset: AssetId,
+        quote: AssetId,
+        dayUtcMillis: Long,
+        apiKey: String,
         onResult: (String) -> Unit,
     )
 

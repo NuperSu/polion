@@ -159,6 +159,9 @@ private class AndroidHost(
                 java.nio.channels.FileChannel
                     .open(staging, java.nio.file.StandardOpenOption.WRITE)
                     .use { it.force(true) }
+                PriceHistoryWorker.invalidate()
+                // This short transaction waits for earlier price commits and invalidates their consent generation.
+                requireNotNull(app.value).let { it.setPriceSourceConsent(it.priceSourceConsent()) }
                 db.close()
                 try {
                     Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
@@ -222,6 +225,18 @@ private class AndroidHost(
                 syncStatus.value = SyncStatus(SyncPhase.ERROR, "Could not start wallet discovery. Open Polion and retry.")
                 onResult(syncStatus.value.message)
             }
+        }
+    }
+
+    override fun fetchHistoricalPrice(
+        asset: io.polion.core.model.AssetId,
+        quote: io.polion.core.model.AssetId,
+        dayUtcMillis: Long,
+        apiKey: String,
+        onResult: (String) -> Unit,
+    ) {
+        PriceHistoryWorker.fetch(activity.applicationContext, asset, quote, dayUtcMillis, apiKey) { message ->
+            main.post { onResult(message) }
         }
     }
 
