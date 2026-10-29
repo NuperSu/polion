@@ -22,6 +22,7 @@ class BitcoinScanStage(
     private val activities: ActivityRepository,
 ) {
     init {
+        BitcoinStagedGraph.createTables(db)
         db.execute(
             "CREATE TABLE IF NOT EXISTS bitcoin_scan_stage (id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, network TEXT NOT NULL, source_id TEXT NOT NULL, retrieved_at TEXT NOT NULL, payload TEXT NOT NULL, payload_version TEXT NOT NULL, checksum TEXT NOT NULL, context TEXT NOT NULL, block_hash TEXT, block_height INTEGER, block_index INTEGER)",
         )
@@ -51,7 +52,7 @@ class BitcoinScanStage(
                 "bitcoin_scan_session",
                 "bitcoin_scan_addresses",
                 "bitcoin_scan_seen",
-            )
+            ) + BitcoinStagedGraph.SCRATCH_TABLES
     }
 
     fun clear() = db.transaction { clearInTransaction() }
