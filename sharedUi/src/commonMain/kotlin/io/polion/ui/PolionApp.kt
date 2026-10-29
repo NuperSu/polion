@@ -77,6 +77,8 @@ import androidx.compose.ui.unit.sp
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.AssetAllocation
 import io.polion.core.application.AssetValuation
+import io.polion.core.application.DashboardWidget
+import io.polion.core.application.DashboardWidgetPreference
 import io.polion.core.application.HistoryPoint
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
@@ -213,10 +215,16 @@ private fun Product(
     onLocalDataChanged: () -> Unit,
 ) {
     val presenter = rememberProductPresenter(app, host)
+    var widgets by remember(app) { mutableStateOf(app.dashboardWidgets()) }
+    var widgetDraft by remember(app) { mutableStateOf<List<DashboardWidgetPreference>?>(null) }
     var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
     val snapshot = presenter.state.snapshot
     val snapshotFilter = presenter.state.snapshotFilter
     var revision by presenter.field({ it.revision }) { presenter.update { copy(revision = it) } }
+    val dashboardRevision by host.dataRevision.collectAsState()
+    LaunchedEffect(app, dashboardRevision, revision) {
+        widgets = withContext(host.dispatcher) { app.dashboardWidgets() }
+    }
     LaunchedEffect(revision) {
         if (revision != 0) onLocalDataChanged()
     }
@@ -417,51 +425,56 @@ private fun Product(
                                     ) { Text("Manage accounts") }
                                 }
                                 item { BalanceHero(data, chart, compact, period, { period = it }, { dialog = "price" }) }
-                                item { AllocationPanel(AssetAllocation.project(data.valuations, data.currency, data.coverage)) }
                                 item {
-                                    if (wide) {
-                                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
-                                            Column(Modifier.weight(1.5f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                                AssetsCard(data, {
-                                                    selectedAsset =
-                                                        it
-                                                }, { dialog = "price" })
-                                            }
-                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                                HealthCard(data, {
-                                                    dialog =
-                                                        "sync"
-                                                }, { dialog = "utxo" })
-                                                ; QuickActions({ dialog = "account" }, { dialog = "activity" })
-                                            }
-                                        }
-                                    } else {
-                                        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                                            AssetsCard(data, { selectedAsset = it }, {
-                                                dialog =
-                                                    "price"
-                                            })
-                                            ; HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
-                                        }
-                                    }
+                                    TextButton(
+                                        onClick = { widgetDraft = widgets },
+                                        modifier = Modifier.testTag("customize-dashboard"),
+                                    ) { Text("Customize dashboard") }
                                 }
-                                item { SectionTitle("Recent activity", "View all") { page = Page.ACTIVITY } }
-                                if (data.activities.isEmpty()) {
-                                    item {
-                                        EmptyCard(
-                                            "A clear view starts here",
-                                            "Add a watch-only account, then sync its public history. You can also record an activity manually.",
-                                            "Add an account",
-                                        ) {
-                                            dialog =
-                                                "account"
-                                        }
-                                    }
-                                } else {
-                                    items(data.activities.take(5), key = { it.activity.id.value }) {
-                                        ActivityRow(it, data, compact, activityAccounts) {
-                                            selectedActivity =
-                                                it
+                                widgets.filter { it.visible }.forEach { preference ->
+                                    when (preference.widget) {
+                                        DashboardWidget.ALLOCATION ->
+                                            item(key = "dashboard-allocation") {
+                                                val allocation =
+                                                    remember(data.valuations, data.currency, data.coverage) {
+                                                        AssetAllocation.project(data.valuations, data.currency, data.coverage)
+                                                    }
+                                                AllocationPanel(allocation)
+                                            }
+                                        DashboardWidget.ASSETS ->
+                                            item(key = "dashboard-assets") {
+                                                AssetsCard(data, { selectedAsset = it }, { dialog = "price" })
+                                            }
+                                        DashboardWidget.HEALTH ->
+                                            item(key = "dashboard-health") {
+                                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                                    HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
+                                                    if (wide) QuickActions({ dialog = "account" }, { dialog = "activity" })
+                                                }
+                                            }
+                                        DashboardWidget.ACTIVITY -> {
+                                            item(key = "dashboard-activity-title") {
+                                                SectionTitle("Recent activity", "View all") {
+                                                    page =
+                                                        Page.ACTIVITY
+                                                }
+                                            }
+                                            if (data.activities.isEmpty()) {
+                                                item(key = "dashboard-activity-empty") {
+                                                    EmptyCard(
+                                                        "A clear view starts here",
+                                                        "Add a watch-only account, then sync its public history. You can also record an activity manually.",
+                                                        "Add an account",
+                                                    ) {
+                                                        dialog =
+                                                            "account"
+                                                    }
+                                                }
+                                            } else {
+                                                items(data.activities.take(5), key = { "dashboard:${it.activity.id.value}" }) {
+                                                    ActivityRow(it, data, compact, activityAccounts) { selectedActivity = it }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -891,6 +904,15 @@ private fun Product(
                 },
                 confirmButton = { TextButton(onClick = { addressWallet = null }) { Text("Close") } },
             )
+        }
+        widgetDraft?.let { draft ->
+            DashboardWidgetDialog(draft, { widgetDraft = it }, { widgetDraft = null }) { saved ->
+                execute("Dashboard saved") {
+                    app.setDashboardWidgets(saved)
+                    widgets = saved
+                }
+                widgetDraft = null
+            }
         }
         removeAccount?.let { account ->
             AlertDialog(

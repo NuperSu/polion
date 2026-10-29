@@ -1162,6 +1162,30 @@ class PortfolioApplication(
         putSetting("appearance_theme", theme)
     }
 
+    fun dashboardWidgets(): List<DashboardWidgetPreference> {
+        val saved = setting("dashboard_widgets") ?: return DashboardWidget.entries.map { DashboardWidgetPreference(it, true) }
+        val entries =
+            saved.split(',').mapNotNull { token ->
+                val parts = token.split(':')
+                val widget = DashboardWidget.entries.firstOrNull { it.name == parts.firstOrNull() }
+                if (parts.size != 2 || widget == null || parts[1] !in setOf("1", "0")) {
+                    null
+                } else {
+                    DashboardWidgetPreference(widget, parts[1] == "1")
+                }
+            }
+        return if (entries.size == DashboardWidget.entries.size && entries.map { it.widget }.toSet().size == entries.size) {
+            entries
+        } else {
+            DashboardWidget.entries.map { DashboardWidgetPreference(it, true) }
+        }
+    }
+
+    fun setDashboardWidgets(widgets: List<DashboardWidgetPreference>) {
+        require(widgets.size == DashboardWidget.entries.size && widgets.map { it.widget }.toSet() == DashboardWidget.entries.toSet())
+        putSetting("dashboard_widgets", widgets.joinToString(",") { "${it.widget.name}:${if (it.visible) 1 else 0}" })
+    }
+
     /** Returns quote value per atomic unit only for a fresh observation; missing or stale prices stay null. */
     private fun unitPrice(
         asset: AssetId,

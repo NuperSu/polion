@@ -16,6 +16,26 @@ import kotlin.test.assertTrue
 
 class PortfolioApplicationTest {
     @Test
+    fun dashboardWidgetsPersistOrderVisibilityAndBackup() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 1000L }
+            val defaults = app.dashboardWidgets()
+            assertEquals(DashboardWidget.entries, defaults.map { it.widget })
+            assertTrue(defaults.all { it.visible })
+            val changed = defaults.reversed().map { if (it.widget == DashboardWidget.HEALTH) it.copy(visible = false) else it }
+            app.setDashboardWidgets(changed)
+            assertEquals(changed, PortfolioApplication(db) { 1000L }.dashboardWidgets())
+            assertFails { app.setDashboardWidgets(changed.drop(1)) }
+            assertEquals(changed, app.dashboardWidgets())
+            val backup = app.exportBackup("fixture-password".toCharArray())
+            JvmSqliteDatabase(":memory:").use { staging ->
+                app.restoreToStaging(staging, backup, "fixture-password".toCharArray())
+                assertEquals(changed, PortfolioApplication(staging) { 1000L }.dashboardWidgets())
+            }
+        }
+    }
+
+    @Test
     fun appearancePreferencePersistsAndRejectsUnknownValues() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }

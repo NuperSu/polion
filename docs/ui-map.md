@@ -33,7 +33,7 @@ Target compact navigation:
 | Activity | Searchable ledger and detail |
 | More | Sources, Reports, Settings and other implemented tools |
 
-Wide layouts use a left rail with Home, Portfolio, Activity, Sources, Reports and Settings when space permits. Add remains an action. Asset/activity/source detail can occupy a contextual second pane. Keyboard focus, scrolling and dismiss/back behavior must work at every width. Avoid resizing a phone card into an otherwise empty desktop screen.
+Wide layouts use a left rail with Home, Portfolio, Activity, Accounts, Reports and Settings when space permits. Add remains an action. Portfolio customization saves the order and visibility of allocation, assets, data health and recent activity; the portfolio value remains visible. Asset/activity/source detail can occupy a contextual second pane. Keyboard focus, scrolling and dismiss/back behavior must work at every width. Avoid resizing a phone card into an otherwise empty desktop screen.
 
 Proposed Home watchlists, alerts, saved widget layouts and assistant cards remain absent until their underlying workflows exist. Unsupported DeFi, Positions and NFT sections must be hidden or clearly informational. The active portfolio and quote currency must remain visible wherever they affect figures.
 
