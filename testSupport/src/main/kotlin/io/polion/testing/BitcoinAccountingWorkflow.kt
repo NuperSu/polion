@@ -22,6 +22,7 @@ import io.polion.core.storage.SqliteDatabase
 fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
     val address = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
     val hashes = listOf("a", "b", "c").map { it.repeat(64) }.toMutableList()
+    val heights = listOf(42, 43, 142)
     val ids = listOf("1", "2", "3").map { it.repeat(64) }
 
     fun transaction(index: Int): String {
@@ -29,7 +30,7 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
             if (index < 2) {
                 "{\"is_coinbase\":true}"
             } else {
-                """{"prevout":{"scriptpubkey_address":"$address","value":100}}"""
+                """{"txid":"${ids[0]}","vout":0,"prevout":{"scriptpubkey_address":"$address","value":100}}"""
             }
         val output = if (index < 2) address else "external"
         val units = if (index < 2) 100 else 90
@@ -39,18 +40,20 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
              "vout":[{"scriptpubkey_address":"$output","value":$units}],
              "fee":${if (index < 2) 0 else 10},
              "status":{"confirmed":true,"block_time":$time,
-             "block_height":${42 + index},"block_hash":"${hashes[index]}"}}
+             "block_height":${heights[index]},"block_hash":"${hashes[index]}"}}
             """.trimIndent()
     }
+    var omitProviderUtxos = false
     val transport =
         EsploraTransport { path ->
             when {
                 path == "/blocks/tip/hash" -> hashes.last()
-                path == "/block/${hashes.last()}" -> """{"id":"${hashes.last()}","height":44}"""
-                path.startsWith("/block-height/") -> hashes[path.substringAfterLast('/').toInt() - 42]
+                path == "/block/${hashes.last()}" -> """{"id":"${hashes.last()}","height":${heights.last()}}"""
+                path.startsWith("/block-height/") -> hashes[heights.indexOf(path.substringAfterLast('/').toInt())]
                 path.endsWith("/txids") -> "[\"${ids[hashes.indexOf(path.split('/')[2])]}\"]"
                 path.endsWith("/mempool") -> "[]"
                 path.endsWith("/chain") -> (2 downTo 0).joinToString(",", "[", "]", transform = ::transaction)
+                path.endsWith("/utxo") -> if (omitProviderUtxos) "[]" else utxoResponse(address, (2 downTo 0).map(::transaction))
                 else -> """{"chain_stats":{"tx_count":3},"mempool_stats":{"tx_count":0}}"""
             }
         }
@@ -156,7 +159,23 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 .toString(),
         )
         app.refreshBitcoin(transport)
+        assertEquals(0, app.snapshot().sourceStatus.utxoMismatchCount)
         assertEquals(verified, app.accountingReport())
+        omitProviderUtxos = true
+        app.refreshBitcoin(transport)
+        assertTrue(app.snapshot().sourceStatus.utxoMismatchCount > 0)
+        assertEquals(
+            "100",
+            app
+                .snapshot()
+                .valuations
+                .single()
+                .amount.atomicUnits
+                .toString(),
+        )
+        omitProviderUtxos = false
+        app.refreshBitcoin(transport)
+        assertEquals(0, app.snapshot().sourceStatus.utxoMismatchCount)
         val archive = app.exportBackup("fixture-password".toCharArray())
         openDatabase().use { staging ->
             app.restoreToStaging(staging, archive, "fixture-password".toCharArray())

@@ -124,6 +124,9 @@ class BitcoinUtxoGraphTest {
         assertEquals(ExactInteger.parse("625000000"), graph.balances(tipHeight = 150).getValue(accountA).immatureCoinbase)
         assertEquals(ExactInteger.ZERO, graph.balances(tipHeight = 199).getValue(accountA).immatureCoinbase)
         assertEquals(true, coinbaseOutput.mature(199))
+        val premature = payment.replace("\"block_height\":200", "\"block_height\":199")
+        val failure = assertFailsWith<IllegalArgumentException> { BitcoinUtxoGraph.build(listOf(mined, premature), owners) }
+        assertEquals("Immature coinbase spend", failure.message)
         val withPayment = BitcoinUtxoGraph.build(listOf(mined, payment), owners)
         assertEquals(emptyList(), withPayment.unspent(accountA))
         val nonstandard = withPayment.ownedOutputs.none { it.outpoint == BitcoinOutpoint(hex('d'), 0) }

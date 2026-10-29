@@ -12,6 +12,7 @@ import io.polion.core.ownership.TargetIdentity
 import io.polion.core.ownership.TargetRole
 import io.polion.core.ownership.TrackingTarget
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.testing.utxoResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -51,6 +52,7 @@ class ProviderProvenanceTest {
                         path == "/block/$hash" -> """{"id":"$hash","height":1}"""
                         path.endsWith("/txs/mempool") -> "[]"
                         path.endsWith("/txs/chain") -> "[$payload]"
+                        path.endsWith("/utxo") -> utxoResponse(address, listOf(payload))
                         else -> """{"chain_stats":{"tx_count":1},"mempool_stats":{"tx_count":0}}"""
                     }
                 }

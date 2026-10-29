@@ -85,6 +85,9 @@ class BitcoinScanStage(
             .query("SELECT address, account_id, mempool_digest FROM bitcoin_scan_addresses ORDER BY address")
             .map { BitcoinScanAddress(it[0]!!, AccountId(it[1]!!), it[2]) }
 
+    /** Staged transaction payloads for the pending scan, one per transaction id. */
+    fun payloads(): List<String> = db.query("SELECT payload FROM bitcoin_scan_stage ORDER BY id").map { it.single()!! }
+
     /** Records the digest of the unconfirmed-transaction list observed for an address on its first page. */
     fun recordMempool(
         address: String,

@@ -286,7 +286,8 @@ class PortfolioApplicationTest {
                     } else if (path.startsWith("/block/")) {
                         """{"id":"${"a".repeat(64)}","height":900000}"""
                     } else if (path.endsWith("/txs/mempool") ||
-                        path.endsWith("/txs/chain")
+                        path.endsWith("/txs/chain") ||
+                        path.endsWith("/utxo")
                     ) {
                         "[]"
                     } else {
@@ -318,7 +319,8 @@ class PortfolioApplicationTest {
                         } else if (path.startsWith("/block/")) {
                             """{"id":"${"a".repeat(64)}","height":900000}"""
                         } else if (path.endsWith("/txs/mempool") ||
-                            path.endsWith("/txs/chain")
+                            path.endsWith("/txs/chain") ||
+                            path.endsWith("/utxo")
                         ) {
                             "[]"
                         } else {
@@ -340,7 +342,7 @@ class PortfolioApplicationTest {
                             }
                             path.startsWith("/block-height/") -> "a".repeat(64)
                             path.startsWith("/block/") -> """{"id":"${"a".repeat(64)}","height":900000}"""
-                            path.endsWith("/txs/mempool") || path.endsWith("/txs/chain") -> "[]"
+                            path.endsWith("/txs/mempool") || path.endsWith("/txs/chain") || path.endsWith("/utxo") -> "[]"
                             else -> """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}"""
                         }
                     },
@@ -368,7 +370,8 @@ class PortfolioApplicationTest {
                         } else if (path.startsWith("/block/")) {
                             """{"id":"${"a".repeat(64)}","height":900000}"""
                         } else if (path.endsWith("/txs/mempool") ||
-                            path.endsWith("/txs/chain")
+                            path.endsWith("/txs/chain") ||
+                            path.endsWith("/utxo")
                         ) {
                             "[]"
                         } else {

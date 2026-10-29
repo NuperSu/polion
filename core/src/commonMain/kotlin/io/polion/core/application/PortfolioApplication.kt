@@ -16,10 +16,13 @@ import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.core.bitcoin.BitcoinScanAddress
 import io.polion.core.bitcoin.BitcoinScanSession
 import io.polion.core.bitcoin.BitcoinScanStage
+import io.polion.core.bitcoin.BitcoinUtxoGraph
 import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
+import io.polion.core.bitcoin.EsploraUtxoFetcher
 import io.polion.core.bitcoin.bitcoinMainnetAddress
 import io.polion.core.bitcoin.bitcoinWallet
+import io.polion.core.bitcoin.compareUtxoSets
 import io.polion.core.connectors.Capability
 import io.polion.core.connectors.ConnectorRegistry
 import io.polion.core.connectors.Coverage
@@ -147,6 +150,7 @@ data class SourceStatus(
     val lastSuccessfulRefresh: Long?,
     val lastError: String?,
     val interrupted: Boolean,
+    val utxoMismatchCount: Int = 0,
 )
 
 data class BitcoinScanProgress(
@@ -261,7 +265,12 @@ class PortfolioApplication(
             currency,
             coverage,
             ledger.conflicts,
-            SourceStatus(setting("source_last_success")?.toLong(), setting("source_error"), setting("source_in_progress") == "true"),
+            SourceStatus(
+                setting("source_last_success")?.toLong(),
+                setting("source_error"),
+                setting("source_in_progress") == "true",
+                setting("utxo_mismatch_count")?.toIntOrNull() ?: 0,
+            ),
             setting("sample_data") == "true",
             ledger.activities.count {
                 it.activity.status == io.polion.core.ledger.ActivityStatus.PENDING &&
@@ -752,11 +761,16 @@ class PortfolioApplication(
             require(
                 scanned.all { scan -> summary(scan.address) == bitcoinStage.seenCounts(scan.address) },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+            val provider = EsploraUtxoFetcher(transport).fetch(scanned.map { it.address })
             require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
+            val graph = BitcoinUtxoGraph.build(bitcoinStage.payloads(), addresses)
+            val utxoComparison = compareUtxoSets(graph, provider)
+            val mismatchCount = utxoComparison.mismatches.size + utxoComparison.missingParents.size
             runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "apply")) }
             bitcoinStage.applyComplete(ownedAddresses, reconciledAccounts, requireBlockPositions = verifyBlockPositions)
+            putSetting("utxo_mismatch_count", mismatchCount.toString())
             bitcoinStage.clear()
             invalidate()
             putSetting("source_last_success", now().toString())

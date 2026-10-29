@@ -15,6 +15,7 @@ import io.polion.core.ownership.TargetRole
 import io.polion.core.ownership.TrackingTarget
 import io.polion.core.storage.JvmSqliteDatabase
 import io.polion.core.sync.JobState
+import io.polion.testing.utxoResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -76,6 +77,7 @@ class BitcoinScanResumeTest {
                     path == "/blocks/tip/hash" || path == "/block-height/1" -> hash
                     path == "/block/$hash" -> """{"id":"$hash","height":1}"""
                     path.endsWith("/txs/mempool") -> "[]"
+                    path.endsWith("/utxo") -> utxoResponse(address, (0 until totalTransactions).map(tx))
                     path.contains("/txs/chain") -> {
                         chainRequests++
                         if (failChainRequest == chainRequests) throw BitcoinProviderException(BitcoinProviderFailure.TIMEOUT)

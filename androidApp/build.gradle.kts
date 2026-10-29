@@ -22,6 +22,7 @@ android {
     lint { warningsAsErrors = true }
 }
 dependencies {
+    androidTestImplementation(libs.kotlinx.serialization.json)
     implementation(project(":core"))
     implementation(project(":sharedUi"))
     implementation(libs.androidx.activity.compose)
