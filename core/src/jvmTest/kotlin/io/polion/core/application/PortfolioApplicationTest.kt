@@ -16,6 +16,25 @@ import kotlin.test.assertTrue
 
 class PortfolioApplicationTest {
     @Test
+    fun appearancePreferencePersistsAndRejectsUnknownValues() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 1000L }
+            assertEquals("system", app.appearanceTheme())
+            app.setAppearanceTheme("light")
+            assertEquals("light", PortfolioApplication(db) { 1000L }.appearanceTheme())
+            assertFails { app.setAppearanceTheme("unrecognized") }
+            assertEquals("light", app.appearanceTheme())
+            app.setAppearanceTheme("dark")
+            assertEquals("dark", app.appearanceTheme())
+            val backup = app.exportBackup("fixture-password".toCharArray())
+            JvmSqliteDatabase(":memory:").use { staging ->
+                app.restoreToStaging(staging, backup, "fixture-password".toCharArray())
+                assertEquals("dark", PortfolioApplication(staging) { 1000L }.appearanceTheme())
+            }
+        }
+    }
+
+    @Test
     fun csvEscapesSpreadsheetFormulasWithoutChangingSignedAmounts() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 15552000000L }

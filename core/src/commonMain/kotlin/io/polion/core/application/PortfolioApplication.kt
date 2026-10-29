@@ -1113,6 +1113,14 @@ class PortfolioApplication(
         listOf(key, value),
     )
 
+    /** Presentation preference is local and included in portable backups. */
+    fun appearanceTheme(): String = setting("appearance_theme")?.takeIf { it in setOf("system", "light", "dark") } ?: "system"
+
+    fun setAppearanceTheme(theme: String) {
+        require(theme in setOf("system", "light", "dark")) { "Invalid appearance theme" }
+        putSetting("appearance_theme", theme)
+    }
+
     /** Returns quote value per atomic unit only for a fresh observation; missing or stale prices stay null. */
     private fun unitPrice(
         asset: AssetId,
