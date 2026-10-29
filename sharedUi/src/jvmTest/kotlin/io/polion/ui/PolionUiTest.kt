@@ -4,15 +4,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
-import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -139,6 +140,86 @@ class PolionUiTest {
         override fun removeLockPassword(onResult: (String) -> Unit) = onResult("Not used")
 
         override fun close() = dispatcher.close()
+    }
+
+    @Test
+    fun compactAccountManagementArchivesAndRestoresWithoutDeletingHistory() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                val original = app.snapshot()
+                val account = original.ownership.accounts.single()
+                val originalRows = db.query("SELECT COUNT(*) FROM ledger_activities").single().single()
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
+                    }
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Manage accounts"))
+                    onNodeWithTag("manage-accounts").assertIsDisplayed().performClick()
+                    onNodeWithText("Watch-only accounts").assertIsDisplayed()
+                    val archiveTag = "archive-account-${account.id.value}"
+                    onNodeWithTag("page-content").performScrollToNode(hasTestTag(archiveTag))
+                    onNodeWithTag(archiveTag).performScrollTo().assertIsEnabled().performClick()
+                    onNodeWithText("Archive ${account.label}?").assertIsDisplayed()
+                    onNodeWithText("This does not delete the account or its history.", substring = true).assertIsDisplayed()
+                    onNodeWithText("Keep account").performClick()
+                    assertTrue(
+                        "polion:archived" !in
+                            app
+                                .snapshot()
+                                .ownership.accounts
+                                .single()
+                                .tags,
+                    )
+                    onNodeWithTag(archiveTag).performClick()
+                    onNodeWithTag("confirm-archive-account").performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Archived accounts").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    assertTrue(
+                        "polion:archived" in
+                            app
+                                .snapshot()
+                                .ownership.accounts
+                                .single()
+                                .tags,
+                    )
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.targets
+                            .none { it.enabled },
+                    )
+                    assertEquals(originalRows, db.query("SELECT COUNT(*) FROM ledger_activities").single().single())
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Account archived; saved history retained").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    val restoreTag = "restore-account-${account.id.value}"
+                    onNodeWithTag("page-content").performScrollToNode(hasTestTag(restoreTag))
+                    onNodeWithTag(restoreTag).performScrollTo().assertIsDisplayed().assertIsEnabled()
+                    onNodeWithText("Account archived; saved history retained").assertIsDisplayed()
+                    val restoreBounds = onNodeWithTag(restoreTag).fetchSemanticsNode().boundsInRoot
+                    val snackbarBounds = onNodeWithTag("status-message").fetchSemanticsNode().boundsInRoot
+                    assertTrue(restoreBounds.bottom <= snackbarBounds.top, "Restore must remain above the active status message")
+                    onNodeWithTag(restoreTag).performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        check(
+                            onAllNodesWithText("Could not save. Check your input and available storage, then try again.")
+                                .fetchSemanticsNodes()
+                                .isEmpty(),
+                        ) { "Restore was rejected by the save operation" }
+                        onAllNodesWithText("Archived accounts").fetchSemanticsNodes().isEmpty()
+                    }
+                    assertEquals(original.ownership, app.snapshot().ownership)
+                    assertEquals(originalRows, db.query("SELECT COUNT(*) FROM ledger_activities").single().single())
+                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("more-ACCOUNTS").assertIsDisplayed().performClick()
+                    onNodeWithText("Watch-only accounts").assertIsDisplayed()
+                }
+            }
+        }
     }
 
     @Test
@@ -652,7 +733,8 @@ class PolionUiTest {
                         .onFirst()
                         .performScrollTo()
                         .performClick()
-                    onNodeWithText("PRICED VALUE").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("PRICED VALUE"))
+                    onNodeWithText("PRICED VALUE").assertIsDisplayed()
                 }
             }
         }
@@ -685,7 +767,7 @@ class PolionUiTest {
     }
 
     @Test
-    fun phoneCanRemoveAndRestoreAnAccount() {
+    fun phoneCanArchiveAndRestoreAnAccount() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
@@ -696,11 +778,13 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
                     onNodeWithTag("destination-MORE").performClick()
                     onNodeWithTag("more-ACCOUNTS").performClick()
-                    onNodeWithText("Remove account").performScrollTo().performClick()
-                    onAllNodesWithText("Remove account").onLast().performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Archive account"))
+                    onNodeWithText("Archive account").performScrollTo().performClick()
+                    onNodeWithTag("confirm-archive-account").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Archived accounts").fetchSemanticsNodes().isNotEmpty() }
                     assertEquals(0, app.snapshot().activityTotal)
-                    onNodeWithText("Restore account").performScrollTo().performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Restore account"))
+                    onNodeWithText("Restore account").performScrollTo().assertIsEnabled().performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Account restored").fetchSemanticsNodes().isNotEmpty() }
                     assertEquals(4, app.snapshot().activityTotal)
                 }

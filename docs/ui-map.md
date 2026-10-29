@@ -19,6 +19,8 @@ No extraction may drop rule management, accepted transfer/conflict review, archi
 
 ## Responsive navigation
 
+Account management is reachable from **Manage accounts** on Home and Portfolio, **More → Accounts** on compact layouts, and **Accounts** in the desktop rail. This list covers every portfolio. **Archive account** pauses its public queries and removes the account and descendants from active portfolio scopes while retaining saved addresses, activity and accounting decisions. **Archived accounts → Restore account** restores tracking according to the saved account and target settings. Archive and restore actions are unavailable during a refresh or another saved-data operation.
+
 During Phase 2, preserve the five existing destinations: Overview, Activity, Accounts, Reports and Settings. Extract their state and events before changing information architecture. Phase 3 can introduce the adaptive shell using the mapping above.
 
 Target compact navigation:

@@ -18,7 +18,7 @@ internal enum class Page(
     HOME("Home", "⌂"),
     OVERVIEW("Portfolio", "◈"),
     ACTIVITY("Activity", "⇄"),
-    ACCOUNTS("Sources", "▣"),
+    ACCOUNTS("Accounts", "▣"),
     REPORTS("Reports", "◷"),
     SETTINGS("Settings", "⚙"),
     MORE("More", "⋯"),

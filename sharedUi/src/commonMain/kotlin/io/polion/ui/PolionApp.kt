@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,6 +64,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +74,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.ActivityFilter
+import io.polion.core.application.AssetAllocation
 import io.polion.core.application.AssetValuation
 import io.polion.core.application.HistoryPoint
 import io.polion.core.application.PortfolioApplication
@@ -247,6 +251,8 @@ private fun Product(
     val hostRevision by host.dataRevision.collectAsState()
     val syncStatus by host.syncStatus.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    var snackbarHeight by remember { mutableIntStateOf(0) }
+    val snackbarInset = with(LocalDensity.current) { snackbarHeight.toDp() }
 
     fun execute(
         success: String = "Saved on this device",
@@ -271,7 +277,12 @@ private fun Product(
             Scaffold(
                 modifier = Modifier.weight(1f),
                 containerColor = Paper,
-                snackbarHost = { SnackbarHost(snackbar) },
+                snackbarHost = {
+                    SnackbarHost(
+                        snackbar,
+                        Modifier.testTag("status-message").onSizeChanged { snackbarHeight = it.height },
+                    )
+                },
                 bottomBar = {
                     if (compact) {
                         CompactNavigation(page, { page = it }, { dialog = "add" })
@@ -284,7 +295,11 @@ private fun Product(
                         data?.let { activityAccountScope(it.ownership, snapshotFilter) }.orEmpty()
                     }
                 LazyColumn(
-                    Modifier.fillMaxSize().padding(insets).testTag("page-content"),
+                    Modifier
+                        .fillMaxSize()
+                        .padding(insets)
+                        .padding(bottom = snackbarInset)
+                        .testTag("page-content"),
                     state =
                         when (page) {
                             Page.HOME -> homeScroll
@@ -353,6 +368,10 @@ private fun Product(
                                         Text(if (priced.isEmpty()) "Unavailable" else money(value, data.currency), fontSize = 30.sp)
                                         Text("${data.valuations.count { it.value == null }} unpriced assets excluded", color = Muted)
                                         TextButton(onClick = { page = Page.OVERVIEW }) { Text("Open Portfolio") }
+                                        OutlinedButton(
+                                            onClick = { page = Page.ACCOUNTS },
+                                            modifier = Modifier.testTag("manage-accounts"),
+                                        ) { Text("Manage accounts") }
                                     }
                                 }
                                 item { HealthCard(data, { dialog = "sync" }, { dialog = "utxo" }) }
@@ -390,7 +409,14 @@ private fun Product(
                             }
                             Page.OVERVIEW -> {
                                 item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
+                                item {
+                                    OutlinedButton(
+                                        onClick = { page = Page.ACCOUNTS },
+                                        modifier = Modifier.testTag("manage-accounts"),
+                                    ) { Text("Manage accounts") }
+                                }
                                 item { BalanceHero(data, chart, compact, period, { period = it }, { dialog = "price" }) }
+                                item { AllocationPanel(AssetAllocation.project(data.valuations, data.currency, data.coverage)) }
                                 item {
                                     if (wide) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
@@ -520,6 +546,12 @@ private fun Product(
                             }
                             Page.ACCOUNTS -> {
                                 item { SectionTitle("Watch-only accounts", "+ Add") { dialog = "add" } }
+                                item {
+                                    Text(
+                                        "Manage accounts and their public sources across all portfolios. Archive an account to pause tracking and hide it from active portfolios; saved history stays on this device.",
+                                        color = Muted,
+                                    )
+                                }
                                 if (data.ownership.accounts.isEmpty()) {
                                     item {
                                         EmptyCard(
@@ -578,7 +610,11 @@ private fun Product(
                                                     target.enabled,
                                                 )
                                             }
-                                        TextButton(onClick = { removeAccount = account }) { Text("Remove account", fontSize = 12.sp) }
+                                        TextButton(
+                                            onClick = { removeAccount = account },
+                                            enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
+                                            modifier = Modifier.testTag("archive-account-${account.id.value}"),
+                                        ) { Text("Archive account", fontSize = 12.sp) }
                                         data.balances.quantities.filterKeys { it.account == account.id }.forEach { (key, units) ->
                                             Text(
                                                 data.valuations.find { it.asset == key.asset }?.metadata?.let {
@@ -604,6 +640,8 @@ private fun Product(
                                             )
                                             OutlinedButton(
                                                 onClick = { execute("Account restored") { app.archiveAccount(archived.id, false) } },
+                                                enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
+                                                modifier = Modifier.testTag("restore-account-${archived.id.value}"),
                                             ) { Text("Restore account") }
                                         }
                                     }
@@ -856,18 +894,20 @@ private fun Product(
         removeAccount?.let { account ->
             AlertDialog(
                 onDismissRequest = { removeAccount = null },
-                title = { Text("Remove ${account.label}?") },
+                title = { Text("Archive ${account.label}?") },
                 text = {
                     Text(
-                        "This archives the account and its subaccounts, hides them from active portfolios, and stops their address queries. Saved history and accounting decisions are retained. You can restore the account under Archived accounts.",
+                        "The account and its subaccounts will be hidden from active portfolios and their public address queries will stop. Saved addresses, activity, and accounting decisions stay on this device. This does not delete the account or its history. Restore it from Archived accounts on this page.",
                     )
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        execute("Account removed from active tracking") { app.archiveAccount(account.id) }
+                        execute("Account archived; saved history retained") { app.archiveAccount(account.id) }
                         selectedAccount = null
                         removeAccount = null
-                    }) { Text("Remove account") }
+                    }, enabled = !busy && syncStatus.phase != SyncPhase.SYNCING, modifier = Modifier.testTag("confirm-archive-account")) {
+                        Text("Archive account")
+                    }
                 },
                 dismissButton = { TextButton(onClick = { removeAccount = null }) { Text("Keep account") } },
             )
@@ -1446,38 +1486,6 @@ private fun FilterKinds(
                         false
                 })
             }
-        }
-    }
-}
-
-@Composable private fun Allocation(data: PortfolioSnapshot) {
-    val values =
-        data.valuations.mapNotNull { v ->
-            v.value
-                ?.toString()
-                ?.toDoubleOrNull()
-                ?.takeIf {
-                    it >
-                        0 &&
-                        it.isFinite()
-                }?.let { v to it }
-        }
-    ; val total = values.sumOf { it.second }
-    values.forEach { (asset, value) ->
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    asset.metadata?.name ?: asset.asset.value,
-                    fontSize = 12.sp,
-                )
-                ; Text("${(value / total * 100).toInt()}%", color = Muted, fontSize = 12.sp)
-            }
-            ; LinearProgressIndicator(progress = {
-                (
-                    value /
-                        total
-                ).toFloat()
-            }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape), color = Teal, trackColor = Mint)
         }
     }
 }
