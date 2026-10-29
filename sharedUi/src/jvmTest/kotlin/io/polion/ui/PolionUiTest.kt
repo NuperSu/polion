@@ -38,6 +38,7 @@ import io.polion.core.model.AtomicAmount
 import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.SourceRecordId
+import io.polion.core.onboarding.OnboardingAction
 import io.polion.core.reconcile.ActivityOverlay
 import io.polion.core.reconcile.ClassificationRule
 import io.polion.core.reconcile.LinkState
@@ -141,10 +142,127 @@ class PolionUiTest {
     }
 
     @Test
+    fun erasingLocalDataReturnsToFreshOnboardingWithoutHostRevision() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 1000, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithTag("destination-SETTINGS").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Erase local portfolio data"))
+                    onNodeWithText("Erase local portfolio data").performScrollTo().performClick()
+                    onNodeWithText("Type ERASE to confirm").performTextInput("ERASE")
+                    onNodeWithText("Erase this device’s data").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Set up your space").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    assertEquals(0L, host.dataRevision.value)
+                    assertEquals(
+                        io.polion.core.onboarding
+                            .OnboardingState(),
+                        app.onboardingState(),
+                    )
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.accounts
+                            .isEmpty(),
+                    )
+                    assertTrue(!app.snapshot().sampleData)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun freshInstallCanCompleteWithoutAccountsOrNetworkRequests() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                runDesktopComposeUiTest(width = 420, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Set up your space").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    for (title in listOf("Choose your interests", "Explore supported sources", "Ready at your pace")) {
+                        onNodeWithText("Continue").performScrollTo().performClick()
+                        waitUntil(timeoutMillis = 10_000) {
+                            onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+                        }
+                    }
+                    onNodeWithTag("onboarding-finish").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    assertTrue(app.onboardingState()!!.completed)
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.accounts
+                            .isEmpty(),
+                    )
+                    assertEquals(0, host.refreshRequests)
+                    assertEquals(0, host.priceRequests)
+                    assertTrue(!app.snapshot().sampleData)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun freshInstallCanSkipOfflineAndResumeSavedSetupFromSettings() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                runDesktopComposeUiTest(width = 1000, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Set up your space").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithText("Continue").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Choose your interests").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithTag("onboarding-goal-BALANCES").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        io.polion.core.onboarding.OnboardingGoal.BALANCES in app.onboardingState()!!.goals
+                    }
+                    onNodeWithText("Skip setup for now").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithTag("destination-SETTINGS").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Resume setup"))
+                    onNodeWithText("Resume setup").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Choose your interests").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithTag("onboarding-goal-BALANCES").performScrollTo().assertIsSelected()
+                    assertEquals(0, host.refreshRequests)
+                    assertEquals(0, host.priceRequests)
+                    assertTrue(
+                        app
+                            .snapshot()
+                            .ownership.accounts
+                            .isEmpty(),
+                    )
+                    assertTrue(!app.snapshot().sampleData)
+                }
+            }
+        }
+    }
+
+    @Test
     fun dataHealthOpensUnknownActiveScopeEvidence() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 800, height = 900) {
                     setContent { PolionApp(app, host) }
@@ -170,6 +288,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
@@ -198,6 +317,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 320, height = 800) {
                     setContent {
@@ -222,6 +342,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 val started = CountDownLatch(1)
                 val release = CountDownLatch(1)
@@ -265,6 +386,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 host.syncStatus.value = SyncStatus(SyncPhase.ERROR, "A full history recovery is required.")
                 val data = app.snapshot()
                 runDesktopComposeUiTest(width = 800, height = 900) {
@@ -293,6 +415,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { 1000L }
+                app.updateOnboarding(OnboardingAction.Skip)
 
                 fun activity(
                     id: String,
@@ -369,6 +492,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 val original =
                     ClassificationRule(
                         "filtered-rule",
@@ -420,6 +544,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 val data = app.snapshot()
                 runDesktopComposeUiTest(width = 800, height = 900) {
                     setContent {
@@ -452,6 +577,7 @@ class PolionUiTest {
             JvmSqliteDatabase(path.toString()).use { db ->
                 Host().use { host ->
                     val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                    app.updateOnboarding(OnboardingAction.Skip)
                     app.seedDemo()
                     runDesktopComposeUiTest(width = 800, height = 900) {
                         setContent { PolionApp(app, host) }
@@ -487,6 +613,7 @@ class PolionUiTest {
             }
             JvmSqliteDatabase(path.toString()).use { db ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 assertEquals(1, app.snapshot(ActivityFilter(search = "UI deposit")).activityTotal)
                 assertEquals(
                     "70000",
@@ -510,6 +637,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 runDesktopComposeUiTest(width = 800, height = 360) {
                     setContent { PolionApp(app, host) }
                     onAllNodesWithText("Settings")
@@ -534,6 +662,7 @@ class PolionUiTest {
     fun activityCorrectionsSupportEveryLegAndResetToSource() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { System.currentTimeMillis() }
+            app.updateOnboarding(OnboardingAction.Skip)
             app.seedDemo()
             val data = app.snapshot()
             val base = data.activities.first { it.activity.movements.size == 1 }
@@ -560,6 +689,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
@@ -583,6 +713,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 val started = System.nanoTime()
                 repeat(10_000) { index ->
@@ -639,6 +770,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 1440, height = 1000) {
                     setContent { PolionApp(app, host) }
@@ -679,6 +811,7 @@ class PolionUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.updateOnboarding(OnboardingAction.Skip)
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }

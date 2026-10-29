@@ -1113,6 +1113,17 @@ class PortfolioApplication(
         listOf(key, value),
     )
 
+    /** Null preserves entry for populated installations and newer saved setup versions. */
+    fun onboardingState(): io.polion.core.onboarding.OnboardingState? =
+        io.polion.core.onboarding
+            .OnboardingRepository(db)
+            .load()
+
+    fun updateOnboarding(action: io.polion.core.onboarding.OnboardingAction): io.polion.core.onboarding.OnboardingState =
+        io.polion.core.onboarding
+            .OnboardingRepository(db)
+            .update(action)
+
     /** Presentation preference is local and included in portable backups. */
     fun appearanceTheme(): String = setting("appearance_theme")?.takeIf { it in setOf("system", "light", "dark") } ?: "system"
 

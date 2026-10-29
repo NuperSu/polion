@@ -54,6 +54,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,9 +85,15 @@ import io.polion.core.model.ExactDecimal
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.PortfolioId
 import io.polion.core.model.Rounding
+import io.polion.core.onboarding.OnboardingAction
+import io.polion.core.onboarding.OnboardingState
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
 import io.polion.core.reconcile.EffectiveActivity
+import io.polion.core.sources.SourceWorkflow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -106,11 +113,85 @@ fun PolionApp(
             if (locked) {
                 LockScreen(platform)
             } else {
-                Product(application, platform, appearance) { selected ->
-                    appearance = selected
-                }
+                OnboardingProduct(application, platform, appearance) { selected -> appearance = selected }
             }
         }
+    }
+}
+
+@Composable
+private fun OnboardingProduct(
+    app: PortfolioApplication,
+    host: PlatformActions,
+    appearance: AppearanceTheme,
+    onAppearance: (AppearanceTheme) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var state by remember(app) { mutableStateOf<OnboardingState?>(null) }
+    var loaded by remember(app) { mutableStateOf(false) }
+    var busy by remember(app) { mutableStateOf(false) }
+    var error by remember(app) { mutableStateOf<String?>(null) }
+    var workflow by remember(app) { mutableStateOf<SourceWorkflow?>(null) }
+    var localRevision by remember(app) { mutableStateOf(0) }
+    val revision by host.dataRevision.collectAsState()
+    LaunchedEffect(app, revision, localRevision) {
+        try {
+            val saved = withContext(host.dispatcher) { app.onboardingState() }
+            state = saved
+            loaded = true
+            error = null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            error = "Setup could not be opened. Check available storage and reopen Polion."
+        }
+    }
+
+    fun update(
+        action: OnboardingAction,
+        afterSave: () -> Unit = {},
+    ) {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                val saved = withContext(host.dispatcher) { app.updateOnboarding(action) }
+                state = saved
+                afterSave()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                error = "Setup could not be saved. Check available storage and try again."
+            } finally {
+                busy = false
+            }
+        }
+    }
+    val current = state
+    if (!loaded) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(error ?: "Opening your portfolio")
+            if (error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+    } else if (current != null && !current.completed && !current.skipped) {
+        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+            OnboardingScreen(current, busy, error, { update(it) }) { selected ->
+                update(OnboardingAction.Complete) { workflow = selected }
+            }
+        }
+    } else {
+        Product(
+            app,
+            host,
+            appearance,
+            onAppearance,
+            onSetup = { restart -> update(if (restart) OnboardingAction.Restart else OnboardingAction.Resume) },
+            setupError = error,
+            initialWorkflow = workflow,
+            onWorkflowOpened = { workflow = null },
+            onLocalDataChanged = { localRevision++ },
+        )
     }
 }
 
@@ -120,12 +201,20 @@ private fun Product(
     host: PlatformActions,
     appearance: AppearanceTheme,
     onAppearance: (AppearanceTheme) -> Unit,
+    onSetup: (Boolean) -> Unit,
+    setupError: String?,
+    initialWorkflow: SourceWorkflow?,
+    onWorkflowOpened: () -> Unit,
+    onLocalDataChanged: () -> Unit,
 ) {
     val presenter = rememberProductPresenter(app, host)
     var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
     val snapshot = presenter.state.snapshot
     val snapshotFilter = presenter.state.snapshotFilter
     var revision by presenter.field({ it.revision }) { presenter.update { copy(revision = it) } }
+    LaunchedEffect(revision) {
+        if (revision != 0) onLocalDataChanged()
+    }
     var search by presenter.field({ it.search }) { presenter.dispatch(ProductEvent.Search(it)) }
     var kind by presenter.field({ it.kind }) { presenter.dispatch(ProductEvent.Kind(it)) }
     var offset by presenter.field({ it.offset }) { presenter.dispatch(ProductEvent.Offset(it)) }
@@ -142,6 +231,12 @@ private fun Product(
     var period by presenter.field({ it.period }) { presenter.dispatch(ProductEvent.Period(it)) }
     var dialog by presenter.field({ it.dialog?.key }) { presenter.dispatch(ProductEvent.Dialog(ProductDialog.fromKey(it))) }
     var message by presenter.field<String?>({ null }) { it?.let(presenter::notify) }
+    LaunchedEffect(initialWorkflow) {
+        initialWorkflow?.let {
+            dialog = it.productDialog().key
+            onWorkflowOpened()
+        }
+    }
     val homeScroll = rememberLazyListState()
     val moreScroll = rememberLazyListState()
     val overviewScroll = rememberLazyListState()
@@ -670,6 +765,15 @@ private fun Product(
                                             color = Muted,
                                         )
                                         OutlinedButton(onClick = { dialog = "rule" }) { Text("Manage rules") }
+                                    }
+                                }
+                                item {
+                                    Panel {
+                                        Text("Your setup", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                        Text("Review your local preferences and supported source guidance.", color = Muted)
+                                        OutlinedButton(onClick = { onSetup(false) }) { Text("Resume setup") }
+                                        TextButton(onClick = { onSetup(true) }) { Text("Restart setup") }
+                                        setupError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                                     }
                                 }
                                 if (data.ownership.owners.isEmpty()) {
