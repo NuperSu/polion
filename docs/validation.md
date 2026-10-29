@@ -1,5 +1,12 @@
 # Foundation validation
 
+## Scoped UTXO review — 2026-10-29
+
+At `f7dd1ce`, the integrated run passed formatting, Android lint and APK assembly, with **166 core JVM, 29 Android host, 17 shared UI and 7 desktop tests**, zero failures/errors/skips. The serial stable-source repeat succeeded with 173 tasks. Tests cover paginated comparisons, scope changes, missing-parent deduplication and a watched account changing during an in-flight scan.
+
+The API 29 emulator passed **9 native checks with 0 failures**, including Bitcoin accounting, graph persistence and encrypted restore. The Pixel was disconnected, so this build was not installed on it. Native checks do not separately exercise the comparison dialog.
+
+
 ## Explicit Bitcoin history recovery — 2026-10-29
 
 The integrated recovery run at `be94d00` passed formatting checks, **162 core JVM, 29 Android host, 16 shared UI and 7 desktop tests**, Android app/test APK assembly and Android lint: `BUILD SUCCESSFUL in 18s`, 173 tasks. All 214 tests report zero failures/errors/skips. Recovery-specific tests cover consent/acknowledgement, dispatch/busy state, deep and lower-tip recovery, failed validation, atomic baseline rollback and portable restore. The standalone Android formatter also passes after wrapping two host expressions.
