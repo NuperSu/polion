@@ -568,17 +568,21 @@ class PortfolioApplication(
             SyncClock { now() },
         )
 
-    /** Fetches tracked mainnet addresses after explicit consent and applies only a complete, consistent scan. */
+    /**
+     * Fetches tracked mainnet addresses after consent and applies only a complete, consistent scan.
+     * Explicit [recoverHistory] starts fresh history and establishes a new continuity baseline on successful apply.
+     */
     @OptIn(ExperimentalTime::class)
     fun refreshBitcoin(
         transport: EsploraTransport,
         verifyBlockPositions: Boolean = false,
+        recoverHistory: Boolean = false,
         onProgress: (BitcoinScanProgress) -> Unit = {},
     ): List<JobState> {
         require(sourceConsent()) { "Source consent required" }
         putSetting("source_in_progress", "true")
         return try {
-            refreshBitcoinScan(transport, verifyBlockPositions, onProgress)
+            refreshBitcoinScan(transport, verifyBlockPositions, recoverHistory, onProgress)
         } catch (failure: Exception) {
             putSetting(
                 "source_error",
@@ -595,6 +599,7 @@ class PortfolioApplication(
     private fun refreshBitcoinScan(
         transport: EsploraTransport,
         verifyBlockPositions: Boolean,
+        recoverHistory: Boolean,
         onProgress: (BitcoinScanProgress) -> Unit,
     ): List<JobState> {
         require(sourceConsent()) { "Source consent required" }
@@ -662,7 +667,7 @@ class PortfolioApplication(
             )
         val acceptedAnchors = bitcoinGraph.anchors(addresses)
         val previousCheckpoint = acceptedAnchors.maxByOrNull { it.height }
-        if (previousCheckpoint != null) {
+        if (!recoverHistory && previousCheckpoint != null) {
             require(previousCheckpoint.height <= anchorHeight) {
                 throw BitcoinProviderException(BitcoinProviderFailure.LAGGING_CHAIN)
             }
@@ -683,6 +688,7 @@ class PortfolioApplication(
                 bitcoinStage.clear()
             }
         }
+        if (recoverHistory) bitcoinStage.clear()
         val pending = bitcoinStage.session()
         val resumable = pending != null && pending.fingerprint == fingerprint && pending.anchorHeight <= anchorHeight
         if (!resumable) {
@@ -824,6 +830,7 @@ class PortfolioApplication(
                     observedAt = Instant.fromEpochMilliseconds(now()).toString(),
                     rawChecksums = bitcoinStage.rawChecksums(),
                     comparison = utxoComparison,
+                    recoveryBaseline = recoverHistory,
                 )
                 bitcoinStage.applyCompleteInTransaction(
                     ownedAddresses,

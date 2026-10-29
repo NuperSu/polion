@@ -34,13 +34,15 @@ class BitcoinRefreshService : Service() {
             getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Polion:sync").apply {
                 acquire(60 * 60 * 1000L)
             }
-        val notification = SyncNotification.create(this, "Fetching public history…")
+        val initialDetail =
+            if (intent?.getBooleanExtra("recover_history", false) == true) "Recovering full Bitcoin history…" else "Fetching public history…"
+        val notification = SyncNotification.create(this, initialDetail)
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(SyncNotification.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(SyncNotification.ID, notification)
         }
-        RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")
+        RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail)
         RefreshWorker.executor.execute {
             var lastNotification = 0L
             val status =
@@ -57,6 +59,7 @@ class BitcoinRefreshService : Service() {
                             "wallet_id",
                         ),
                     verifyOrder = intent?.getBooleanExtra("verify_order", false) == true,
+                    recoverHistory = intent?.getBooleanExtra("recover_history", false) == true,
                 ) { detail ->
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastNotification >= 1000) {

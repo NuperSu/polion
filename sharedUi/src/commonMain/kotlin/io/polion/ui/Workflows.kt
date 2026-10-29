@@ -127,6 +127,7 @@ internal fun WorkflowDialog(
     var candidates by remember { mutableStateOf<List<ReconciliationCandidate>>(emptyList()) }
     var selectedAccounts by remember { mutableStateOf(emptySet<AccountId>()) }
     var acceptedBackup by rememberSaveable { mutableStateOf(false) }
+    var acceptedRecovery by rememberSaveable { mutableStateOf(false) }
     val syncStatus by host.syncStatus.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(type) {
@@ -445,7 +446,7 @@ internal fun WorkflowDialog(
                 )
                 Field("Esplora API endpoint", address) { address = it }
                 Row {
-                    Checkbox(consent, { consent = it })
+                    Checkbox(consent, { consent = it }, modifier = Modifier.testTag("bitcoin-source-consent"))
                     Text("I allow public address queries to this endpoint", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
                 }
                 Row {
@@ -460,14 +461,15 @@ internal fun WorkflowDialog(
                     "Android may defer background work. Desktop refresh runs while Polion is open. Network errors preserve saved data. Pending activity is provisional, and source history is not independently verified.",
                     fontSize = 12.sp,
                 )
-                Button(onClick = {
+
+                fun saveSource(recoverHistory: Boolean) {
                     if (!address.startsWith("https://") ||
                         '@' in address ||
                         '?' in address ||
                         '#' in address
                     ) {
                         error = "Use an HTTPS Esplora API endpoint without credentials or query parameters."
-                        return@Button
+                        return
                     }
                     scope.launch {
                         runCatching {
@@ -480,11 +482,20 @@ internal fun WorkflowDialog(
                             }
                         }.fold({
                             sourceSaved(address, consent)
-                            if (consent) host.refresh { notify(it) } else notify("Source queries disabled")
+                            when {
+                                recoverHistory -> host.recoverBitcoinHistory { notify(it) }
+                                consent -> host.refresh { notify(it) }
+                                else -> notify("Source queries disabled")
+                            }
                             close()
                         }, { error = "Could not save source settings. Check the endpoint and available storage." })
                     }
-                }, enabled = syncStatus.phase != SyncPhase.SYNCING, modifier = Modifier.fillMaxWidth()) {
+                }
+                Button(
+                    onClick = { saveSource(false) },
+                    enabled = syncStatus.phase != SyncPhase.SYNCING,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Text(
                         if (syncStatus.phase ==
                             SyncPhase.SYNCING
@@ -496,6 +507,35 @@ internal fun WorkflowDialog(
                             "Save offline preferences"
                         },
                     )
+                }
+                HorizontalDivider()
+                Text("Full history recovery", fontWeight = FontWeight.SemiBold)
+                if (syncStatus.phase == SyncPhase.ERROR) {
+                    Text(syncStatus.message, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+                Text(
+                    "Use recovery when Polion cannot connect the saved chain checkpoint to the provider's current chain. " +
+                        "It downloads all history for active watched addresses from the selected endpoint " +
+                        "and uses extra provider traffic. " +
+                        "Saved records remain available until the replacement scan passes validation. " +
+                        "Coverage remains provider-based and unverified.",
+                    fontSize = 12.sp,
+                )
+                Row {
+                    Checkbox(
+                        acceptedRecovery,
+                        { acceptedRecovery = it },
+                        enabled = syncStatus.phase != SyncPhase.SYNCING,
+                        modifier = Modifier.testTag("bitcoin-recovery-consent"),
+                    )
+                    Text("I want to rescan full Bitcoin history", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
+                }
+                OutlinedButton(
+                    onClick = { saveSource(true) },
+                    enabled = consent && acceptedRecovery && syncStatus.phase != SyncPhase.SYNCING,
+                    modifier = Modifier.fillMaxWidth().testTag("recover-bitcoin-history"),
+                ) {
+                    Text("Save & recover history")
                 }
             }
             "backup", "restore", "lock" -> {

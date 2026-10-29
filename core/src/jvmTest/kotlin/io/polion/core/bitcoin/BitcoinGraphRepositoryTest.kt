@@ -40,6 +40,8 @@ class BitcoinGraphRepositoryTest {
         payloads: List<String>,
         time: String = "2026-10-29T00:00:00Z",
         scope: Map<String, AccountId> = this.scope,
+        anchor: BitcoinBlockAnchor = this.anchor,
+        recoveryBaseline: Boolean = false,
     ): Long {
         val graph = BitcoinUtxoGraph.build(payloads, scope)
         return repository.saveInTransaction(
@@ -52,6 +54,7 @@ class BitcoinGraphRepositoryTest {
                     sha256(it)
             },
             compareUtxoSets(graph, EsploraUtxoSnapshot(emptyList(), emptyMap())),
+            recoveryBaseline = recoveryBaseline,
         )
     }
 
@@ -136,6 +139,31 @@ class BitcoinGraphRepositoryTest {
             db.transaction { save(repository, emptyList(), "2026-10-29T04:00:00Z") }
             assertEquals(emptyMap(), repository.latest(scope)!!.graph.transactions)
             assertEquals(2, repository.snapshots().size)
+        }
+    }
+
+    @Test
+    fun recoveryBaselineIsScopedAndRollsBackWithItsSnapshot() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = BitcoinGraphRepository(db)
+            val otherScope = mapOf(address to AccountId("another-account"))
+            db.transaction { save(repository, emptyList()) }
+            db.transaction { save(repository, emptyList(), scope = otherScope, anchor = BitcoinBlockAnchor(210, "f".repeat(64))) }
+            assertFails {
+                db.transaction {
+                    save(repository, emptyList(), anchor = BitcoinBlockAnchor(190, "d".repeat(64)), recoveryBaseline = true)
+                    error("interrupted recovery apply")
+                }
+            }
+            assertEquals(listOf(anchor), repository.anchors(scope))
+            assertEquals(2, repository.snapshots().size)
+            val lower = BitcoinBlockAnchor(190, "d".repeat(64))
+            db.transaction { save(repository, emptyList(), anchor = lower, recoveryBaseline = true) }
+            assertEquals(listOf(lower), repository.anchors(scope))
+            assertEquals(listOf(BitcoinBlockAnchor(210, "f".repeat(64))), repository.anchors(otherScope))
+            assertEquals(listOf(210L, 190L), repository.anchors().map { it.height })
+            assertEquals(3, repository.snapshots().size)
         }
     }
 

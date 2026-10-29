@@ -1,5 +1,6 @@
 package io.polion.core.application
 
+import io.polion.core.backup.PortableBackup
 import io.polion.core.bitcoin.BITCOIN_MAINNET
 import io.polion.core.bitcoin.BitcoinBlockAnchor
 import io.polion.core.bitcoin.BitcoinGraphRepository
@@ -145,6 +146,128 @@ class BitcoinChainAcceptanceTest {
             assertEquals(before, acceptedData(db))
             assertEquals(1, app.snapshot().activityTotal)
             assertTrue("/block-height/100" !in provider.calls)
+        }
+    }
+
+    @Test
+    fun explicitDeepRecoveryEstablishesBaselineAndAllowsNormalRefresh() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            provider.tipHeight = 250
+            provider.changedBlocks[110] = "b".repeat(64)
+
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport, recoverHistory = true))
+            val repository = BitcoinGraphRepository(db)
+            assertEquals(2, repository.snapshots().size)
+            assertEquals(BitcoinBlockAnchor(110, blockHash(110)), repository.snapshot(1)?.anchor)
+            assertEquals(listOf(250L, 100L), repository.anchors().map { it.height })
+            provider.calls.clear()
+            provider.tipHeight = 251
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertTrue("/block-height/110" !in provider.calls)
+            assertTrue("/block-height/250" in provider.calls)
+            assertEquals(3, repository.snapshots().size)
+        }
+    }
+
+    @Test
+    fun failedRecoveryRetainsAcceptedDataAndDoesNotAdvanceBaseline() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+            provider.tipHeight = 250
+            provider.changedBlocks[110] = "b".repeat(64)
+            val inconsistent =
+                EsploraTransport { path ->
+                    if (path == "/address/$address") {
+                        """{"chain_stats":{"tx_count":2},"mempool_stats":{"tx_count":0}}"""
+                    } else {
+                        provider.transport.get(path)
+                    }
+                }
+            val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(inconsistent, recoverHistory = true) }
+            assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
+            assertEquals(before, acceptedData(db))
+            assertTrue(db.query("SELECT value FROM application_settings WHERE key LIKE 'bitcoin_graph_baseline:%'").isEmpty())
+            val normalFailure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(provider.transport) }
+            assertEquals(BitcoinProviderFailure.REORG_RECOVERY_REQUIRED, normalFailure.reason)
+        }
+    }
+
+    @Test
+    fun recoveryDiscardsCompletedScratchHistoryFromAnInterruptedAttempt() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            provider.tipHeight = 250
+            provider.changedBlocks[110] = "b".repeat(64)
+            val unavailable =
+                EsploraTransport { path ->
+                    if (path == "/address/$address/utxo") throw BitcoinProviderException(BitcoinProviderFailure.OFFLINE)
+                    provider.transport.get(path)
+                }
+            assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(unavailable, recoverHistory = true) }
+            assertEquals(1, BitcoinGraphRepository(db).snapshots().size)
+            provider.calls.clear()
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport, recoverHistory = true))
+            assertTrue("/address/$address/txs/chain" in provider.calls)
+            assertTrue("/address/$address/txs/mempool" in provider.calls)
+            assertEquals(2, BitcoinGraphRepository(db).snapshots().size)
+        }
+    }
+
+    @Test
+    fun recoveryRetainsBlockAndFinalTipValidation() {
+        for (movingTip in listOf(false, true)) {
+            JvmSqliteDatabase(":memory:").use { db ->
+                val app = setUp(db)
+                val provider = ChainProvider()
+                initialScan(app, db, provider)
+                val before = acceptedData(db)
+                provider.tipHeight = 250
+                provider.changedBlocks[110] = "b".repeat(64)
+                if (!movingTip) provider.changedBlocks[100] = "c".repeat(64)
+                val inconsistent =
+                    EsploraTransport { path ->
+                        provider.transport.get(path).also {
+                            if (movingTip && path == "/block-height/100") provider.changedBlocks[250] = "d".repeat(64)
+                        }
+                    }
+                val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(inconsistent, recoverHistory = true) }
+                assertEquals(BitcoinProviderFailure.REORGANIZED, failure.reason)
+                assertEquals(before, acceptedData(db))
+                assertTrue(db.query("SELECT value FROM application_settings WHERE key LIKE 'bitcoin_graph_baseline:%'").isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun lowerRecoveryBaselineSurvivesPortableBackupAndNormalRefresh() {
+        val archive =
+            JvmSqliteDatabase(":memory:").use { db ->
+                val app = setUp(db)
+                val provider = ChainProvider()
+                initialScan(app, db, provider)
+                provider.tipHeight = 109
+                assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport, recoverHistory = true))
+                assertEquals(listOf(109L, 100L), BitcoinGraphRepository(db).anchors().map { it.height })
+                assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+                PortableBackup.discover(db).export(db)
+            }
+        JvmSqliteDatabase(":memory:").use { restored ->
+            PortfolioApplication(restored) { 15552000000L }
+            PortableBackup.discover(restored).restoreToStaging(restored, archive)
+            val app = PortfolioApplication(restored) { 15552000000L }
+            val provider = ChainProvider().apply { tipHeight = 109 }
+            assertEquals(listOf(109L, 100L), BitcoinGraphRepository(restored).anchors().map { it.height })
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertEquals(4, BitcoinGraphRepository(restored).snapshots().size)
+            assertEquals(1, app.snapshot().activityTotal)
         }
     }
 

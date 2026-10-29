@@ -82,6 +82,10 @@ internal fun createBitcoinGraphTables(db: SqliteDatabase) {
 class BitcoinGraphRepository(
     private val db: SqliteDatabase,
 ) {
+    init {
+        db.execute("CREATE TABLE IF NOT EXISTS application_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    }
+
     @OptIn(ExperimentalTime::class)
     fun saveInTransaction(
         graph: BitcoinUtxoGraph,
@@ -90,6 +94,7 @@ class BitcoinGraphRepository(
         observedAt: String,
         rawChecksums: Map<String, String>,
         comparison: BitcoinUtxoComparison? = null,
+        recoveryBaseline: Boolean = false,
     ): Long {
         require(providerSourceId.isNotBlank() && observedAt.endsWith("Z"))
         Instant.parse(observedAt)
@@ -318,6 +323,12 @@ class BitcoinGraphRepository(
                 ),
             )
         }
+        if (recoveryBaseline) {
+            db.execute(
+                "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
+                listOf("bitcoin_graph_baseline:${scopeKey(graph.ownedAddresses)}", id.toString()),
+            )
+        }
         return id
     }
 
@@ -344,13 +355,16 @@ class BitcoinGraphRepository(
             ?.toLong()
             ?.let(::snapshot)
 
-    /** Newest scan anchors first; optionally restrict history to the exact address/account membership. */
+    /** Accepted anchors at or after each scope's recovery baseline, highest first. */
     fun anchors(
         ownedAddresses: Map<String, AccountId>? = null,
         limit: Int = 100,
     ): List<BitcoinBlockAnchor> {
         require(limit > 0)
-        val where = if (ownedAddresses == null) "" else " WHERE scope_key=?"
+        val baseline =
+            "id>=COALESCE((SELECT CAST(value AS INTEGER) FROM application_settings " +
+                "WHERE key='bitcoin_graph_baseline:'||scope_key),0)"
+        val where = " WHERE $baseline" + if (ownedAddresses == null) "" else " AND scope_key=?"
         val args = ownedAddresses?.let { listOf(scopeKey(it)) } ?: emptyList()
         val candidates =
             """

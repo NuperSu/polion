@@ -240,7 +240,14 @@ private class AndroidHost(
         }
     }
 
-    override fun refresh(onResult: (String) -> Unit) {
+    override fun refresh(onResult: (String) -> Unit) = refresh(false, onResult)
+
+    override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)
+
+    private fun refresh(
+        recoverHistory: Boolean,
+        onResult: (String) -> Unit,
+    ) {
         main.post {
             try {
                 if (Build.VERSION.SDK_INT >= 33 &&
@@ -248,8 +255,11 @@ private class AndroidHost(
                 ) {
                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
-                syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Starting background sync…")
-                activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java))
+                syncStatus.value =
+                    SyncStatus(SyncPhase.SYNCING, if (recoverHistory) "Starting full history recovery…" else "Starting background sync…")
+                activity.startForegroundService(
+                    Intent(activity, BitcoinRefreshService::class.java).putExtra("recover_history", recoverHistory),
+                )
                 onResult("Sync continues when you switch apps. Progress appears in the notification.")
             } catch (_: Exception) {
                 syncStatus.value = SyncStatus(SyncPhase.ERROR, "Android could not start background sync. Open Polion and retry.")

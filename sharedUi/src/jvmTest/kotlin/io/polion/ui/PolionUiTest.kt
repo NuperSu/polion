@@ -54,6 +54,10 @@ class PolionUiTest {
 
         @Volatile var priceRequests = 0
 
+        @Volatile var recoveryRequests = 0
+
+        @Volatile var refreshRequests = 0
+
         @Volatile var exportedName: String? = null
 
         @Volatile var exported: ByteArray? = null
@@ -94,7 +98,15 @@ class PolionUiTest {
             onResult("Daily historical price saved from CoinGecko.")
         }
 
-        override fun refresh(onResult: (String) -> Unit) = onResult("Not used")
+        override fun refresh(onResult: (String) -> Unit) {
+            refreshRequests++
+            onResult("Not used")
+        }
+
+        override fun recoverBitcoinHistory(onResult: (String) -> Unit) {
+            recoveryRequests++
+            onResult("Recovery started")
+        }
 
         override fun setBackgroundRefresh(enabled: Boolean) = Unit
 
@@ -205,6 +217,34 @@ class PolionUiTest {
                     }
                 } finally {
                     release.countDown()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun fullHistoryRecoveryRequiresConsentAndExplicitConfirmation() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                host.syncStatus.value = SyncStatus(SyncPhase.ERROR, "A full history recovery is required.")
+                val data = app.snapshot()
+                runDesktopComposeUiTest(width = 800, height = 900) {
+                    setContent {
+                        WorkflowDialog("sync", data, app, host, {}, { _, operation -> operation() }, {}, { _, _ -> })
+                    }
+                    onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
+                    onNodeWithText("A full history recovery is required.").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("bitcoin-recovery-consent").performScrollTo().performClick()
+                    onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
+                    onNodeWithText("I allow public address queries to this endpoint").performScrollTo()
+                    onNodeWithTag("bitcoin-source-consent").performClick()
+                    onNodeWithTag("recover-bitcoin-history").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { host.recoveryRequests == 1 }
+                    assertEquals(0, host.refreshRequests)
+                    assertTrue(app.sourceConsent())
+                    host.syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Reading page 1")
+                    onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
                 }
             }
         }

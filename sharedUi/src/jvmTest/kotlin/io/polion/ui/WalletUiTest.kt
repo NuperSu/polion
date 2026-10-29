@@ -71,6 +71,8 @@ class WalletUiTest {
 
                         override fun refresh(onResult: (String) -> Unit) = Unit
 
+                        override fun recoverBitcoinHistory(onResult: (String) -> Unit) = Unit
+
                         override fun setBackgroundRefresh(enabled: Boolean) = Unit
 
                         override fun backgroundRefreshEnabled() = false

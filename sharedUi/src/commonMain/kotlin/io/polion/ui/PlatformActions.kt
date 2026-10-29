@@ -55,6 +55,8 @@ interface PlatformActions {
 
     fun refresh(onResult: (String) -> Unit)
 
+    fun recoverBitcoinHistory(onResult: (String) -> Unit)
+
     fun setBackgroundRefresh(enabled: Boolean)
 
     fun backgroundRefreshEnabled(): Boolean

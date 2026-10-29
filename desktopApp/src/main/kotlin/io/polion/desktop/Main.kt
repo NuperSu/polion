@@ -241,11 +241,24 @@ private class DesktopHost(
         }
     }
 
-    override fun refresh(onResult: (String) -> Unit) {
-        runSync(SyncStatus(SyncPhase.SYNCING, "Fetching public history…"), onResult) { application ->
+    override fun refresh(onResult: (String) -> Unit) = refresh(false, onResult)
+
+    override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)
+
+    private fun refresh(
+        recoverHistory: Boolean,
+        onResult: (String) -> Unit,
+    ) {
+        runSync(
+            SyncStatus(SyncPhase.SYNCING, if (recoverHistory) "Recovering full Bitcoin history…" else "Fetching public history…"),
+            onResult,
+        ) { application ->
             runCatching {
                 val states =
-                    application.refreshBitcoin(BlockstreamTransport(application.sourceEndpoint())) { progress ->
+                    application.refreshBitcoin(
+                        BlockstreamTransport(application.sourceEndpoint()),
+                        recoverHistory = recoverHistory,
+                    ) { progress ->
                         syncStatus.value =
                             SyncStatus(
                                 SyncPhase.SYNCING,
@@ -264,7 +277,15 @@ private class DesktopHost(
                     states.any {
                         it != io.polion.core.sync.JobState.COMPLETED
                     } -> SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "History is incomplete; retry.")
-                    else -> SyncStatus(SyncPhase.SUCCESS, "Sync complete; coverage remains unverified")
+                    else ->
+                        SyncStatus(
+                            SyncPhase.SUCCESS,
+                            if (recoverHistory) {
+                                "History recovery complete; coverage remains unverified"
+                            } else {
+                                "Sync complete; coverage remains unverified"
+                            },
+                        )
                 }
             }.getOrElse {
                 SyncStatus(

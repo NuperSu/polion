@@ -38,6 +38,7 @@ class RefreshWorker(
             wrap: (io.polion.core.bitcoin.EsploraTransport) -> io.polion.core.bitcoin.EsploraTransport = { it },
             walletId: String? = null,
             verifyOrder: Boolean = false,
+            recoverHistory: Boolean = false,
             onProgress: (String) -> Unit = {},
         ): SyncStatus =
             try {
@@ -68,7 +69,7 @@ class RefreshWorker(
                             )
                         }
                         val states =
-                            app.refreshBitcoin(transport) { progress ->
+                            app.refreshBitcoin(transport, recoverHistory = recoverHistory) { progress ->
                                 val detail =
                                     when (progress.phase) {
                                         "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
@@ -88,7 +89,11 @@ class RefreshWorker(
                                     SyncPhase.ERROR,
                                     app.sourceFailureMessage() ?: "History is incomplete; retry.",
                                 )
-                            else -> SyncStatus(SyncPhase.SUCCESS, "Sync complete; coverage remains unverified")
+                            else ->
+                                SyncStatus(
+                                    SyncPhase.SUCCESS,
+                                    if (recoverHistory) "History recovery complete; coverage remains unverified" else "Sync complete; coverage remains unverified",
+                                )
                         }
                     }
                 }
