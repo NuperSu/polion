@@ -56,6 +56,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1081,14 +1082,41 @@ private fun ValueChart(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AssetsCard(
     data: PortfolioSnapshot,
     onAsset: (AssetValuation) -> Unit,
     onPrice: () -> Unit,
 ) {
+    var sortByValue by rememberSaveable { mutableStateOf(true) }
+    val sorted =
+        remember(data.valuations, sortByValue) {
+            if (sortByValue) {
+                data.valuations.sortedWith { a, b ->
+                    val aValue = a.value
+                    val bValue = b.value
+                    when {
+                        aValue == null && bValue != null -> 1
+                        aValue != null && bValue == null -> -1
+                        aValue != null && bValue != null ->
+                            bValue.compareTo(aValue).takeIf { it != 0 }
+                                ?: a.asset.value.compareTo(b.asset.value)
+                        else -> a.asset.value.compareTo(b.asset.value)
+                    }
+                }
+            } else {
+                data.valuations.sortedWith(compareBy({ (it.metadata?.name ?: it.asset.value).lowercase() }, { it.asset.value }))
+            }
+        }
     Panel {
         SectionTitle("Your assets", "Prices") { onPrice() }
+        if (data.valuations.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = sortByValue, onClick = { sortByValue = true }, label = { Text("Value") })
+                FilterChip(selected = !sortByValue, onClick = { sortByValue = false }, label = { Text("Name") })
+            }
+        }
         if (data.valuations.isEmpty()) {
             Text(
                 "Confirmed assets will appear after you add activity or sync an account.",
@@ -1097,7 +1125,7 @@ private fun AssetsCard(
                 lineHeight = 21.sp,
             )
         }
-        data.valuations.forEach { asset ->
+        sorted.forEach { asset ->
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -1127,6 +1155,9 @@ private fun AssetsCard(
                         fontSize = 11.sp,
                         maxLines = 2,
                     )
+                    asset.price?.let { quote ->
+                        Text("${quote.price.value} ${quote.price.quoteAssetId.value} per unit", color = Muted, fontSize = 11.sp)
+                    }
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(asset.value?.let { money(it, data.currency) } ?: "Unpriced", fontWeight = FontWeight.Medium, fontSize = 13.sp)
