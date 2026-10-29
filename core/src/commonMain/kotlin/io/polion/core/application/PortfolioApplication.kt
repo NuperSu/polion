@@ -441,126 +441,171 @@ class PortfolioApplication(
         val selected = scopedAccounts(catalog, portfolio)
         val missing = mutableListOf<ActivityId>()
         val invalid = mutableListOf<ActivityId>()
-        val actions = mutableListOf<io.polion.core.accounting.AccountingAction>()
+        val orderingUncertain = mutableListOf<ActivityId>()
         val quote = portfolioCurrency(portfolio)
-        val incompleteAssets = mutableSetOf<AssetId>()
-        ledger().activities.forEach { entry ->
-            val activity = entry.activity
-            if (activity.status != io.polion.core.ledger.ActivityStatus.CONFIRMED) return@forEach
-            try {
-                val saved = treatments.load(activity.id)
-                if (saved.isEmpty()) {
-                    if (activity.movements.any { it.accountId in selected }) missing.add(activity.id)
-                    incompleteAssets.addAll(activity.movements.map { it.amount.assetId })
-                } else {
-                    val computed = LedgerAccounting.actions(activity, saved)
-                    val quotes =
-                        computed.mapNotNull { action ->
-                            when (action) {
-                                is io.polion.core.accounting.AccountingAction.Acquisition -> action.totalCost
-                                is io.polion.core.accounting.AccountingAction.Disposal -> action.proceeds
-                                is io.polion.core.accounting.AccountingAction.Transfer -> null
-                            }
-                        }
-                    require(quotes.all { it.asset == quote })
-                    actions.addAll(computed)
-                }
-            } catch (_: IllegalArgumentException) {
-                if (activity.movements.any { it.accountId in selected }) invalid.add(activity.id)
-                incompleteAssets.addAll(activity.movements.map { it.amount.assetId })
-            }
-        }
-        val confirmed = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
-        val bitcoin = confirmed.filter { !it.original.manual && it.original.decoderVersion?.startsWith("bitcoin-") == true }
-        val bitcoinAssets = bitcoin.flatMap { it.activity.movements.map { movement -> movement.amount.assetId } }.toSet()
-        val mixed =
-            confirmed.filter { entry ->
-                entry !in bitcoin && entry.activity.movements.any { it.amount.assetId in bitcoinAssets }
-            }
-        val unverified = bitcoin.filter { !it.original.orderingKey.startsWith("bitcoin-chain:") }
-        val uncertain = (unverified + if (mixed.isNotEmpty()) bitcoin + mixed else emptyList()).distinct()
-        val orderingUncertain =
-            uncertain
-                .filter { entry ->
-                    entry.activity.movements.any { it.accountId in selected }
-                }.map { it.activity.id }
-        // Chain positions establish relative order only among Bitcoin activities. Mixed sources
-        // use the timestamp fallback and remain uncertain until cross-source order is explicit.
-        val chainOrder = bitcoin.associate { it.activity.id to it.original.orderingKey }
-        val replayOrder =
-            if (bitcoin.isNotEmpty() && unverified.isEmpty() && mixed.isEmpty()) {
-                compareBy<io.polion.core.accounting.AccountingAction>(
-                    { chainOrder[it.activityId] ?: "" },
-                    { it.order },
-                    { it.activityId.value },
-                )
-            } else {
-                compareBy({ it.at }, { it.order }, { it.activityId.value })
-            }
         val priceAt = now()
-        val unitPrices =
-            confirmed
-                .flatMap { entry -> entry.activity.movements.map { it.amount.assetId } }
-                .toSet()
-                .associateWith { unitPrice(it, quote, priceAt) }
-        val calculated =
-            FifoAccounting.calculate(
-                actions.filter { action ->
-                    val asset =
-                        when (action) {
-                            is io.polion.core.accounting.AccountingAction.Acquisition -> action.asset
-                            is io.polion.core.accounting.AccountingAction.Disposal -> action.asset
-                            is io.polion.core.accounting.AccountingAction.Transfer -> action.asset
+        val confirmedLedger = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
+        // Replay each owner's full inventory before selecting accounts, preserving transferred lot age and basis.
+        val reports =
+            catalog.accounts.filter { it.id in selected }.map { it.ownerId }.distinct().map { owner ->
+                val ownerAccounts =
+                    catalog.accounts
+                        .filter { it.ownerId == owner }
+                        .map { it.id }
+                        .toSet()
+
+                fun ownerAssets(activity: Activity) = activity.movements.filter { it.accountId in ownerAccounts }.map { it.amount.assetId }
+
+                val actions = mutableListOf<io.polion.core.accounting.AccountingAction>()
+                val confirmed = confirmedLedger.filter { entry -> entry.activity.movements.any { it.accountId in ownerAccounts } }
+                val selectedAssets =
+                    confirmed
+                        .flatMap { entry ->
+                            entry.activity.movements
+                                .filter { it.accountId in selected && it.accountId in ownerAccounts }
+                                .map { it.amount.assetId }
+                        }.toSet()
+
+                // Missing or invalid inventory in the owner/asset pool can block lots transferred into selected accounts.
+                fun affectsSelection(activity: Activity) = ownerAssets(activity).any { it in selectedAssets }
+
+                val incompleteAssets = mutableSetOf<AssetId>()
+                confirmed.forEach { entry ->
+                    val activity = entry.activity
+                    try {
+                        val saved = treatments.load(activity.id)
+                        if (saved.isEmpty()) {
+                            if (affectsSelection(activity)) missing.add(activity.id)
+                            incompleteAssets.addAll(ownerAssets(activity))
+                        } else {
+                            val computed =
+                                LedgerAccounting.actions(activity, saved).filter { action ->
+                                    when (action) {
+                                        is io.polion.core.accounting.AccountingAction.Acquisition -> action.account in ownerAccounts
+                                        is io.polion.core.accounting.AccountingAction.Disposal -> action.account in ownerAccounts
+                                        is io.polion.core.accounting.AccountingAction.Transfer ->
+                                            action.from in ownerAccounts || action.to in ownerAccounts
+                                    }
+                                }
+                            require(
+                                computed.all { action ->
+                                    when (action) {
+                                        is io.polion.core.accounting.AccountingAction.Transfer ->
+                                            action.from in ownerAccounts && action.to in ownerAccounts && action.from != action.to
+                                        else -> true
+                                    }
+                                },
+                            ) { "Internal transfer requires distinct accounts with the same owner" }
+                            val quotes =
+                                computed.mapNotNull { action ->
+                                    when (action) {
+                                        is io.polion.core.accounting.AccountingAction.Acquisition -> action.totalCost
+                                        is io.polion.core.accounting.AccountingAction.Disposal -> action.proceeds
+                                        is io.polion.core.accounting.AccountingAction.Transfer -> null
+                                    }
+                                }
+                            require(quotes.all { it.asset == quote && it.amount >= Rational.ZERO })
+                            actions.addAll(computed)
                         }
-                    asset !in incompleteAssets
-                },
-                catalog.accounts.associate { it.id to it.ownerId },
-                quote,
-                unitPrices = unitPrices,
-                replayOrder = replayOrder,
-            )
-        val uncertainAssets = uncertain.flatMap { it.activity.movements.map { movement -> movement.amount.assetId } }.toSet()
-        val report =
-            if (uncertain.isEmpty()) {
-                calculated
-            } else {
-                calculated.copy(
-                    lots = calculated.lots.map { if (it.asset in uncertainAssets) it.copy(basis = null) else it },
-                    disposals =
-                        calculated.disposals.map { disposal ->
-                            if (disposal.asset in
-                                uncertainAssets
-                            ) {
-                                disposal.copy(
-                                    basis = null,
-                                    gain = null,
-                                    consumed = disposal.consumed.map { it.copy(lotId = null, basis = null) },
-                                )
-                            } else {
-                                disposal
-                            }
+                    } catch (_: IllegalArgumentException) {
+                        if (affectsSelection(activity)) invalid.add(activity.id)
+                        incompleteAssets.addAll(ownerAssets(activity))
+                    }
+                }
+                val bitcoin = confirmed.filter { !it.original.manual && it.original.decoderVersion?.startsWith("bitcoin-") == true }
+                val bitcoinAssets = bitcoin.flatMap { ownerAssets(it.activity) }.toSet()
+                val mixed =
+                    confirmed.filter { entry ->
+                        entry !in bitcoin &&
+                            entry.activity.movements.any { it.accountId in ownerAccounts && it.amount.assetId in bitcoinAssets }
+                    }
+                val unverified = bitcoin.filter { !it.original.orderingKey.startsWith("bitcoin-chain:") }
+                val uncertain = (unverified + if (mixed.isNotEmpty()) bitcoin + mixed else emptyList()).distinct()
+                val ownerOrderingUncertain =
+                    uncertain
+                        .filter { entry ->
+                            affectsSelection(entry.activity)
+                        }.map { it.activity.id }
+                // Chain positions establish relative order only among Bitcoin activities. Mixed sources
+                // use the timestamp fallback and remain uncertain until cross-source order is explicit.
+                val chainOrder = bitcoin.associate { it.activity.id to it.original.orderingKey }
+                val replayOrder =
+                    if (bitcoin.isNotEmpty() && unverified.isEmpty() && mixed.isEmpty()) {
+                        compareBy<io.polion.core.accounting.AccountingAction>(
+                            { chainOrder[it.activityId] ?: "" },
+                            { it.order },
+                            { it.activityId.value },
+                        )
+                    } else {
+                        compareBy({ it.at }, { it.order }, { it.activityId.value })
+                    }
+                val unitPrices =
+                    confirmed
+                        .flatMap { entry -> ownerAssets(entry.activity) }
+                        .toSet()
+                        .associateWith { unitPrice(it, quote, priceAt) }
+                val calculated =
+                    FifoAccounting.calculate(
+                        actions.filter { action ->
+                            val asset =
+                                when (action) {
+                                    is io.polion.core.accounting.AccountingAction.Acquisition -> action.asset
+                                    is io.polion.core.accounting.AccountingAction.Disposal -> action.asset
+                                    is io.polion.core.accounting.AccountingAction.Transfer -> action.asset
+                                }
+                            asset !in incompleteAssets
                         },
-                    valuations =
-                        calculated.valuations.map {
-                            if (it.lot.asset in
-                                uncertainAssets
-                            ) {
-                                it.copy(lot = it.lot.copy(basis = null), unrealizedGain = null)
-                            } else {
-                                it
-                            }
-                        },
-                )
+                        catalog.accounts.associate { it.id to it.ownerId },
+                        quote,
+                        unitPrices = unitPrices,
+                        replayOrder = replayOrder,
+                    )
+                val uncertainAssets = uncertain.flatMap { ownerAssets(it.activity) }.toSet()
+                val report =
+                    if (uncertain.isEmpty()) {
+                        calculated
+                    } else {
+                        calculated.copy(
+                            lots = calculated.lots.map { if (it.asset in uncertainAssets) it.copy(basis = null) else it },
+                            disposals =
+                                calculated.disposals.map { disposal ->
+                                    if (disposal.asset in
+                                        uncertainAssets
+                                    ) {
+                                        disposal.copy(
+                                            basis = null,
+                                            gain = null,
+                                            consumed = disposal.consumed.map { it.copy(lotId = null, basis = null) },
+                                        )
+                                    } else {
+                                        disposal
+                                    }
+                                },
+                            valuations =
+                                calculated.valuations.map {
+                                    if (it.lot.asset in
+                                        uncertainAssets
+                                    ) {
+                                        it.copy(lot = it.lot.copy(basis = null), unrealizedGain = null)
+                                    } else {
+                                        it
+                                    }
+                                },
+                        )
+                    }
+                orderingUncertain.addAll(ownerOrderingUncertain)
+                report
             }
         return AccountingView(
-            report.copy(
-                lots = report.lots.filter { it.account in selected },
-                disposals = report.disposals.filter { it.account in selected },
-                valuations = report.valuations.filter { it.lot.account in selected },
+            AccountingReport(
+                quote,
+                reports.flatMap { it.lots }.filter { it.account in selected },
+                reports.flatMap { it.disposals }.filter { it.account in selected },
+                reports.flatMap { it.valuations }.filter { it.lot.account in selected },
             ),
-            missing,
-            invalid,
-            orderingUncertain,
+            missing.distinct(),
+            invalid.distinct(),
+            orderingUncertain.distinct(),
         )
     }
 
