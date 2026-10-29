@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,10 +28,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,9 +40,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -54,7 +48,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -97,37 +90,25 @@ import io.polion.core.reconcile.EffectiveActivity
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-private val Ink = Color(0xFF183A36)
-private val Muted = Color(0xFF667873)
-private val Paper = Color(0xFFF6F7F3)
-private val Line = Color(0xFFE1E7E0)
-private val Teal = Color(0xFF267969)
-private val Mint = Color(0xFFDFF0E7)
-private val Orange = Color(0xFFD98A43)
-private val Corners = RoundedCornerShape(22.dp)
-private val palette =
-    lightColorScheme(
-        primary = Teal,
-        onPrimary = Color.White,
-        background = Paper,
-        surface = Color.White,
-        onSurface = Ink,
-        onBackground = Ink,
-        outline = Line,
-    )
-
 @Composable
 fun PolionApp(
     application: PortfolioApplication,
     platform: PlatformActions,
     locked: Boolean = false,
 ) {
-    MaterialTheme(colorScheme = palette) {
+    var appearance by remember(application) { mutableStateOf(AppearanceTheme.fromKey(application.appearanceTheme())) }
+    val preferenceRevision by platform.dataRevision.collectAsState()
+    LaunchedEffect(application, preferenceRevision) {
+        appearance = AppearanceTheme.fromKey(application.appearanceTheme())
+    }
+    PolionTheme(appearance) {
         Surface(Modifier.fillMaxSize(), color = Paper) {
             if (locked) {
                 LockScreen(platform)
             } else {
-                Product(application, platform)
+                Product(application, platform, appearance) { selected ->
+                    appearance = selected
+                }
             }
         }
     }
@@ -137,6 +118,8 @@ fun PolionApp(
 private fun Product(
     app: PortfolioApplication,
     host: PlatformActions,
+    appearance: AppearanceTheme,
+    onAppearance: (AppearanceTheme) -> Unit,
 ) {
     val presenter = rememberProductPresenter(app, host)
     var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
@@ -159,6 +142,8 @@ private fun Product(
     var period by presenter.field({ it.period }) { presenter.dispatch(ProductEvent.Period(it)) }
     var dialog by presenter.field({ it.dialog?.key }) { presenter.dispatch(ProductEvent.Dialog(ProductDialog.fromKey(it))) }
     var message by presenter.field<String?>({ null }) { it?.let(presenter::notify) }
+    val homeScroll = rememberLazyListState()
+    val moreScroll = rememberLazyListState()
     val overviewScroll = rememberLazyListState()
     val activityScroll = rememberLazyListState()
     val accountScroll = rememberLazyListState()
@@ -175,15 +160,26 @@ private fun Product(
     LaunchedEffect(presenter, snackbar) {
         presenter.messages.collect { snackbar.showSnackbar(it) }
     }
+    if (dialog == "add") {
+        AlertDialog(
+            onDismissRequest = { dialog = null },
+            title = { Text("Add to your portfolio") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { dialog = "account" }) { Text("Public Bitcoin address") }
+                    TextButton(onClick = { dialog = "wallet" }) { Text("Public descriptor or xpub") }
+                    TextButton(onClick = { dialog = "activity" }) { Text("Manual activity") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = null }) { Text("Close") } },
+        )
+    }
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         val compact = maxWidth < 700.dp
         val wide = maxWidth >= 1120.dp
         Row(Modifier.fillMaxSize()) {
             if (!compact) {
-                Sidebar(page, {
-                    page = it
-                    offset = 0
-                }, Modifier.width(if (wide) 216.dp else 176.dp))
+                WorkspaceRail(page, { page = it }, wide, { dialog = "add" })
             }
             Scaffold(
                 modifier = Modifier.weight(1f),
@@ -191,22 +187,7 @@ private fun Product(
                 snackbarHost = { SnackbarHost(snackbar) },
                 bottomBar = {
                     if (compact) {
-                        NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
-                            Page.entries.forEach { item ->
-                                NavigationBarItem(selected = page == item, onClick = {
-                                    page = item
-                                    offset = 0
-                                }, icon = {
-                                    Text(item.glyph, fontSize = 23.sp)
-                                }, label = {
-                                    Text(
-                                        item.label,
-                                        fontSize = 10.sp,
-                                        maxLines = 1,
-                                    )
-                                }, colors = NavigationBarItemDefaults.colors(indicatorColor = Mint))
-                            }
-                        }
+                        CompactNavigation(page, { page = it }, { dialog = "add" })
                     }
                 },
             ) { insets ->
@@ -219,6 +200,8 @@ private fun Product(
                     Modifier.fillMaxSize().padding(insets).testTag("page-content"),
                     state =
                         when (page) {
+                            Page.HOME -> homeScroll
+                            Page.MORE -> moreScroll
                             Page.OVERVIEW -> overviewScroll
                             Page.ACTIVITY -> activityScroll
                             Page.ACCOUNTS -> accountScroll
@@ -227,7 +210,7 @@ private fun Product(
                         },
                     contentPadding =
                         PaddingValues(
-                            horizontal = if (compact) 20.dp else 32.dp,
+                            horizontal = if (compact) PolionSpacing.compactGutter else PolionSpacing.wideGutter,
                             vertical = if (compact) 20.dp else 28.dp,
                         ),
                     verticalArrangement = Arrangement.spacedBy(22.dp),
@@ -248,7 +231,8 @@ private fun Product(
                                 )
                                 Text(page.label, fontSize = if (compact) 30.sp else 34.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                             }
-                            if (page == Page.OVERVIEW ||
+                            if (page == Page.HOME ||
+                                page == Page.OVERVIEW ||
                                 page == Page.ACTIVITY
                             ) {
                                 FilledTonalButton(
@@ -271,6 +255,52 @@ private fun Product(
                         item { EmptyCard("Opening your portfolio", "Your local data stays on this device.") }
                     } else {
                         when (page) {
+                            Page.HOME -> {
+                                item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
+                                item {
+                                    Panel {
+                                        Text("Your portfolio", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                                        val priced = data.valuations.filter { it.value != null }
+                                        val value = priced.fold(ExactDecimal.parse("0")) { total, asset -> total + asset.value!! }
+                                        Text("Priced value · ${data.currency.value}", color = Muted)
+                                        Text(if (priced.isEmpty()) "Unavailable" else money(value, data.currency), fontSize = 30.sp)
+                                        Text("${data.valuations.count { it.value == null }} unpriced assets excluded", color = Muted)
+                                        TextButton(onClick = { page = Page.OVERVIEW }) { Text("Open Portfolio") }
+                                    }
+                                }
+                                item { HealthCard(data, { dialog = "sync" }, { dialog = "utxo" }) }
+                                item { QuickActions({ dialog = "account" }, { dialog = "activity" }) }
+                                item { SectionTitle("Recent activity", "View all") { page = Page.ACTIVITY } }
+                                if (data.activities.isEmpty()) {
+                                    item {
+                                        EmptyCard("Start your portfolio", "Add a public source or record an activity manually.", "Add") {
+                                            dialog =
+                                                "add"
+                                        }
+                                    }
+                                } else {
+                                    items(data.activities.take(5), key = { it.activity.id.value }) {
+                                        ActivityRow(it, data, compact, activityAccounts) { selectedActivity = it }
+                                    }
+                                }
+                                item { PrivacyFootnote() }
+                            }
+                            Page.MORE -> {
+                                item {
+                                    Panel {
+                                        Text("Your workspace", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                                        listOf(Page.ACCOUNTS, Page.REPORTS, Page.SETTINGS).forEach { destination ->
+                                            OutlinedButton(
+                                                onClick = { page = destination },
+                                                modifier = Modifier.fillMaxWidth().testTag("more-${destination.name}"),
+                                            ) {
+                                                Text(destination.label)
+                                            }
+                                        }
+                                    }
+                                }
+                                item { PrivacyFootnote() }
+                            }
                             Page.OVERVIEW -> {
                                 item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
                                 item { BalanceHero(data, chart, compact, period, { period = it }, { dialog = "price" }) }
@@ -563,6 +593,14 @@ private fun Product(
                                 item {
                                     Panel {
                                         Text("Make it yours", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                        Text("Appearance", color = Muted, fontSize = 12.sp)
+                                        AppearanceSelector(appearance) { selected ->
+                                            execute("Appearance saved") {
+                                                app.setAppearanceTheme(selected.key)
+                                                onAppearance(selected)
+                                            }
+                                        }
+                                        Text("System follows your device’s light or dark appearance.", color = Muted, fontSize = 13.sp)
                                         Text("Display currency", color = Muted, fontSize = 12.sp)
                                         WrapActions(
                                             listOf(
@@ -680,6 +718,7 @@ private fun Product(
         }
         if (dialog != null &&
             dialog != "wallet" &&
+            dialog != "add" &&
             snapshot != null
         ) {
             WorkflowDialog(
@@ -755,90 +794,6 @@ private fun Product(
 }
 
 @Composable
-private fun Sidebar(
-    selected: Page,
-    onSelect: (Page) -> Unit,
-    modifier: Modifier,
-) {
-    BoxWithConstraints(modifier.fillMaxHeight().background(Color.White)) {
-        val short = maxHeight < 650.dp
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = if (short) 12.dp else 30.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Ink), contentAlignment = Alignment.Center) {
-                    Text("p", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 25.sp)
-                }
-                Text(
-                    "polion",
-                    fontSize = 26.sp,
-                    letterSpacing = (-1).sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 10.dp),
-                )
-            }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "WORKSPACE",
-                    fontSize = 9.sp,
-                    letterSpacing = 2.sp,
-                    color = Muted,
-                    modifier = Modifier.padding(start = 14.dp, top = if (short) 8.dp else 34.dp, bottom = 12.dp),
-                )
-                Page.entries.forEach { page ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (selected ==
-                                    page
-                                ) {
-                                    Mint
-                                } else {
-                                    Color.Transparent
-                                },
-                            ).clickable { onSelect(page) }
-                            .padding(horizontal = 14.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(page.glyph, fontSize = 20.sp, color = if (selected == page) Teal else Muted)
-                        Text(
-                            page.label,
-                            fontSize = 13.sp,
-                            color = if (selected == page) Ink else Muted,
-                            fontWeight =
-                                if (selected ==
-                                    page
-                                ) {
-                                    FontWeight.SemiBold
-                                } else {
-                                    FontWeight.Normal
-                                },
-                            modifier = Modifier.padding(start = 12.dp),
-                        )
-                    }
-                }
-            }
-            if (!short) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Paper)
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text("◉  Local first", color = Teal, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                    Text("Your portfolio.\nYour device. Your control.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun BalanceHero(
     data: PortfolioSnapshot,
     points: List<HistoryPoint>,
@@ -851,12 +806,12 @@ private fun BalanceHero(
         Modifier
             .fillMaxWidth()
             .clip(Corners)
-            .background(Ink)
+            .background(Hero)
             .padding(if (compact) 22.dp else 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("PORTFOLIO VALUE", color = Color(0xFFB6CFC2), fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Medium)
+            Text("PRICED VALUE", color = Color(0xFFB6CFC2), fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Medium)
             Text(data.currency.value, color = Color(0xFFB6CFC2), fontSize = 12.sp)
         }
         val known = data.valuations.filter { it.value != null }
@@ -894,7 +849,7 @@ private fun BalanceHero(
                             if (period ==
                                 days
                             ) {
-                                Ink
+                                Hero
                             } else {
                                 Color(0xFFB6CFC2)
                             },
@@ -954,6 +909,7 @@ private fun ValueChart(
             Text("Add historical prices to see your value over time", color = if (dark) Color(0xFFAAC6B7) else Muted, fontSize = 12.sp)
         }
     } else {
+        val chartStroke = if (dark) Color(0xFFA9D6B6) else Teal
         Canvas(
             modifier.semantics {
                 contentDescription =
@@ -967,7 +923,7 @@ private fun ValueChart(
             val min = finite.min()
             val max = finite.max()
             val range = (max - min).takeIf { it > 0 } ?: 1.0
-            val stroke = if (dark) Color(0xFFA9D6B6) else Teal
+            val stroke = chartStroke
             repeat(3) { row ->
                 val y = size.height * row / 2
                 drawLine(stroke.copy(alpha = 0.13f), Offset(0f, y), Offset(size.width, y), 1f)
@@ -1124,7 +1080,7 @@ private fun HealthCard(
         Modifier
             .fillMaxWidth()
             .clip(Corners)
-            .background(Color.White)
+            .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, Line, Corners)
             .padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -1138,7 +1094,7 @@ private fun HealthCard(
             if (text ==
                 "₿"
             ) {
-                Color(0xFFFFF0DE)
+                WarningSurface
             } else {
                 Mint
             },
@@ -1182,13 +1138,13 @@ private fun HealthCard(
 ) {
     Text(
         text,
-        color = if (positive) Teal else Color(0xFF936126),
+        color = if (positive) Teal else Orange,
         fontSize = 10.sp,
         modifier =
             Modifier
                 .clip(
                     RoundedCornerShape(6.dp),
-                ).background(if (positive) Mint else Color(0xFFFFF0D8))
+                ).background(if (positive) Mint else WarningSurface)
                 .padding(horizontal = 8.dp, vertical = 4.dp),
     )
 }
@@ -1244,7 +1200,7 @@ private fun ActivityRow(
             .fillMaxWidth()
             .clip(
                 RoundedCornerShape(16.dp),
-            ).background(Color.White)
+            ).background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onClick)
             .padding(if (compact) 14.dp else 18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1511,7 +1467,7 @@ private fun SyncBanner(
                 if (status.phase ==
                     SyncPhase.ERROR
                 ) {
-                    Color(0xFFFFEEDB)
+                    WarningSurface
                 } else {
                     Mint
                 },
@@ -1541,7 +1497,7 @@ private fun SyncBanner(
             color = Muted,
         )
         if (running) {
-            LinearProgressIndicator(Modifier.fillMaxWidth(), color = Teal, trackColor = Color.White)
+            LinearProgressIndicator(Modifier.fillMaxWidth(), color = Teal, trackColor = MaterialTheme.colorScheme.surface)
             Text("History is being fetched. Saved balances update after the full scan is checked.", fontSize = 11.sp, color = Muted)
         }
         if (!running &&

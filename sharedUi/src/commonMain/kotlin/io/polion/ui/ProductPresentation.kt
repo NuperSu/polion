@@ -15,16 +15,19 @@ internal enum class Page(
     val label: String,
     val glyph: String,
 ) {
-    OVERVIEW("Overview", "◈"),
+    HOME("Home", "⌂"),
+    OVERVIEW("Portfolio", "◈"),
     ACTIVITY("Activity", "⇄"),
-    ACCOUNTS("Accounts", "▣"),
+    ACCOUNTS("Sources", "▣"),
     REPORTS("Reports", "◷"),
     SETTINGS("Settings", "⚙"),
+    MORE("More", "⋯"),
 }
 
 internal enum class ProductDialog(
     val key: String,
 ) {
+    ADD("add"),
     ACCOUNT("account"),
     ACTIVITY("activity"),
     BACKUP("backup"),
@@ -48,7 +51,7 @@ internal enum class ProductDialog(
 }
 
 internal data class ProductPresentation(
-    val page: Page = Page.OVERVIEW,
+    val page: Page = Page.HOME,
     val search: String = "",
     val kind: ActivityKind? = null,
     val offset: Int = 0,

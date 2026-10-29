@@ -32,7 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,8 +104,8 @@ internal fun AccountingPanel(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(22.dp))
-            .border(1.dp, Color(0xFFE1E7E0), RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(22.dp))
+            .border(1.dp, Line, RoundedCornerShape(22.dp))
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -114,7 +113,7 @@ internal fun AccountingPanel(
         Text(
             "FIFO uses your explicit treatments. Blank cost or proceeds remain unknown; amounts are exact.",
             fontSize = 12.sp,
-            color = Color(0xFF667873),
+            color = Muted,
         )
         notice?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -126,7 +125,7 @@ internal fun AccountingPanel(
             if (current.view.missingTreatments.isNotEmpty()) {
                 Text(
                     "${current.view.missingTreatments.size} activities need treatments; affected assets are excluded from FIFO results.",
-                    color = Color(0xFF936126),
+                    color = Orange,
                     fontSize = 12.sp,
                 )
             }
@@ -139,7 +138,7 @@ internal fun AccountingPanel(
                 }) { Text("Verify Bitcoin transaction order") }
                 Text(
                     "Bitcoin block timestamps can affect FIFO order. Basis and gains are provisional.",
-                    color = Color(0xFF936126),
+                    color = Orange,
                     fontSize = 12.sp,
                 )
             }
@@ -151,7 +150,7 @@ internal fun AccountingPanel(
                 )
             }
             Text("Open lots · ${report.quoteAsset.value}", fontWeight = FontWeight.SemiBold)
-            if (report.lots.isEmpty()) Text("No classified open lots.", color = Color(0xFF667873), fontSize = 12.sp)
+            if (report.lots.isEmpty()) Text("No classified open lots.", color = Muted, fontSize = 12.sp)
             report.lots.drop(lotPage * 10).take(10).forEach { lot ->
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     val quantity =
@@ -159,13 +158,13 @@ internal fun AccountingPanel(
                             ?: "${lot.quantity} atomic units"
                     Text("${lot.asset.value} · $quantity", fontWeight = FontWeight.Medium, fontSize = 13.sp)
                     Text("Account ${lot.account.value} · basis ${lot.basis.displayAmount()} ${report.quoteAsset.value}", fontSize = 12.sp)
-                    Text("Lot ${lot.id} · exact basis ${lot.basis ?: "unknown"}", color = Color(0xFF667873), fontSize = 10.sp)
+                    Text("Lot ${lot.id} · exact basis ${lot.basis ?: "unknown"}", color = Muted, fontSize = 10.sp)
                 }
             }
             if (report.lots.size > 10) AccountingPages(lotPage, report.lots.size, 10) { lotPage = it }
             HorizontalDivider()
             Text("Disposals", fontWeight = FontWeight.SemiBold)
-            if (report.disposals.isEmpty()) Text("No classified disposals.", color = Color(0xFF667873), fontSize = 12.sp)
+            if (report.disposals.isEmpty()) Text("No classified disposals.", color = Muted, fontSize = 12.sp)
             report.disposals.drop(disposalPage * 10).take(10).forEach { disposal ->
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     val quantity =
@@ -178,12 +177,12 @@ internal fun AccountingPanel(
                     )
                     Text(
                         "Exact proceeds ${disposal.proceeds ?: "unknown"} · basis ${disposal.basis ?: "unknown"} · gain ${disposal.gain ?: "unknown"}",
-                        color = Color(0xFF667873),
+                        color = Muted,
                         fontSize = 10.sp,
                     )
                     Text(
                         "Activity ${disposal.activityId.value} · account ${disposal.account.value}",
-                        color = Color(0xFF667873),
+                        color = Muted,
                         fontSize = 10.sp,
                     )
                     disposal.consumed.forEach { part ->
@@ -201,7 +200,7 @@ internal fun AccountingPanel(
                 Text(
                     "Confirmed activity appears here for classification.",
                     fontSize = 12.sp,
-                    color = Color(0xFF667873),
+                    color = Muted,
                 )
             }
             current.activities.forEach { item ->
@@ -219,7 +218,7 @@ internal fun AccountingPanel(
                         fontWeight = FontWeight.Medium,
                         fontSize = 13.sp,
                     )
-                    Text("${item.activity.id.value} · $status", color = Color(0xFF667873), fontSize = 11.sp)
+                    Text("${item.activity.id.value} · $status", color = Muted, fontSize = 11.sp)
                     TextButton(onClick = {
                         scope.launch {
                             runCatching { withContext(host.dispatcher) { app.treatments(item.activity.id) } }

@@ -5,6 +5,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.filter
 import androidx.compose.ui.test.hasClickAction
@@ -174,14 +175,15 @@ class PolionUiTest {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() &&
-                            onAllNodesWithText("Overview").fetchSemanticsNodes().isNotEmpty()
+                            onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
                     }
                     onNodeWithText("POLION / YOUR SPACE").assertIsDisplayed()
                     onAllNodesWithText("Activity").filter(hasClickAction()).onFirst().performClick()
                     onNodeWithText("Search activity").assertIsDisplayed()
                     val searchBounds = onNodeWithText("Search activity").fetchSemanticsNode().boundsInRoot
                     assertTrue(searchBounds.left >= 0f && searchBounds.right <= 360f && searchBounds.bottom <= 800f)
-                    onAllNodesWithText("Accounts").filter(hasClickAction()).onFirst().performClick()
+                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
                     val image = onRoot().captureToImage()
                     assertEquals(360, image.width)
@@ -207,7 +209,8 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
                     onAllNodesWithText("Activity").filter(hasClickAction()).onFirst().performClick()
                     onNodeWithText("Search activity").assertIsDisplayed()
-                    onAllNodesWithText("Accounts").filter(hasClickAction()).onFirst().performClick()
+                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
                 }
             }
@@ -454,7 +457,7 @@ class PolionUiTest {
                         setContent { PolionApp(app, host) }
                         waitUntil(timeoutMillis = 10_000) {
                             onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() &&
-                                onAllNodesWithText("Overview").fetchSemanticsNodes().isNotEmpty()
+                                onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
                         }
                         onNodeWithText("YOUR FINANCIAL SPACE").assertIsDisplayed()
                         onAllNodesWithText("Activity").filter(hasClickAction()).onFirst().performClick()
@@ -516,12 +519,12 @@ class PolionUiTest {
                         .performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Make it yours").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("Make it yours").performScrollTo().assertIsDisplayed()
-                    onAllNodesWithText("Overview")
+                    onAllNodesWithText("Portfolio")
                         .filter(hasClickAction())
                         .onFirst()
                         .performScrollTo()
                         .performClick()
-                    onNodeWithText("PORTFOLIO VALUE").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("PRICED VALUE").performScrollTo().assertIsDisplayed()
                 }
             }
         }
@@ -561,7 +564,8 @@ class PolionUiTest {
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
-                    onAllNodesWithText("Accounts").filter(hasClickAction()).onFirst().performClick()
+                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithText("Remove account").performScrollTo().performClick()
                     onAllNodesWithText("Remove account").onLast().performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Archived accounts").fetchSemanticsNodes().isNotEmpty() }
@@ -640,7 +644,7 @@ class PolionUiTest {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() &&
-                            onAllNodesWithText("Overview").fetchSemanticsNodes().isNotEmpty()
+                            onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
                     }
                     onAllNodesWithText("Activity").filter(hasClickAction()).onFirst().performClick()
                     onNodeWithText("Search activity").performTextInput("demo-deposit")
@@ -665,6 +669,42 @@ class PolionUiTest {
                     val image = onRoot().captureToImage()
                     assertEquals(1440, image.width)
                     assertEquals(1000, image.height)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun compactAddAndAppearancePreferencesRemainReachable() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    onNodeWithTag("compact-navigation").assertIsDisplayed()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
+                    onNodeWithTag("add-action").performClick()
+                    onNodeWithText("Add to your portfolio").assertIsDisplayed()
+                    onNodeWithText("Public Bitcoin address").assertIsDisplayed()
+                    onNodeWithText("Public descriptor or xpub").assertIsDisplayed()
+                    onNodeWithText("Manual activity").assertIsDisplayed()
+                    onNodeWithText("Close").performClick()
+                    onNodeWithTag("destination-OVERVIEW").performClick()
+                    onNodeWithText("PRICED VALUE").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("more-SETTINGS").performClick()
+                    onNodeWithTag("appearance-dark").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.appearanceTheme() == "dark" }
+                    onNodeWithTag("appearance-dark").assertIsSelected()
+                    onNodeWithTag("appearance-light").performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.appearanceTheme() == "light" }
+                    onNodeWithTag("appearance-light").assertIsSelected()
+                    onNodeWithTag("appearance-system").performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.appearanceTheme() == "system" }
+                    onNodeWithTag("appearance-system").assertIsSelected()
+                    onNodeWithTag("destination-HOME").performClick()
+                    onNodeWithText("Your portfolio").assertIsDisplayed()
                 }
             }
         }

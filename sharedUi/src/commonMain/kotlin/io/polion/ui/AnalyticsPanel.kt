@@ -24,7 +24,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,8 +64,8 @@ internal fun AnalyticsPanel(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(22.dp))
-            .border(1.dp, Color(0xFFE1E7E0), RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(22.dp))
+            .border(1.dp, Line, RoundedCornerShape(22.dp))
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -74,7 +73,7 @@ internal fun AnalyticsPanel(
         Text(
             "Confirmed holdings and activity through the selected date. Missing prices remain unknown.",
             fontSize = 12.sp,
-            color = Color(0xFF667873),
+            color = Muted,
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(0 to "Today", 7 to "7 days ago", 30 to "30 days ago", 90 to "90 days ago").forEach { (period, label) ->
@@ -92,7 +91,7 @@ internal fun AnalyticsPanel(
                     result.atMillis,
                 )} · ${result.currency.value} · coverage ${result.coverage.name.lowercase()}",
                 fontSize = 11.sp,
-                color = Color(0xFF667873),
+                color = Muted,
             )
             Text("Asset allocation", fontWeight = FontWeight.SemiBold)
             if (result.allocation.isEmpty()) Text("No confirmed assets at this date.", fontSize = 12.sp)
@@ -108,7 +107,7 @@ internal fun AnalyticsPanel(
             accountRows.drop(accountPage * 10).take(10).forEach { (account, asset) ->
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(account.label, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                    Text(account.account.value, fontSize = 10.sp, color = Color(0xFF667873))
+                    Text(account.account.value, fontSize = 10.sp, color = Muted)
                     AnalyticsAsset(asset, result.currency.value)
                 }
             }
@@ -118,7 +117,7 @@ internal fun AnalyticsPanel(
             Text(
                 "Cumulative confirmed movements through this date; transfers can appear on both sides.",
                 fontSize = 11.sp,
-                color = Color(0xFF667873),
+                color = Muted,
             )
             if (result.categories.isEmpty()) Text("No confirmed activity at this date.", fontSize = 12.sp)
             result.categories.drop(categoryPage * 10).take(10).forEach { row ->
@@ -164,10 +163,10 @@ private fun AnalyticsAsset(
         Text(
             "Value ${value.value?.toString() ?: "unknown"} $currency · price ${value.priceStatus.name.lowercase()}",
             fontSize = 11.sp,
-            color = Color(0xFF667873),
+            color = Muted,
         )
         value.price?.let {
-            Text("${if (it.manual) "Manual" else it.providerId?.value} · observation ${it.id}", fontSize = 10.sp, color = Color(0xFF667873))
+            Text("${if (it.manual) "Manual" else it.providerId?.value} · observation ${it.id}", fontSize = 10.sp, color = Muted)
         }
     }
 }
