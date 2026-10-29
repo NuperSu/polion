@@ -161,17 +161,9 @@ private fun Product(
         presenter.messages.collect { snackbar.showSnackbar(it) }
     }
     if (dialog == "add") {
-        AlertDialog(
-            onDismissRequest = { dialog = null },
-            title = { Text("Add to your portfolio") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { dialog = "account" }) { Text("Public Bitcoin address") }
-                    TextButton(onClick = { dialog = "wallet" }) { Text("Public descriptor or xpub") }
-                    TextButton(onClick = { dialog = "activity" }) { Text("Manual activity") }
-                }
-            },
-            confirmButton = { TextButton(onClick = { dialog = null }) { Text("Close") } },
+        SupportedSourceDialog(
+            onSelect = { choice -> dialog = choice.workflow.productDialog().key },
+            onDismiss = { dialog = null },
         )
     }
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -432,17 +424,16 @@ private fun Product(
                                 }
                             }
                             Page.ACCOUNTS -> {
-                                item { OutlinedButton(onClick = { dialog = "wallet" }) { Text("+ Track descriptor or xpub") } }
-                                item { SectionTitle("Watch-only accounts", "+ Add") { dialog = "account" } }
+                                item { SectionTitle("Watch-only accounts", "+ Add") { dialog = "add" } }
                                 if (data.ownership.accounts.isEmpty()) {
                                     item {
                                         EmptyCard(
                                             "Your keys stay yours",
-                                            "Track a public Bitcoin address. Polion never needs your recovery phrase or private keys.",
-                                            "Add your first account",
+                                            "Choose a supported public Bitcoin source. Polion never needs your recovery phrase or private keys.",
+                                            "Add your first source",
                                         ) {
                                             dialog =
-                                                "account"
+                                                "add"
                                         }
                                     }
                                 }

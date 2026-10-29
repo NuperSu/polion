@@ -686,9 +686,9 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
                     onNodeWithTag("add-action").performClick()
                     onNodeWithText("Add to your portfolio").assertIsDisplayed()
-                    onNodeWithText("Public Bitcoin address").assertIsDisplayed()
-                    onNodeWithText("Public descriptor or xpub").assertIsDisplayed()
-                    onNodeWithText("Manual activity").assertIsDisplayed()
+                    onNodeWithTag("source-choice-bitcoin-address").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("source-choice-bitcoin-public-wallet").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("source-choice-manual-activity").performScrollTo().assertIsDisplayed()
                     onNodeWithText("Close").performClick()
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithText("PRICED VALUE").performScrollTo().assertIsDisplayed()
