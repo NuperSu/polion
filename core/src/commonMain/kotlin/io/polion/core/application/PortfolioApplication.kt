@@ -1422,7 +1422,7 @@ class PortfolioApplication(
         first: ActivityId,
         second: ActivityId,
         state: LinkState,
-    ): Int = overlays.setDecision(first, second, state)
+    ): Int = overlays.setDecision(first, second, state).also { invalidate() }
 
     fun setDuplicateDecision(
         first: ActivityId,

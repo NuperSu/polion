@@ -140,8 +140,24 @@ data class DuplicateConflict(
     val reason: String,
 )
 
+/** Reviewed relationship between two preserved movements; it does not assign an accounting treatment. */
+data class TransferLink(
+    val outgoingActivity: ActivityId,
+    val outgoingEvent: EventId,
+    val incomingActivity: ActivityId,
+    val incomingEvent: EventId,
+)
+
+data class TransferLinkConflict(
+    val first: ActivityId,
+    val second: ActivityId,
+    val reason: String,
+)
+
 data class EffectiveLedger(
     val activities: List<EffectiveActivity>,
     val suppressed: List<SuppressedMovement>,
     val conflicts: List<DuplicateConflict>,
+    val transferLinks: List<TransferLink> = emptyList(),
+    val transferLinkConflicts: List<TransferLinkConflict> = emptyList(),
 )

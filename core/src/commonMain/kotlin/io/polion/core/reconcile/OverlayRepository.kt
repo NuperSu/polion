@@ -2,6 +2,8 @@ package io.polion.core.reconcile
 
 import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityKind
+import io.polion.core.ledger.ActivityStatus
+import io.polion.core.ledger.MovementRole
 import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
@@ -276,11 +278,92 @@ class OverlayRepository(
                     suppressed.add(SuppressedMovement(canonical.activity.id, canonicalEvent!!, duplicate.activity.id, duplicateEvent))
                 }
             }
-            val effective =
+            val projected =
                 replayed.mapNotNull { item ->
                     val movements = item.activity.movements.filter { it.id !in removed[item.activity.id].orEmpty() }
                     if (movements.isEmpty()) null else item.copy(activity = item.activity.copy(movements = movements))
                 }
-            EffectiveLedger(effective, suppressed, conflicts)
+            val (links, linkConflicts) = resolveTransferLinks(projected, byId.keys)
+            EffectiveLedger(projected, suppressed, conflicts, links, linkConflicts)
         }
+
+    private fun resolveTransferLinks(
+        activities: List<EffectiveActivity>,
+        originalIds: Set<ActivityId>,
+    ): Pair<List<TransferLink>, List<TransferLinkConflict>> {
+        val byId = activities.associateBy { it.activity.id }
+        val conflicts = mutableListOf<TransferLinkConflict>()
+        val candidates = mutableListOf<Pair<LinkDecision, TransferLink>>()
+        for (decision in decisions().filter { it.state == LinkState.ACCEPTED }) {
+            val first = byId[decision.first]
+            val second = byId[decision.second]
+
+            fun conflict(reason: String) {
+                conflicts.add(TransferLinkConflict(decision.first, decision.second, reason))
+            }
+            if (first == null || second == null) {
+                conflict(
+                    if (decision.first !in originalIds ||
+                        decision.second !in originalIds
+                    ) {
+                        "activity missing"
+                    } else {
+                        "no matching movements"
+                    },
+                )
+                continue
+            }
+            val active = setOf(ActivityStatus.PENDING, ActivityStatus.CONFIRMED)
+            if (first.activity.status !in active || second.activity.status !in active) {
+                conflict("activity inactive")
+                continue
+            }
+            if (first.unresolvedMovementIds.isNotEmpty() || second.unresolvedMovementIds.isNotEmpty()) {
+                conflict("unresolved movement correction")
+                continue
+            }
+            val matches =
+                first.activity.movements.flatMap { left ->
+                    second.activity.movements.mapNotNull { right ->
+                        if (
+                            left.role == MovementRole.FEE ||
+                            right.role == MovementRole.FEE ||
+                            left.accountId == right.accountId ||
+                            left.amount.assetId != right.amount.assetId ||
+                            left.amount.atomicUnits.sign == 0 ||
+                            left.amount.atomicUnits != -right.amount.atomicUnits
+                        ) {
+                            null
+                        } else if (left.amount.atomicUnits.sign < 0) {
+                            TransferLink(first.activity.id, left.id, second.activity.id, right.id)
+                        } else {
+                            TransferLink(second.activity.id, right.id, first.activity.id, left.id)
+                        }
+                    }
+                }
+            if (matches.size != 1) {
+                conflict(if (matches.isEmpty()) "no matching movements" else "ambiguous movement matches")
+                continue
+            }
+            candidates.add(decision to matches.single())
+        }
+        val claims =
+            candidates
+                .flatMap { (_, link) ->
+                    listOf(link.outgoingActivity to link.outgoingEvent, link.incomingActivity to link.incomingEvent)
+                }.groupingBy { it }
+                .eachCount()
+        val links =
+            candidates.mapNotNull { (decision, link) ->
+                if (claims.getValue(link.outgoingActivity to link.outgoingEvent) > 1 ||
+                    claims.getValue(link.incomingActivity to link.incomingEvent) > 1
+                ) {
+                    conflicts.add(TransferLinkConflict(decision.first, decision.second, "movement claimed by multiple links"))
+                    null
+                } else {
+                    link
+                }
+            }
+        return links to conflicts.sortedWith(compareBy({ it.first.value }, { it.second.value }))
+    }
 }
