@@ -358,4 +358,25 @@ class BitcoinChainAcceptanceTest {
             assertTrue("/block-height/100" in provider.calls)
         }
     }
+
+    @Test
+    fun changedWatchedScopeCannotCommitAnInFlightScan() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+            provider.tipHeight = 111
+            val changingScope =
+                EsploraTransport { path ->
+                    provider.transport.get(path).also {
+                        if (path.endsWith("/utxo")) app.archiveAccount(AccountId("account"))
+                    }
+                }
+            val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(changingScope) }
+            assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
+            assertEquals(before, acceptedData(db))
+            assertEquals(1, BitcoinGraphRepository(db).snapshots().size)
+        }
+    }
 }

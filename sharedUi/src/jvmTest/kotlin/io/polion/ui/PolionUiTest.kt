@@ -130,6 +130,31 @@ class PolionUiTest {
     }
 
     @Test
+    fun dataHealthOpensUnknownActiveScopeEvidence() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 800, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Review UTXO comparison →").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithText("Review UTXO comparison →").performScrollTo().performClick()
+                    onNodeWithText("UTXO comparison details").assertIsDisplayed()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText(
+                            "Evidence unknown for this active scope. Refresh to obtain a comparison; older backups may contain no graph evidence.",
+                        ).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithText("Close comparison").performClick()
+                    onNodeWithText("Review UTXO comparison →").assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
     fun phoneNavigationFitsTheViewport() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

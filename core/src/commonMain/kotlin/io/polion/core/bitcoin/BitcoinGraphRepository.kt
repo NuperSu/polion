@@ -332,6 +332,17 @@ class BitcoinGraphRepository(
         return id
     }
 
+    /** Resets paging when the accepted snapshot changes; never falls back to a different address scope. */
+    fun utxoReview(
+        ownedAddresses: Map<String, AccountId>,
+        offset: Int = 0,
+        limit: Int = 25,
+        expectedSnapshotId: Long? = null,
+    ): BitcoinUtxoReviewPage =
+        db.transaction {
+            queryUtxoReview(db, scopeKey(ownedAddresses), ownedAddresses.size, offset, limit, expectedSnapshotId)
+        }
+
     fun snapshots(): List<BitcoinGraphSnapshot> =
         db.query("SELECT id FROM bitcoin_graph_snapshots ORDER BY id").map {
             snapshot(it.single()!!.toLong())!!

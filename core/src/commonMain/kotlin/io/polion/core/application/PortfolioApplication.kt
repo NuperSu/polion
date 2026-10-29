@@ -278,7 +278,7 @@ class PortfolioApplication(
                 setting("source_last_success")?.toLong(),
                 setting("source_error"),
                 setting("source_in_progress") == "true",
-                setting("utxo_mismatch_count")?.toIntOrNull() ?: 0,
+                bitcoinUtxoReview(limit = 1).total,
             ),
             setting("sample_data") == "true",
             ledger.activities.count {
@@ -288,6 +288,26 @@ class PortfolioApplication(
             sourceEndpoint(),
             sourceConsent(),
         )
+    }
+
+    /** Accepted advisory evidence for the enabled Bitcoin leaf addresses, independent of portfolio display filters. */
+    fun bitcoinUtxoReview(
+        offset: Int = 0,
+        limit: Int = 25,
+        expectedSnapshotId: Long? = null,
+    ): io.polion.core.bitcoin.BitcoinUtxoReviewPage {
+        val claims =
+            ownership
+                .load()
+                .targets
+                .filter {
+                    it.enabled &&
+                        it.role == io.polion.core.ownership.TargetRole.LEAF &&
+                        it.identity.networkId == BITCOIN_MAINNET &&
+                        it.identity.kind == "address"
+                }.groupBy { bitcoinMainnetAddress(it.identity.canonicalKey) }
+        require(claims.values.all { group -> group.map { it.accountId }.distinct().size == 1 })
+        return bitcoinGraph.utxoReview(claims.mapValues { it.value.first().accountId }, offset, limit, expectedSnapshotId)
     }
 
     private fun scopedAccounts(
@@ -821,6 +841,20 @@ class PortfolioApplication(
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
             db.transaction {
+                val currentTargets =
+                    ownership.loadInTransaction().targets.filter {
+                        it.role == io.polion.core.ownership.TargetRole.LEAF &&
+                            it.identity.networkId == BITCOIN_MAINNET &&
+                            it.identity.kind == "address"
+                    }
+
+                fun scanScope(targets: List<TrackingTarget>) =
+                    targets.associate {
+                        it.id to Triple(it.accountId, bitcoinMainnetAddress(it.identity.canonicalKey), it.enabled)
+                    }
+                require(scanScope(currentTargets) == scanScope(bitcoinTargets)) {
+                    throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+                }
                 bitcoinGraph.saveInTransaction(
                     graph = graph,
                     providerSourceId = providerSource.value,

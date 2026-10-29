@@ -381,7 +381,7 @@ private fun Product(
                                                 HealthCard(data, {
                                                     dialog =
                                                         "sync"
-                                                })
+                                                }, { dialog = "utxo" })
                                                 ; QuickActions({ dialog = "account" }, { dialog = "activity" })
                                             }
                                         }
@@ -391,7 +391,7 @@ private fun Product(
                                                 dialog =
                                                     "price"
                                             })
-                                            ; HealthCard(data, { dialog = "sync" })
+                                            ; HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
                                         }
                                     }
                                 }
@@ -741,6 +741,9 @@ private fun Product(
                     item { Spacer(Modifier.height(12.dp)) }
                 }
             }
+        }
+        if (dialog == "utxo") {
+            UtxoReviewDialog(app, host) { dialog = null }
         }
         if (dialog == "wallet" && snapshot != null) {
             WalletDialog(
@@ -1150,6 +1153,7 @@ private fun AssetsCard(
 private fun HealthCard(
     data: PortfolioSnapshot,
     onSync: () -> Unit,
+    onUtxoReview: () -> Unit,
 ) {
     Panel {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1164,6 +1168,9 @@ private fun HealthCard(
                 color = Orange,
                 fontSize = 12.sp,
             )
+        }
+        TextButton(onClick = onUtxoReview, contentPadding = PaddingValues(0.dp)) {
+            Text("Review UTXO comparison →", fontSize = 12.sp)
         }
         data.sourceStatus.lastError?.let { Text("Sync incomplete · saved data retained", color = Orange, fontSize = 12.sp) }
         HorizontalDivider(color = Line)

@@ -2,7 +2,9 @@ package io.polion.core.bitcoin
 
 import io.polion.core.backup.PortableBackup
 import io.polion.core.model.AccountId
+import io.polion.core.model.ExactInteger
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.core.storage.SqliteDatabase
 import io.polion.core.storage.Store
 import io.polion.core.storage.sha256
 import java.nio.file.Files
@@ -56,6 +58,105 @@ class BitcoinGraphRepositoryTest {
             compareUtxoSets(graph, EsploraUtxoSnapshot(emptyList(), emptyMap())),
             recoveryBaseline = recoveryBaseline,
         )
+    }
+
+    @Test
+    fun reviewPagesExactEvidenceWithoutGraphReconstruction() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val queries = mutableListOf<String>()
+            val tracked =
+                object : SqliteDatabase by db {
+                    override fun query(
+                        sql: String,
+                        arguments: List<String?>,
+                    ): List<List<String?>> {
+                        queries.add(sql)
+                        return db.query(sql, arguments)
+                    }
+                }
+            val repository = BitcoinGraphRepository(tracked)
+            val raw = payload("b".repeat(64), true)
+            val graph = BitcoinUtxoGraph.build(listOf(raw), scope)
+            val coin = graph.unspent.single()
+            val reported = EsploraUtxo(address, coin.outpoint, ExactInteger.parse("9001"), null)
+            val comparison = compareUtxoSets(graph, EsploraUtxoSnapshot(listOf(reported), emptyMap()))
+            val id =
+                db.transaction {
+                    repository.saveInTransaction(
+                        graph,
+                        "provider-a",
+                        anchor,
+                        "2026-10-29T00:00:00Z",
+                        mapOf(coin.outpoint.txid to sha256(raw)),
+                        comparison,
+                    )
+                }
+            queries.clear()
+            val first = repository.utxoReview(scope, limit = 1)
+            assertEquals(id, first.snapshotId)
+            assertEquals("provider-a", first.providerSourceId)
+            assertEquals("2026-10-29T00:00:00Z", first.observedAt)
+            assertEquals(anchor, first.anchor)
+            assertEquals(3, first.total)
+            assertEquals(1, first.rows.size)
+            assertEquals(true, first.hasNext)
+            val row = first.rows.single()
+            assertEquals("VALUE_DIFFERS", row.kind)
+            assertEquals(AccountId("account-a"), row.account)
+            assertEquals(address, row.address)
+            assertEquals(coin.outpoint, row.outpoint)
+            assertEquals(ExactInteger.parse("9000"), row.reconstructedValue)
+            assertEquals(anchor, row.reconstructedBlock)
+            assertEquals(ExactInteger.parse("9001"), row.providerValue)
+            assertNull(row.providerBlock)
+            assertEquals(3, queries.size) // snapshot header, count, bounded joined page
+            assertEquals(true, queries.last().contains("LIMIT 1 OFFSET 0"))
+            val second = repository.utxoReview(scope, offset = 1, limit = 1, expectedSnapshotId = id)
+            assertEquals("CONFIRMATION_DIFFERS", second.rows.single().kind)
+            val third = repository.utxoReview(scope, offset = 2, limit = 1, expectedSnapshotId = id)
+            assertEquals("MISSING_PARENT", third.rows.single().kind)
+            assertEquals(AccountId("account-a"), third.rows.single().account)
+            assertEquals(ExactInteger.parse("10000"), third.rows.single().reconstructedValue)
+            assertEquals("UNKNOWN_PARENT", third.rows.single().reconstructedStatus)
+            assertEquals(false, third.hasNext)
+            assertFails { repository.utxoReview(scope, limit = 101) }
+            assertFails { repository.utxoReview(scope, offset = -1) }
+        }
+    }
+
+    @Test
+    fun reviewMissingParentWithMultipleSpendersIsOneRow() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = BitcoinGraphRepository(db)
+            db.transaction { save(repository, listOf(payload("b".repeat(64)), payload("c".repeat(64)))) }
+            val page = repository.utxoReview(scope, limit = 100)
+            val missing = page.rows.filter { it.kind == "MISSING_PARENT" }
+            assertEquals(1, missing.size)
+            assertEquals(BitcoinOutpoint(parent, 2), missing.single().outpoint)
+            assertEquals(page.total, page.rows.size)
+        }
+    }
+
+    @Test
+    fun reviewDoesNotMixDisabledScopesAndResetsPagesAfterRefresh() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = BitcoinGraphRepository(db)
+            assertNull(repository.utxoReview(scope).snapshotId)
+            val id = db.transaction { save(repository, listOf(payload("b".repeat(64)))) }
+            val otherScope = mapOf(address to AccountId("account-disabled"))
+            val otherId = db.transaction { save(repository, emptyList(), scope = otherScope) }
+            assertEquals(otherId, repository.utxoReview(otherScope).snapshotId)
+            assertEquals(id, repository.utxoReview(scope).snapshotId)
+            assertNull(repository.utxoReview(emptyMap()).snapshotId)
+            val updated = db.transaction { save(repository, listOf(payload("c".repeat(64)))) }
+            val page = repository.utxoReview(scope, offset = 1, limit = 1, expectedSnapshotId = id)
+            assertEquals(updated, page.snapshotId)
+            assertEquals(0, page.offset)
+            assertEquals("MISSING_FROM_PROVIDER", page.rows.single().kind)
+        }
     }
 
     @Test
@@ -197,6 +298,9 @@ class BitcoinGraphRepositoryTest {
             Store(staging)
             assertEquals(listOf(listOf("owner-a", "Owner A")), staging.query("SELECT * FROM owners"))
             assertNull(BitcoinGraphRepository(staging).latest())
+            val review = BitcoinGraphRepository(staging).utxoReview(scope)
+            assertNull(review.snapshotId)
+            assertEquals(false, review.compared)
             assertEquals("5", staging.query("PRAGMA user_version").single().single())
         }
     }
