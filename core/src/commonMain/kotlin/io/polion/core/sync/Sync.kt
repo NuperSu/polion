@@ -137,6 +137,8 @@ class SyncOrchestrator(
     /** An explicit retry clears job and provider backoff for jobs that are not running; a running job's lease remains authoritative. */
     fun retry(id: SyncJobId) =
         db.transaction {
+            val state = db.query("SELECT state FROM sync_jobs WHERE id=?", listOf(id.value)).singleOrNull()?.single()
+            if (state !in setOf("READY", "FAILED", "PARTIAL", "CANCELLED")) return@transaction
             db.execute(
                 "UPDATE sync_provider_health SET available_at=0 WHERE provider=(SELECT last_provider FROM sync_jobs WHERE id=? AND state IN ('READY','FAILED','PARTIAL','CANCELLED'))",
                 listOf(id.value),

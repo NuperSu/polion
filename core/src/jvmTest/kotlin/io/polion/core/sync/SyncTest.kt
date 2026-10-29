@@ -146,6 +146,69 @@ class SyncTest {
     }
 
     @Test
+    fun retryDuringFetchPreservesLeaseAndPaginationCycleEvidence() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val store = Store(db)
+            val clock = Clock()
+            lateinit var sync: SyncOrchestrator
+            val fetcher =
+                provider("p") { request ->
+                    when (request.cursor) {
+                        null -> HistoryPage(listOf(record("first")), "a", Coverage.PARTIAL)
+                        "a" -> {
+                            val before = sync.status(job.id)
+                            sync.retry(job.id)
+                            assertEquals(before, sync.status(job.id))
+                            HistoryPage(listOf(record("second")), "b", Coverage.PARTIAL)
+                        }
+                        "b" -> HistoryPage(listOf(record("cycle")), "a", Coverage.PARTIAL)
+                        else -> error("Unexpected cursor")
+                    }
+                }
+            sync = SyncOrchestrator(db, store, listOf(fetcher), clock)
+            sync.enqueue(job)
+            repeat(3) { assertTrue(sync.runOne()) }
+            val status = sync.status(job.id)!!
+            assertEquals(JobState.READY, status.state)
+            assertEquals(2, status.pages)
+            assertEquals("b", status.cursor)
+            assertEquals(1, status.attempts)
+            assertEquals(2, store.records().size)
+            assertEquals(
+                listOf(listOf("COMMIT")),
+                db.query("SELECT kind FROM sync_errors WHERE job_id=?", listOf(job.id.value)),
+            )
+        }
+    }
+
+    @Test
+    fun retryOfCompletedOrUnknownJobPreservesItsCursorHistory() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val store = Store(db)
+            val clock = Clock()
+            val fetcher =
+                provider("p") { request ->
+                    if (request.cursor == null) {
+                        HistoryPage(listOf(record("first")), "a", Coverage.PARTIAL)
+                    } else {
+                        HistoryPage(listOf(record("last")), null, Coverage.COMPLETE)
+                    }
+                }
+            val sync = SyncOrchestrator(db, store, listOf(fetcher), clock)
+            sync.enqueue(job)
+            repeat(2) { assertTrue(sync.runOne()) }
+            val completed = sync.status(job.id)
+            assertEquals(JobState.COMPLETED, completed?.state)
+            val cursors = db.query("SELECT * FROM sync_cursors")
+            assertEquals(1, cursors.size)
+            sync.retry(job.id)
+            sync.retry(SyncJobId("unknown"))
+            assertEquals(completed, sync.status(job.id))
+            assertEquals(cursors, db.query("SELECT * FROM sync_cursors"))
+        }
+    }
+
+    @Test
     fun repeatedCursorCyclesAndMismatchedRecordsNeverAdvanceCheckpoint() {
         JvmSqliteDatabase(":memory:").use { db ->
             val store = Store(db)
