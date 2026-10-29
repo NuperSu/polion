@@ -35,7 +35,13 @@ class BitcoinRefreshService : Service() {
                 acquire(60 * 60 * 1000L)
             }
         val initialDetail =
-            if (intent?.getBooleanExtra("recover_history", false) == true) "Recovering full Bitcoin history…" else "Fetching public history…"
+            if (intent?.getBooleanExtra("recover_history", false) ==
+                true
+            ) {
+                "Recovering full Bitcoin history…"
+            } else {
+                "Fetching public history…"
+            }
         val notification = SyncNotification.create(this, initialDetail)
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(SyncNotification.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)

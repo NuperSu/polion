@@ -1,5 +1,12 @@
 # Foundation validation
 
+## Explicit Bitcoin history recovery — 2026-10-29
+
+The integrated recovery run at `be94d00` passed formatting checks, **162 core JVM, 29 Android host, 16 shared UI and 7 desktop tests**, Android app/test APK assembly and Android lint: `BUILD SUCCESSFUL in 18s`, 173 tasks. All 214 tests report zero failures/errors/skips. Recovery-specific tests cover consent/acknowledgement, dispatch/busy state, deep and lower-tip recovery, failed validation, atomic baseline rollback and portable restore. The standalone Android formatter also passes after wrapping two host expressions.
+
+The same build passes **9 native API 29 checks with 0 failures**, covering storage, Bitcoin graph/accounting and encrypted restore. Recovery-specific scenarios run on JVM; native instrumentation does not separately exercise the recovery flag or confirmation UI. No personal-address recovery was performed.
+
+
 ## Durable Bitcoin graph and operational chain acceptance — 2026-10-29
 
 The integrated graph/reorg run passed `ktlintCheck`, core JVM and Android-host tests, shared UI and desktop tests, both Android APK builds and Android lint: `BUILD SUCCESSFUL in 25s`, 173 tasks. XML reports contain **155 core JVM, 29 Android host, 15 shared UI and 7 desktop tests**, with zero failures, errors or skips. A final added regression for a chain change during block validation passed with **156 core JVM tests** and formatting checks. The Android transport file also passes the standalone ktlint CLI.

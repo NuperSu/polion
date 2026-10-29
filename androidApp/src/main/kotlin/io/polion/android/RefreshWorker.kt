@@ -92,7 +92,11 @@ class RefreshWorker(
                             else ->
                                 SyncStatus(
                                     SyncPhase.SUCCESS,
-                                    if (recoverHistory) "History recovery complete; coverage remains unverified" else "Sync complete; coverage remains unverified",
+                                    if (recoverHistory) {
+                                        "History recovery complete; coverage remains unverified"
+                                    } else {
+                                        "Sync complete; coverage remains unverified"
+                                    },
                                 )
                         }
                     }
