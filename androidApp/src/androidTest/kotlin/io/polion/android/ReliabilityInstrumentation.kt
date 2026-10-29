@@ -4,12 +4,16 @@ import android.app.Activity
 import android.app.Instrumentation
 import android.os.Bundle
 import io.polion.core.application.PortfolioApplication
+import io.polion.core.backup.PortableBackup
 import io.polion.core.bitcoin.bitcoinMainnetAddress
 import io.polion.core.bitcoin.bitcoinWallet
 import io.polion.core.bitcoin.descriptorChecksum
 import io.polion.core.model.OwnerId
 import io.polion.core.ownership.Owner
 import io.polion.core.storage.AndroidSqliteDatabase
+import io.polion.core.storage.RawObservation
+import io.polion.core.storage.Store
+import io.polion.core.storage.sha256
 import io.polion.testing.verifyBitcoinAccountingWorkflow
 import java.io.File
 
@@ -25,6 +29,70 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "largeRawRevisionRepeatIngestion" to {
+                    fixture { file ->
+                        val payload = "\u20ac".repeat(1_100_000) + "\u0000\ud83d\ude80tail"
+                        val record =
+                            RawObservation(
+                                "large-fixture",
+                                "fixture",
+                                "large",
+                                "fixture",
+                                "provider-a",
+                                "2026-01-01T00:00:00Z",
+                                payload,
+                                "1",
+                                sha256(payload),
+                                "fixture",
+                            )
+                        Store(AndroidSqliteDatabase(file.path)).use { it.ingest(record) }
+                        AndroidSqliteDatabase(file.path).use { db ->
+                            Store(db).use { store ->
+                                store.ingest(record)
+                                store.ingest(record.copy(sourceId = "provider-b"))
+                                check(db.query("SELECT COUNT(*) FROM raw_revisions").single().single() == "1")
+                                check(store.observations().size == 2)
+                                check(db.query("SELECT payload=? FROM raw_revisions", listOf(payload)).single().single() == "1")
+                                check(store.revisions().single()[2] == payload)
+                                val rows =
+                                    db.query(
+                                        "SELECT payload AS duplicate, NULL AS duplicate, '' AS empty, 1.25 AS real, 17 AS number " +
+                                            "FROM raw_revisions WHERE record_id=? UNION ALL " +
+                                            "SELECT payload, NULL, '', 1.25, 18 FROM raw_revisions WHERE record_id=? ORDER BY number DESC",
+                                        listOf(record.id, record.id),
+                                    )
+                                check(rows == listOf(listOf(payload, null, "", "1.25", "18"), listOf(payload, null, "", "1.25", "17")))
+                                check(
+                                    runCatching {
+                                        db.transaction {
+                                            db.execute("UPDATE raw_revisions SET payload_version='rollback'")
+                                            check(store.revisions().single()[3] == "rollback")
+                                            error("fixture rollback")
+                                        }
+                                    }.isFailure,
+                                )
+                                check(store.revisions().single()[3] == "1")
+                                val backup = PortableBackup.discover(db)
+                                val archive = backup.export(db)
+                                fixture { restoredFile ->
+                                    AndroidSqliteDatabase(restoredFile.path).use { restoredDb ->
+                                        Store(restoredDb).use { restored ->
+                                            backup.restoreToStaging(restoredDb, archive)
+                                            check(restored.revisions() == store.revisions())
+                                            check(restored.observations() == store.observations())
+                                        }
+                                    }
+                                }
+                                check(db.query("SELECT name FROM sqlite_temp_master WHERE type='table'").isEmpty())
+                                check(runCatching { store.ingest(record.copy(payloadVersion = "2")) }.isFailure)
+                                db.execute("UPDATE raw_revisions SET payload=?", listOf(payload + "corrupt"))
+                                check(runCatching { store.ingest(record.copy(sourceId = "provider-c")) }.isFailure)
+                                check(store.observations().size == 2)
+                                check(db.query("PRAGMA integrity_check").single().single() == "ok")
+                            }
+                        }
+                    }
+                },
                 "bitcoinAccountingWorkflow" to {
                     val files = mutableListOf<File>()
                     try {

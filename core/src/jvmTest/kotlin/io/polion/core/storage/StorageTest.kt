@@ -14,6 +14,33 @@ class StorageTest {
     ) = RawObservation(id, "btc", "txid", "mainnet", source, "2026-01-01T00:00:00Z", payload, "1", checksum, "context")
 
     @Test
+    fun largeRevisionRepeatIngestionPreservesPayloadAndRejectsConflicts() {
+        val path = Files.createTempFile("polion-large-revision", ".sqlite")
+        val payload = "\u20ac".repeat(1_100_000)
+        val record = observation("large", "provider-a", sha256(payload), payload)
+        try {
+            Store(JvmSqliteDatabase(path.toString())).use { it.ingest(record) }
+            JvmSqliteDatabase(path.toString()).use { db ->
+                Store(db).use { store ->
+                    store.ingest(record)
+                    store.ingest(record.copy(sourceId = "provider-b"))
+                    assertEquals("1", db.query("SELECT COUNT(*) FROM raw_revisions").single().single())
+                    assertEquals(2, store.observations().size)
+                    assertEquals("1", db.query("SELECT payload=? FROM raw_revisions", listOf(payload)).single().single())
+                    assertFails { store.ingest(record.copy(payloadVersion = "2", sourceId = "provider-c")) }
+                    assertEquals(2, store.observations().size)
+                    db.execute("UPDATE raw_revisions SET payload=?", listOf(payload + "corrupt"))
+                    assertFails { store.ingest(record.copy(sourceId = "provider-c")) }
+                    assertEquals(2, store.observations().size)
+                    assertEquals("ok", db.query("PRAGMA integrity_check").single().single())
+                }
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun reopenAndRetainDistinctProvenanceAndRevisions() {
         val path = Files.createTempFile("polion", ".sqlite")
         try {

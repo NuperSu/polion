@@ -154,10 +154,10 @@ class Store(
         val existing =
             db
                 .query(
-                    "SELECT payload, payload_version FROM raw_revisions WHERE record_id=? AND checksum=?",
-                    listOf(found, record.checksum),
+                    "SELECT payload=? AND payload_version=? FROM raw_revisions WHERE record_id=? AND checksum=?",
+                    listOf(record.payload, record.payloadVersion, found, record.checksum),
                 ).singleOrNull()
-        require(existing == null || existing == listOf(record.payload, record.payloadVersion)) {
+        require(existing == null || existing.single() == "1") {
             "Checksum collision or inconsistent payload version"
         }
         db.execute(
