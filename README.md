@@ -15,6 +15,18 @@ Headless shared UI tests need an X display; use Xvfb with `SKIKO_RENDER_API=SOFT
 
 Open the project in Android Studio or install `androidApp/build/outputs/apk/debug/androidApp-debug.apk` on an Android 8.0+ device, then launch Polion.
 
+When a phone and emulator are connected, select the phone explicitly. Find its serial with `adb devices -l`, then build and install into its current Android profile:
+
+```sh
+export ANDROID_SERIAL=YOUR_PHONE_SERIAL
+phone_user=$(adb shell am get-current-user) || exit
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk ./gradlew :androidApp:assembleDebug &&
+  adb install --user "$phone_user" -r androidApp/build/outputs/apk/debug/androidApp-debug.apk &&
+  adb shell am start --user "$phone_user" -n io.polion.android/.MainActivity
+```
+
+If Gradle selects a different SDK from the one you prepared, set `sdk.dir=/absolute/path/to/sdk` in local `local.properties`. The selected SDK must contain the required platform, build tools and accepted licenses. Keep `ANDROID_HOME` and `ANDROID_SDK_ROOT` consistent when setting both.
+
 The wrapper pins Gradle 9.4.1 with a distribution checksum. Dependency versions are in `gradle/libs.versions.toml`. CI uses JDK 21, installs the required SDK, validates the wrapper, runs checks, and uploads both host artifacts.
 
 ## Structure
