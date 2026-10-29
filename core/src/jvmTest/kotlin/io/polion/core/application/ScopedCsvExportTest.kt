@@ -25,6 +25,79 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ScopedCsvExportTest {
+    @Test fun networkFilterUsesCurrentRawSourceEvidenceNotAssetOrManualInput() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = fixture(db)
+            val store =
+                io.polion.core.storage
+                    .Store(db)
+
+            fun source(
+                id: String,
+                network: String,
+            ) {
+                val payload = "payload-$id"
+                store.ingest(
+                    io.polion.core.storage.RawObservation(
+                        id,
+                        "fixture",
+                        id,
+                        network,
+                        "provider",
+                        "2024-01-01T00:00:00Z",
+                        payload,
+                        "1",
+                        io.polion.core.storage
+                            .sha256(payload),
+                        "fixture",
+                    ),
+                )
+            }
+            source("source-a", "network-a")
+            source("source-b", "network-b")
+            val repository =
+                io.polion.core.ledger
+                    .ActivityRepository(db)
+
+            fun save(
+                id: String,
+                source: String,
+            ) {
+                repository.save(
+                    activity(id, ActivityKind.DEPOSIT, listOf(movement(id, first, btc, "1"))).copy(
+                        manual = false,
+                        decoderVersion = "fixture",
+                        sources =
+                            setOf(
+                                io.polion.core.model
+                                    .SourceRecordId(source),
+                            ),
+                    ),
+                )
+            }
+            save("a", "source-a")
+            save("b", "source-b")
+            app.saveManualActivity(activity("manual", ActivityKind.DEPOSIT, listOf(movement("manual", first, btc, "1"))))
+            val filter = ActivityFilter(portfolio = selected, network = "network-a", includeNetworkChoices = true)
+            val result = app.snapshot(filter)
+            assertEquals(listOf("network-a", "network-b"), result.activityNetworks)
+            assertEquals(listOf("a"), result.activities.map { it.activity.id.value })
+            assertEquals(listOf("a"), rows(app.exportCsv(filter)).map { it[0] })
+            assertEquals(3, app.snapshot(ActivityFilter(portfolio = selected)).activityTotal)
+            save("a", "source-b")
+            app.reload()
+            assertEquals(0, app.snapshot(filter).activityTotal)
+            assertEquals(
+                setOf("a", "b"),
+                app
+                    .snapshot(filter.copy(network = "network-b"))
+                    .activities
+                    .map { it.activity.id.value }
+                    .toSet(),
+            )
+        }
+    }
+
     @Test fun statusFilterMatchesSnapshotAndExportAcrossPages() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)

@@ -55,6 +55,7 @@ internal data class ProductPresentation(
     val search: String = "",
     val kind: ActivityKind? = null,
     val activityStatus: io.polion.core.ledger.ActivityStatus? = null,
+    val activityNetwork: String? = null,
     val offset: Int = 0,
     val selectedAccount: AccountId? = null,
     val selectedPortfolio: PortfolioId? = null,
@@ -81,6 +82,8 @@ internal data class ProductPresentation(
                 account = selectedAccount,
                 kind = kind,
                 status = activityStatus,
+                network = activityNetwork,
+                includeNetworkChoices = true,
                 offset = offset,
                 portfolio = selectedPortfolio,
             )
@@ -106,6 +109,10 @@ internal sealed interface ProductEvent {
 
     data class Status(
         val value: io.polion.core.ledger.ActivityStatus?,
+    ) : ProductEvent
+
+    data class Network(
+        val value: String?,
     ) : ProductEvent
 
     data class Account(
@@ -135,6 +142,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Search -> copy(search = event.value, offset = 0)
         is ProductEvent.Kind -> copy(kind = event.value, offset = 0)
         is ProductEvent.Status -> copy(activityStatus = event.value, offset = 0)
+        is ProductEvent.Network -> copy(activityNetwork = event.value, offset = 0)
         is ProductEvent.Account -> copy(selectedAccount = event.value, offset = 0)
         is ProductEvent.Portfolio -> copy(selectedPortfolio = event.value)
         is ProductEvent.Offset -> copy(offset = event.value.also { require(it >= 0) })

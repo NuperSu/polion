@@ -193,6 +193,7 @@ internal fun rememberProductPresenter(
                             it.state.activityStatus
                                 ?.name
                                 .orEmpty(),
+                            it.state.activityNetwork.orEmpty(),
                         )
                     },
                     restore = {
@@ -207,6 +208,7 @@ internal fun rememberProductPresenter(
                                     (it.getOrNull(5) as? String)
                                         ?.takeIf { value -> value.isNotEmpty() }
                                         ?.let(io.polion.core.ledger.ActivityStatus::valueOf),
+                                activityNetwork = (it.getOrNull(6) as? String)?.ifEmpty { null },
                             ),
                             applicationQueries(app),
                             host.dispatcher,

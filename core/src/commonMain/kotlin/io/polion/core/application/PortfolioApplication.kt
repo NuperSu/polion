@@ -102,9 +102,12 @@ data class ActivityFilter(
     val offset: Int = 0,
     val limit: Int = 50,
     val status: io.polion.core.ledger.ActivityStatus? = null,
+    val network: String? = null,
+    val includeNetworkChoices: Boolean = false,
 ) {
     init {
         require(offset >= 0 && limit in 1..500)
+        require(network == null || network.isNotBlank())
     }
 }
 
@@ -188,6 +191,7 @@ data class PortfolioSnapshot(
     val pendingCount: Int,
     val sourceEndpoint: String,
     val sourceConsent: Boolean,
+    val activityNetworks: List<String> = emptyList(),
 )
 
 /** Shared persisted workflows. A source connector is required before coverage can be complete. */
@@ -242,7 +246,7 @@ class PortfolioApplication(
         val fullBalance = holdings.current(coverage, at)
         val balance = fullBalance.copy(quantities = fullBalance.quantities.filterKeys { it.account in selected })
         val currency = filter.portfolio?.let { id -> AssetId(catalog.portfolios.single { it.id == id }.valuationCurrency) } ?: currency()
-        val filtered =
+        val candidates =
             ledger.activities
                 .filter { item ->
                     val activity = item.activity
@@ -261,11 +265,13 @@ class PortfolioApplication(
                                 listOfNotNull(item.label, item.note, activity.id.value, activity.kind.name)
                                     .any { it.contains(filter.search, ignoreCase = true) }
                         )
-                }.sortedWith(
-                    compareByDescending<EffectiveActivity> { it.activity.status == io.polion.core.ledger.ActivityStatus.PENDING }
-                        .thenByDescending { it.activity.occurredAtEpochMillis }
-                        .thenBy { it.activity.id.value },
-                )
+                }
+        val filtered =
+            filterActivitiesByNetwork(candidates, filter.network).sortedWith(
+                compareByDescending<EffectiveActivity> { it.activity.status == io.polion.core.ledger.ActivityStatus.PENDING }
+                    .thenByDescending { it.activity.occurredAtEpochMillis }
+                    .thenBy { it.activity.id.value },
+            )
         return PortfolioSnapshot(
             catalog,
             balance,
@@ -288,7 +294,40 @@ class PortfolioApplication(
             },
             sourceEndpoint(),
             sourceConsent(),
+            if (filter.includeNetworkChoices) {
+                db
+                    .query(
+                        "SELECT DISTINCT network FROM raw_records WHERE network <> '' ORDER BY network",
+                    ).mapNotNull {
+                        it.single()
+                    }
+            } else {
+                emptyList()
+            },
         )
+    }
+
+    /** Match the current activity's raw source IDs; manual records have no inferred network. */
+    private fun filterActivitiesByNetwork(
+        items: List<EffectiveActivity>,
+        network: String?,
+    ): List<EffectiveActivity> {
+        if (network == null) return items
+        val result = mutableListOf<EffectiveActivity>()
+        var offset = 0
+        while (offset < items.size) {
+            val batch = items.subList(offset, minOf(offset + 128, items.size))
+            val matching = mutableSetOf<String>()
+            batch.flatMap { it.activity.sources.map { source -> source.value } }.distinct().chunked(200).forEach { ids ->
+                val placeholders = ids.joinToString(",") { "?" }
+                db
+                    .query("SELECT id FROM raw_records WHERE network=? AND id IN ($placeholders)", listOf(network) + ids)
+                    .forEach { row -> matching.add(requireNotNull(row.single())) }
+            }
+            result.addAll(batch.filter { item -> item.activity.sources.any { it.value in matching } })
+            offset += batch.size
+        }
+        return result
     }
 
     /** Accepted advisory evidence for the enabled Bitcoin leaf addresses, independent of portfolio display filters. */
@@ -1819,7 +1858,7 @@ class PortfolioApplication(
         }
         val lines = mutableListOf("activity_id,occurred_at,kind,status,account,asset,atomic_units,role,label,note")
         val selected = scopedAccounts(ownership.load(), filter.portfolio)
-        overlays.replayForLedger(activities.current()).activities.forEach { item ->
+        filterActivitiesByNetwork(overlays.replayForLedger(activities.current()).activities, filter.network).forEach { item ->
             val activity = item.activity
             if (filter.kind != null && activity.kind != filter.kind) return@forEach
             if (filter.status != null && activity.status != filter.status) return@forEach

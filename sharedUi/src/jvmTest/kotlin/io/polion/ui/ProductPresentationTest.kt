@@ -133,7 +133,7 @@ class ProductPresentationTest {
                     queries.fail = true
                     presenter.loadSnapshot(2)
                     assertEquals(saved, presenter.state.snapshot)
-                    assertEquals(ActivityFilter(), presenter.state.snapshotFilter)
+                    assertEquals(ActivityFilter(includeNetworkChoices = true), presenter.state.snapshotFilter)
                     assertEquals("not loaded", presenter.state.search)
                     assertFalse(presenter.state.snapshotLoading)
                     assertEquals(2, queries.reloads)

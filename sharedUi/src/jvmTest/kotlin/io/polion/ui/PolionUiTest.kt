@@ -223,6 +223,73 @@ class PolionUiTest {
     }
 
     @Test
+    fun activityNetworkMenuUsesRecordedSources() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                val account =
+                    app
+                        .snapshot()
+                        .ownership.accounts
+                        .single()
+                        .id
+                val payload = "network-fixture"
+                io.polion.core.storage.Store(db).ingest(
+                    io.polion.core.storage.RawObservation(
+                        "network-source",
+                        "fixture",
+                        "network-tx",
+                        "network-test",
+                        "provider",
+                        "2024-01-01T00:00:00Z",
+                        payload,
+                        "1",
+                        io.polion.core.storage
+                            .sha256(payload),
+                        "fixture",
+                    ),
+                )
+                ActivityRepository(db).save(
+                    Activity(
+                        ActivityId("network-tx"),
+                        1L,
+                        "network-tx",
+                        ActivityKind.DEPOSIT,
+                        ActivityStatus.CONFIRMED,
+                        listOf(
+                            Movement(
+                                EventId("network-event"),
+                                account,
+                                AtomicAmount(AssetId("BTC"), ExactInteger.parse("1")),
+                                MovementRole.TRANSFER,
+                            ),
+                        ),
+                        setOf(SourceRecordId("network-source")),
+                        "fixture",
+                        false,
+                    ),
+                )
+                app.reload()
+                runDesktopComposeUiTest(width = 1000, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-ACTIVITY").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasTestTag("activity-network-filter"))
+                    onNodeWithTag("activity-network-filter").performScrollTo().performClick()
+                    onNodeWithTag("network-network-test").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Search activity"))
+                    waitUntil(
+                        timeoutMillis = 10_000,
+                    ) { onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Network: network-test ▾"))
+                    onNodeWithText("Network: network-test ▾").assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
     fun activityStatusMenuFiltersConfirmedHistory() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

@@ -234,6 +234,7 @@ private fun Product(
     var search by presenter.field({ it.search }) { presenter.dispatch(ProductEvent.Search(it)) }
     var kind by presenter.field({ it.kind }) { presenter.dispatch(ProductEvent.Kind(it)) }
     var activityStatus by presenter.field({ it.activityStatus }) { presenter.dispatch(ProductEvent.Status(it)) }
+    var activityNetwork by presenter.field({ it.activityNetwork }) { presenter.dispatch(ProductEvent.Network(it)) }
     var offset by presenter.field({ it.offset }) { presenter.dispatch(ProductEvent.Offset(it)) }
     var selectedAccount by presenter.field({ it.selectedAccount }) { presenter.dispatch(ProductEvent.Account(it)) }
     var selectedPortfolio by presenter.field({ it.selectedPortfolio }) { presenter.dispatch(ProductEvent.Portfolio(it)) }
@@ -564,7 +565,12 @@ private fun Product(
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
-                                item { FilterActivityStatus(activityStatus) { activityStatus = it } }
+                                item {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterActivityStatus(activityStatus) { activityStatus = it }
+                                        FilterActivityNetwork(data.activityNetworks, activityNetwork) { activityNetwork = it }
+                                    }
+                                }
                                 if (data.activities.isEmpty()) {
                                     item {
                                         EmptyCard(
@@ -1529,6 +1535,33 @@ private fun FilterActivityStatus(
                     },
                     modifier = Modifier.testTag("status-${status.name}"),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterActivityNetwork(
+    networks: List<String>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.testTag("activity-network-filter")) {
+            Text("Network: ${selected ?: "All"} ▾")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("Networks from recorded sources across all accounts") }, onClick = {}, enabled = false)
+            DropdownMenuItem(text = { Text("All networks, including manual") }, onClick = {
+                onSelect(null)
+                expanded = false
+            })
+            networks.forEach { network ->
+                DropdownMenuItem(text = { Text(network) }, onClick = {
+                    onSelect(network)
+                    expanded = false
+                }, modifier = Modifier.testTag("network-$network"))
             }
         }
     }
