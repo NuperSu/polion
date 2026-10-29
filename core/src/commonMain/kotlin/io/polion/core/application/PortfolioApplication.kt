@@ -16,13 +16,10 @@ import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.core.bitcoin.BitcoinScanAddress
 import io.polion.core.bitcoin.BitcoinScanSession
 import io.polion.core.bitcoin.BitcoinScanStage
-import io.polion.core.bitcoin.BitcoinUtxoGraph
 import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
-import io.polion.core.bitcoin.EsploraUtxoFetcher
 import io.polion.core.bitcoin.bitcoinMainnetAddress
 import io.polion.core.bitcoin.bitcoinWallet
-import io.polion.core.bitcoin.compareUtxoSets
 import io.polion.core.connectors.Capability
 import io.polion.core.connectors.ConnectorRegistry
 import io.polion.core.connectors.Coverage
@@ -819,7 +816,6 @@ class PortfolioApplication(
             require(
                 scanned.all { scan -> summary(scan.address) == bitcoinStage.seenCounts(scan.address) },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
-            val provider = EsploraUtxoFetcher(transport).fetch(scanned.map { it.address })
             require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
@@ -827,12 +823,23 @@ class PortfolioApplication(
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
             bitcoinStage.validateBlocks(transport)
-            val graph = BitcoinUtxoGraph.build(bitcoinStage.payloads(), addresses)
-            require(graph.transactions.values.all { it.block == null || it.block.height <= anchorHeight }) {
+            val stagedGraph =
+                io.polion.core.bitcoin
+                    .BitcoinStagedGraph(db)
+            stagedGraph.rebuild(bitcoinStage.payloads(), addresses)
+            require(
+                db
+                    .query(
+                        "SELECT 1 FROM bitcoin_graph_work_transactions WHERE height>? LIMIT 1",
+                        listOf(anchorHeight.toString()),
+                    ).isEmpty(),
+            ) {
                 throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
             }
-            val utxoComparison = compareUtxoSets(graph, provider)
-            val mismatchCount = utxoComparison.mismatches.size + utxoComparison.missingParents.size
+            val mismatchCount =
+                io.polion.core.bitcoin
+                    .BitcoinStagedUtxoComparison(db)
+                    .fetchAndCompare(transport)
             runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "apply")) }
             require(
                 transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash &&
@@ -841,6 +848,7 @@ class PortfolioApplication(
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
             db.transaction {
+                require(sourceConsent()) { "Source consent required" }
                 val currentTargets =
                     ownership.loadInTransaction().targets.filter {
                         it.role == io.polion.core.ownership.TargetRole.LEAF &&
@@ -855,22 +863,19 @@ class PortfolioApplication(
                 require(scanScope(currentTargets) == scanScope(bitcoinTargets)) {
                     throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
                 }
-                bitcoinGraph.saveInTransaction(
-                    graph = graph,
+                io.polion.core.bitcoin.BitcoinGraphDeltaRepository(db).saveInTransaction(
                     providerSourceId = providerSource.value,
                     anchor =
                         io.polion.core.bitcoin
                             .BitcoinBlockAnchor(anchorHeight, startTip),
                     observedAt = Instant.fromEpochMilliseconds(now()).toString(),
-                    rawChecksums = bitcoinStage.rawChecksums(),
-                    comparison = utxoComparison,
                     recoveryBaseline = recoverHistory,
                 )
                 bitcoinStage.applyCompleteInTransaction(
                     ownedAddresses,
                     reconciledAccounts,
                     requireBlockPositions = verifyBlockPositions,
-                    graph = graph,
+                    graphState = stagedGraph::state,
                 )
                 putSetting("utxo_mismatch_count", mismatchCount.toString())
                 bitcoinStage.clearInTransaction()

@@ -240,6 +240,9 @@ class BackupTest {
             source.execute("INSERT INTO accounts VALUES ('account','owner','Wallet','WALLET',NULL)")
             source.execute("DROP TABLE ledger_fee_candidates")
             source.execute("DROP TABLE ledger_unallocated_fees")
+            io.polion.core.bitcoin.bitcoinGraphDeltaTables
+                .reversed()
+                .forEach { source.execute("DROP TABLE $it") }
             io.polion.core.bitcoin.bitcoinGraphTables
                 .reversed()
                 .forEach { source.execute("DROP TABLE $it") }
@@ -250,12 +253,12 @@ class BackupTest {
                 Store(staging)
                 val backup = PortableBackup.discover(staging)
                 backup.restoreToStaging(staging, archive)
-                assertEquals("5", staging.query("PRAGMA user_version").single().single())
+                assertEquals("6", staging.query("PRAGMA user_version").single().single())
                 assertEquals("Alice", staging.query("SELECT label FROM owners").single().single())
                 assertEquals("0", staging.query("SELECT COUNT(*) FROM ledger_unallocated_fees").single().single())
                 assertEquals("0", staging.query("SELECT COUNT(*) FROM ledger_fee_candidates").single().single())
             }
-            source.execute("PRAGMA user_version = 6")
+            source.execute("PRAGMA user_version = 7")
             val newer = PortableBackup.discover(source).export(source)
             JvmSqliteDatabase(":memory:").use { staging ->
                 Store(staging)

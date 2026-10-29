@@ -308,8 +308,9 @@ class BitcoinScanStage(
         reconciledAccounts: Set<AccountId> = ownedAddresses.values.toSet(),
         requireBlockPositions: Boolean = true,
         graph: BitcoinUtxoGraph? = null,
+        graphState: ((String) -> BitcoinTransactionState?)? = null,
     ) = db.transaction {
-        applyCompleteInTransaction(ownedAddresses, reconciledAccounts, requireBlockPositions, graph)
+        applyCompleteInTransaction(ownedAddresses, reconciledAccounts, requireBlockPositions, graph, graphState)
     }
 
     /** Caller owns the transaction, including durable graph and successful-refresh metadata. */
@@ -318,7 +319,9 @@ class BitcoinScanStage(
         reconciledAccounts: Set<AccountId> = ownedAddresses.values.toSet(),
         requireBlockPositions: Boolean = true,
         graph: BitcoinUtxoGraph? = null,
+        graphState: ((String) -> BitcoinTransactionState?)? = null,
     ) {
+        require(graph == null || graphState == null) { "Choose one graph state source" }
         require(ownedAddresses.isNotEmpty())
         require(!requireBlockPositions || db.query("SELECT hash FROM bitcoin_scan_blocks WHERE resolved=0 LIMIT 1").isEmpty()) {
             "Block positions are incomplete"
@@ -336,7 +339,12 @@ class BitcoinScanStage(
                 if (rows.isEmpty()) break
                 rows.forEach { row ->
                     decoder.decode(row.toObservation()).forEach { decoded ->
-                        val state = graph?.states?.get(row[2]!!)
+                        val state =
+                            if (graphState != null) {
+                                requireNotNull(graphState(row[2]!!)) { "Staged graph is missing a transaction" }
+                            } else {
+                                graph?.states?.get(row[2]!!)
+                            }
                         val activity =
                             when (state) {
                                 BitcoinTransactionState.CONFLICTING -> decoded.copy(status = ActivityStatus.SUPERSEDED)
@@ -359,17 +367,18 @@ class BitcoinScanStage(
                 after = rows.last()[0]!!
             }
             val decoderPlaceholders = BitcoinDecoder.compatibleVersions.joinToString(",") { "?" }
-            val missing =
-                db.query(
-                    "SELECT a.id FROM ledger_activities a WHERE a.manual=0 AND a.decoder IN ($decoderPlaceholders) AND a.status<>'REVERSED' AND a.revision=(SELECT a2.revision FROM ledger_activities a2 WHERE a2.id=a.id ORDER BY CAST(a2.revision AS INTEGER) DESC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bitcoin_scan_present p WHERE p.id=a.id)",
-                    BitcoinDecoder.compatibleVersions.sorted(),
-                )
-            missing.forEach { row ->
-                val latest = activities.history(ActivityId(row.single()!!)).last()
+            var missingAfter = ""
+            while (true) {
+                val row =
+                    db
+                        .query(
+                            "SELECT a.id FROM ledger_activities a WHERE a.id>? AND a.manual=0 AND a.decoder IN ($decoderPlaceholders) AND a.status<>'REVERSED' AND a.revision=(SELECT a2.revision FROM ledger_activities a2 WHERE a2.id=a.id ORDER BY CAST(a2.revision AS INTEGER) DESC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM bitcoin_scan_present p WHERE p.id=a.id) ORDER BY a.id LIMIT 1",
+                            listOf(missingAfter) + BitcoinDecoder.compatibleVersions.sorted(),
+                        ).singleOrNull() ?: break
+                missingAfter = row.single()!!
+                val latest = activities.history(ActivityId(missingAfter)).last()
                 if (latest.movements.any { it.accountId in reconciledAccounts }) {
-                    activities.saveInTransaction(
-                        latest.copy(status = ActivityStatus.REVERSED),
-                    )
+                    activities.saveInTransaction(latest.copy(status = ActivityStatus.REVERSED))
                 }
             }
         }

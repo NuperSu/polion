@@ -125,6 +125,27 @@ class BitcoinGraphLedgerTest {
     }
 
     @Test
+    fun stagedGraphStateControlsLedgerWithoutMaterializingGraph() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            with(Fixture(db)) {
+                val payloads =
+                    listOf(
+                        payload(fund, confirmed = true),
+                        payload(original, fund, inputAddress = address, outputValue = 9_000),
+                        payload(competitor, fund, inputAddress = address, outputValue = 8_500),
+                    )
+                stage.addPage(payloads.map(::observation))
+                val staged = BitcoinStagedGraph(db)
+                staged.rebuild(stage.payloads(), owners)
+                stage.applyComplete(owners, requireBlockPositions = false, graphState = staged::state)
+                assertEquals(ActivityStatus.SUPERSEDED, status(original))
+                assertEquals(ActivityStatus.SUPERSEDED, status(competitor))
+                assertEquals("10000", projected())
+            }
+        }
+    }
+
+    @Test
     fun confirmedWinnerReversesLosingBranchAndItsDescendant() {
         JvmSqliteDatabase(":memory:").use { db ->
             with(Fixture(db)) {

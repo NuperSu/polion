@@ -33,7 +33,7 @@ class Store(
                     .single()
                     .single()!!
                     .toInt()
-            require(version in 0..5) { "Unsupported database schema version $version" }
+            require(version in 0..6) { "Unsupported database schema version $version" }
             if (version == 0) {
                 db.execute(
                     "CREATE TABLE raw_records (id TEXT PRIMARY KEY, namespace TEXT NOT NULL, external_id TEXT NOT NULL, network TEXT NOT NULL, UNIQUE(namespace, external_id, network))",
@@ -92,6 +92,11 @@ class Store(
                     .createBitcoinGraphTables(db)
                 db.execute("PRAGMA user_version = 5")
             }
+            if (version < 6) {
+                io.polion.core.bitcoin
+                    .createBitcoinGraphDeltaTables(db)
+                db.execute("PRAGMA user_version = 6")
+            }
             val requiredTables =
                 listOf(
                     "raw_records",
@@ -111,7 +116,11 @@ class Store(
                     "ownership_tags",
                 )
             val tables = db.query("SELECT name FROM sqlite_master WHERE type='table'").mapNotNull { it.single() }.toSet()
-            check(tables.containsAll(requiredTables + io.polion.core.bitcoin.bitcoinGraphTables)) { "Database schema is incomplete" }
+            check(
+                tables.containsAll(
+                    requiredTables + io.polion.core.bitcoin.bitcoinGraphTables + io.polion.core.bitcoin.bitcoinGraphDeltaTables,
+                ),
+            ) { "Database schema is incomplete" }
             check(db.query("PRAGMA integrity_check").single().single() == "ok") { "Database integrity check failed" }
             check(db.query("PRAGMA foreign_key_check").isEmpty()) { "Database foreign key check failed" }
         }

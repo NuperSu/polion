@@ -382,16 +382,22 @@ class BitcoinGraphRepository(
             SELECT anchor_height AS height,anchor_hash AS hash,id AS snapshot_id FROM bitcoin_graph_snapshots$where
             UNION ALL SELECT block_height AS height,block_hash AS hash,snapshot_id FROM bitcoin_graph_transactions
             WHERE block_height IS NOT NULL AND snapshot_id=(SELECT MAX(id) FROM bitcoin_graph_snapshots$where)
+            UNION ALL SELECT r.block_height AS height,r.block_hash AS hash,s.id AS snapshot_id
+            FROM bitcoin_graph_snapshots s JOIN bitcoin_graph_delta_snapshots d ON d.snapshot_id=s.id
+            JOIN bitcoin_graph_membership m ON m.scope_key=s.scope_key AND m.valid_from<=s.id AND (m.valid_to IS NULL OR m.valid_to>s.id)
+            JOIN bitcoin_graph_revisions r ON r.txid=m.txid AND r.checksum=m.checksum
+            WHERE r.block_height IS NOT NULL AND s.id=(SELECT MAX(id) FROM bitcoin_graph_snapshots$where)
             """.trimIndent()
         // SQLite associates bare columns with the row providing the single MAX aggregate.
         return db
             .query(
                 "SELECT height,hash,MAX(snapshot_id) FROM ($candidates) GROUP BY height ORDER BY height DESC LIMIT $limit",
-                args + args,
+                args + args + args,
             ).map { BitcoinBlockAnchor(it[0]!!.toLong(), it[1]!!) }
     }
 
     fun snapshot(id: Long): BitcoinGraphSnapshot? {
+        BitcoinGraphDeltaRepository(db).snapshot(id)?.let { return it }
         val head =
             db
                 .query(

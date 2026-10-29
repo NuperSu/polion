@@ -193,9 +193,10 @@ class BitcoinStagedGraph(
                 "bitcoin_graph_work_owned",
                 "bitcoin_graph_work_missing",
                 "bitcoin_graph_work_queue",
-            )
+            ) + BitcoinStagedUtxoComparison.SCRATCH_TABLES
 
         internal fun createTables(db: SqliteDatabase) {
+            BitcoinStagedUtxoComparison.createTables(db)
             db.execute(
                 "CREATE TABLE IF NOT EXISTS bitcoin_graph_work_transactions (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, payload TEXT NOT NULL, fee TEXT NOT NULL, coinbase INTEGER NOT NULL, height INTEGER, hash TEXT, block_time INTEGER, state TEXT NOT NULL)",
             )

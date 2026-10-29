@@ -94,6 +94,9 @@ class StorageTest {
                 db.execute("DROP TABLE ledger_sources")
                 db.execute("DROP TABLE ledger_movements")
                 db.execute("DROP TABLE ledger_activities")
+                io.polion.core.bitcoin.bitcoinGraphDeltaTables
+                    .reversed()
+                    .forEach { db.execute("DROP TABLE $it") }
                 io.polion.core.bitcoin.bitcoinGraphTables
                     .reversed()
                     .forEach { db.execute("DROP TABLE $it") }
@@ -104,7 +107,7 @@ class StorageTest {
                 assertEquals(emptyList(), db.query("SELECT name FROM sqlite_master WHERE name='ledger_activities'"))
                 db.execute("DROP TABLE ledger_movements")
                 Store(db)
-                assertEquals("5", db.query("PRAGMA user_version").single().single())
+                assertEquals("6", db.query("PRAGMA user_version").single().single())
             }
             JvmSqliteDatabase(path.toString()).use { db -> Store(db) }
         } finally {

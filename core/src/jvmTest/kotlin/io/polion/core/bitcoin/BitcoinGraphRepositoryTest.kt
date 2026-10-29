@@ -269,13 +269,14 @@ class BitcoinGraphRepositoryTest {
     }
 
     @Test
-    fun versionFourUpgradeCreatesEmptyEvidenceAndVersionFiveReopens() {
+    fun versionFourUpgradeCreatesEmptyEvidenceAndCurrentSchemaReopens() {
         JvmSqliteDatabase(":memory:").use { db ->
             Store(db)
+            bitcoinGraphDeltaTables.reversed().forEach { db.execute("DROP TABLE $it") }
             bitcoinGraphTables.reversed().forEach { db.execute("DROP TABLE $it") }
             db.execute("PRAGMA user_version = 4")
             Store(db)
-            assertEquals("5", db.query("PRAGMA user_version").single().single())
+            assertEquals("6", db.query("PRAGMA user_version").single().single())
             assertEquals(emptyList(), BitcoinGraphRepository(db).snapshots())
             Store(db)
             assertEquals(emptyList(), db.query("PRAGMA foreign_key_check"))
@@ -287,6 +288,7 @@ class BitcoinGraphRepositoryTest {
         val archive =
             JvmSqliteDatabase(":memory:").use { source ->
                 Store(source)
+                bitcoinGraphDeltaTables.reversed().forEach { source.execute("DROP TABLE $it") }
                 bitcoinGraphTables.reversed().forEach { source.execute("DROP TABLE $it") }
                 source.execute("PRAGMA user_version = 4")
                 source.execute("INSERT INTO owners VALUES ('owner-a','Owner A')")
@@ -301,7 +303,7 @@ class BitcoinGraphRepositoryTest {
             val review = BitcoinGraphRepository(staging).utxoReview(scope)
             assertNull(review.snapshotId)
             assertEquals(false, review.compared)
-            assertEquals("5", staging.query("PRAGMA user_version").single().single())
+            assertEquals("6", staging.query("PRAGMA user_version").single().single())
         }
     }
 }

@@ -1,5 +1,12 @@
 # Foundation validation
 
+## Disk-backed Bitcoin graph integration — 2026-10-29
+
+The integrated run passed formatting, Android lint and both APK builds, with **184 core JVM, 29 Android host, 18 shared UI and 7 desktop tests**, zero failures/errors/skips: `BUILD SUCCESSFUL in 25s`, 173 tasks. Tests cover staged graph and UTXO comparison parity, delta persistence, unchanged refresh row growth, old archives, reorgs, recovery, scope safety and bounded review.
+
+The API 29 emulator passed **9 native checks with 0 failures**, including the Bitcoin accounting workflow and encrypted graph restore through the production schema-6 path. Large constrained-memory end-to-end stress testing and independent real-chain acceptance remain open.
+
+
 ## Scoped UTXO review — 2026-10-29
 
 At `f7dd1ce`, the integrated run passed formatting, Android lint and APK assembly, with **166 core JVM, 29 Android host, 17 shared UI and 7 desktop tests**, zero failures/errors/skips. The serial stable-source repeat succeeded with 173 tasks. Tests cover paginated comparisons, scope changes, missing-parent deduplication and a watched account changing during an in-flight scan.
