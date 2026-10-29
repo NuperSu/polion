@@ -23,6 +23,53 @@ import kotlin.test.assertTrue
 
 class ProductPresentationTest {
     @Test
+    fun chartRangesUseScopedFirstActivityAndIncludeEndpoints() =
+        runBlocking {
+            var requested = emptyList<Long>()
+            var scope: PortfolioId? = null
+            val first = 1_000L
+            val end = 200_000_000L
+            val queries =
+                object : ProductQueries {
+                    override fun reload() = Unit
+
+                    override fun snapshot(filter: ActivityFilter): PortfolioSnapshot = error("not requested")
+
+                    override fun firstHistoryActivity(portfolio: PortfolioId?): Long? {
+                        scope = portfolio
+                        return first
+                    }
+
+                    override fun history(
+                        times: List<Long>,
+                        portfolio: PortfolioId?,
+                    ): List<HistoryPoint> {
+                        requested = times
+                        assertEquals(scope, portfolio)
+                        return emptyList()
+                    }
+                }
+            val portfolio = PortfolioId("selected")
+            val presenter =
+                ProductPresenter(
+                    ProductPresentation(page = Page.OVERVIEW, selectedPortfolio = portfolio, period = 0),
+                    queries,
+                    kotlinx.coroutines.Dispatchers.Unconfined,
+                    this,
+                ) {
+                    end
+                }
+            presenter.loadChart(0)
+            assertEquals(portfolio, scope)
+            assertEquals(first, requested.first())
+            assertEquals(end, requested.last())
+            presenter.dispatch(ProductEvent.Period(1))
+            presenter.loadChart(0)
+            assertEquals(end - 86_400_000L, requested.first())
+            assertEquals(end, requested.last())
+        }
+
+    @Test
     fun selectionEventsResetPaginationAndPreserveOtherChoices() {
         val initial =
             ProductPresentation(

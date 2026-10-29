@@ -974,6 +974,7 @@ private fun Product(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BalanceHero(
     data: PortfolioSnapshot,
@@ -1021,39 +1022,37 @@ private fun BalanceHero(
             )
         }
         ValueChart(points, Modifier.fillMaxWidth().height(if (compact) 112.dp else 150.dp), dark = true)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(7 to "1W", 30 to "1M", 90 to "3M", 365 to "1Y").forEach { (days, label) ->
-                    Text(
-                        label,
-                        color =
-                            if (period ==
-                                days
-                            ) {
-                                Hero
-                            } else {
-                                Color(0xFFB6CFC2)
-                            },
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(
-                                    if (period ==
-                                        days
-                                    ) {
-                                        Color(0xFFD6E9DD)
-                                    } else {
-                                        Color.Transparent
-                                    },
-                                ).clickable { onPeriod(days) }
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                    )
-                }
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf(1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", 365 to "1Y", 0 to "ALL").forEach { (days, label) ->
+                Text(
+                    label,
+                    color =
+                        if (period ==
+                            days
+                        ) {
+                            Hero
+                        } else {
+                            Color(0xFFB6CFC2)
+                        },
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier =
+                        Modifier
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(
+                                if (period ==
+                                    days
+                                ) {
+                                    Color(0xFFD6E9DD)
+                                } else {
+                                    Color.Transparent
+                                },
+                            ).clickable { onPeriod(days) }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
             }
-            if (!compact) Text("Historical value", color = Color(0xFFB6CFC2), fontSize = 11.sp)
         }
+        Text("Historical portfolio value · not investment return", color = Color(0xFFB6CFC2), fontSize = 11.sp)
         val missing = data.valuations.count { it.value == null }
         if (missing >
             0

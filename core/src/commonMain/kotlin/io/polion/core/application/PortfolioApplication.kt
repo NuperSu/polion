@@ -375,6 +375,19 @@ class PortfolioApplication(
         }
     }
 
+    /** Earliest confirmed activity in the selected account scope, for historical chart bounds. */
+    fun firstHistoryActivity(portfolio: PortfolioId? = null): Long? {
+        val selected = scopedAccounts(ownership.load(), portfolio)
+        return ledger()
+            .activities
+            .asSequence()
+            .map { it.activity }
+            .filter {
+                it.status == io.polion.core.ledger.ActivityStatus.CONFIRMED &&
+                    it.movements.any { movement -> movement.accountId in selected }
+            }.minOfOrNull { it.occurredAtEpochMillis }
+    }
+
     fun treatments(activityId: ActivityId): List<Treatment> =
         try {
             treatments.load(activityId)

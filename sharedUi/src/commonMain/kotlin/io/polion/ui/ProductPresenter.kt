@@ -35,6 +35,8 @@ internal interface ProductQueries {
         times: List<Long>,
         portfolio: PortfolioId?,
     ): List<HistoryPoint>
+
+    fun firstHistoryActivity(portfolio: PortfolioId?): Long? = null
 }
 
 internal class ProductPresenter(
@@ -127,7 +129,16 @@ internal class ProductPresenter(
                 withContext(dispatcher) {
                     invalidate(hostRevision)
                     val end = now()
-                    queries.history((0..12).map { end - (12L - it) * selected.period * 86_400_000L / 12 }, selected.selectedPortfolio)
+                    val start =
+                        if (selected.period == 0) {
+                            (queries.firstHistoryActivity(selected.selectedPortfolio) ?: end).coerceIn(0, end)
+                        } else {
+                            (end - selected.period.toLong() * 86_400_000L).coerceAtLeast(0)
+                        }
+                    queries.history(
+                        (0..12).map { start + (end - start) / 12 * it + ((end - start) % 12) * it / 12 },
+                        selected.selectedPortfolio,
+                    )
                 }
             if (request == chartRequest) update { copy(chart = loaded) }
         } catch (cancelled: CancellationException) {
@@ -219,4 +230,6 @@ private fun applicationQueries(app: PortfolioApplication): ProductQueries =
             times: List<Long>,
             portfolio: PortfolioId?,
         ) = app.historySeries(times, portfolio)
+
+        override fun firstHistoryActivity(portfolio: PortfolioId?) = app.firstHistoryActivity(portfolio)
     }

@@ -224,6 +224,14 @@ class PortfolioApplicationTest {
                 )
             assertTrue(scoped.activities.isEmpty())
             assertTrue(scoped.valuations.isEmpty())
+            assertEquals(
+                null,
+                app.firstHistoryActivity(
+                    io.polion.core.model
+                        .PortfolioId("other-only"),
+                ),
+            )
+            assertTrue(app.firstHistoryActivity() != null)
             assertTrue(
                 app
                     .history(

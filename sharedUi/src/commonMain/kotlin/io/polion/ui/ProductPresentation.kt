@@ -125,6 +125,6 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Account -> copy(selectedAccount = event.value, offset = 0)
         is ProductEvent.Portfolio -> copy(selectedPortfolio = event.value)
         is ProductEvent.Offset -> copy(offset = event.value.also { require(it >= 0) })
-        is ProductEvent.Period -> copy(period = event.days.also { require(it > 0) })
+        is ProductEvent.Period -> copy(period = event.days.also { require(it in setOf(0, 1, 7, 30, 90, 365)) })
         is ProductEvent.Dialog -> copy(dialog = event.value)
     }
