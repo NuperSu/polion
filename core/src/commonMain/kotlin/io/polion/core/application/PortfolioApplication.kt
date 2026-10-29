@@ -1707,7 +1707,8 @@ class PortfolioApplication(
         )
     }
 
-    fun exportCsv(): String {
+    /** Exports all matching activity movements in the requested scope, independently of on-screen pagination. */
+    fun exportCsv(filter: ActivityFilter = ActivityFilter()): String {
         fun cell(
             value: String,
             text: Boolean,
@@ -1718,22 +1719,36 @@ class PortfolioApplication(
             return "\"" + safe.replace("\"", "\"\"") + "\""
         }
         val lines = mutableListOf("activity_id,occurred_at,kind,status,account,asset,atomic_units,role,label,note")
+        val selected = scopedAccounts(ownership.load(), filter.portfolio)
         overlays.replayForLedger(activities.current()).activities.forEach { item ->
-            item.activity.movements.forEach { movement ->
-                lines +=
-                    listOf(
-                        item.activity.id.value,
-                        item.activity.occurredAtEpochMillis.toString(),
-                        item.activity.kind.name,
-                        item.activity.status.name,
-                        movement.accountId.value,
-                        movement.amount.assetId.value,
-                        movement.amount.atomicUnits.toString(),
-                        movement.role.name,
-                        item.label.orEmpty(),
-                        item.note.orEmpty(),
-                    ).mapIndexed { index, value -> cell(value, index in setOf(0, 4, 5, 8, 9)) }.joinToString(",")
+            val activity = item.activity
+            if (filter.kind != null && activity.kind != filter.kind) return@forEach
+            if (filter.search.isNotBlank() &&
+                listOfNotNull(item.label, item.note, activity.id.value, activity.kind.name)
+                    .none { it.contains(filter.search, ignoreCase = true) }
+            ) {
+                return@forEach
             }
+            activity.movements
+                .filter { movement ->
+                    movement.accountId in selected &&
+                        (filter.account == null || movement.accountId == filter.account) &&
+                        (filter.asset == null || movement.amount.assetId == filter.asset)
+                }.forEach { movement ->
+                    lines +=
+                        listOf(
+                            item.activity.id.value,
+                            item.activity.occurredAtEpochMillis.toString(),
+                            item.activity.kind.name,
+                            item.activity.status.name,
+                            movement.accountId.value,
+                            movement.amount.assetId.value,
+                            movement.amount.atomicUnits.toString(),
+                            movement.role.name,
+                            item.label.orEmpty(),
+                            item.note.orEmpty(),
+                        ).mapIndexed { index, value -> cell(value, index in setOf(0, 4, 5, 8, 9)) }.joinToString(",")
+                }
         }
         return lines.joinToString("\r\n", postfix = "\r\n")
     }
