@@ -16,6 +16,25 @@ import kotlin.test.assertTrue
 
 class PortfolioApplicationTest {
     @Test
+    fun assetListPreferencePersistsInBackupWithoutChangingBalances() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 1000L }
+            app.seedDemo()
+            val before = app.snapshot().balances
+            assertEquals(AssetListPreference(), app.assetListPreference())
+            val preference = AssetListPreference(AssetSort.NAME, hideEmpty = true)
+            app.setAssetListPreference(preference)
+            assertEquals(preference, PortfolioApplication(db) { 1000L }.assetListPreference())
+            assertEquals(before, app.snapshot().balances)
+            val backup = app.exportBackup("fixture-password".toCharArray())
+            JvmSqliteDatabase(":memory:").use { staging ->
+                app.restoreToStaging(staging, backup, "fixture-password".toCharArray())
+                assertEquals(preference, PortfolioApplication(staging) { 1000L }.assetListPreference())
+            }
+        }
+    }
+
+    @Test
     fun dashboardWidgetsPersistOrderVisibilityAndBackup() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }

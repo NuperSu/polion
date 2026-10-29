@@ -56,7 +56,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.AssetAllocation
+import io.polion.core.application.AssetListPreference
+import io.polion.core.application.AssetSort
 import io.polion.core.application.AssetValuation
 import io.polion.core.application.DashboardWidget
 import io.polion.core.application.DashboardWidgetPreference
@@ -216,6 +217,7 @@ private fun Product(
 ) {
     val presenter = rememberProductPresenter(app, host)
     var widgets by remember(app) { mutableStateOf(app.dashboardWidgets()) }
+    var assetPreference by remember(app) { mutableStateOf(app.assetListPreference()) }
     var widgetDraft by remember(app) { mutableStateOf<List<DashboardWidgetPreference>?>(null) }
     var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
     val snapshot = presenter.state.snapshot
@@ -224,6 +226,7 @@ private fun Product(
     val dashboardRevision by host.dataRevision.collectAsState()
     LaunchedEffect(app, dashboardRevision, revision) {
         widgets = withContext(host.dispatcher) { app.dashboardWidgets() }
+        assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
     }
     LaunchedEffect(revision) {
         if (revision != 0) onLocalDataChanged()
@@ -267,6 +270,12 @@ private fun Product(
         success: String = "Saved on this device",
         action: () -> Unit,
     ) = presenter.execute(success, action)
+
+    fun saveAssetPreference(preference: AssetListPreference) =
+        execute("Asset display saved") {
+            app.setAssetListPreference(preference)
+            assetPreference = preference
+        }
     LaunchedEffect(presenter, snackbar) {
         presenter.messages.collect { snackbar.showSnackbar(it) }
     }
@@ -457,7 +466,10 @@ private fun Product(
                                                         modifier = Modifier.fillMaxWidth(),
                                                     ) {
                                                         Column(Modifier.weight(1.5f)) {
-                                                            AssetsCard(data, { selectedAsset = it }, { dialog = "price" })
+                                                            AssetsCard(data, assetPreference, busy, ::saveAssetPreference, {
+                                                                selectedAsset =
+                                                                    it
+                                                            }, { dialog = "price" })
                                                         }
                                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                                             HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
@@ -465,7 +477,10 @@ private fun Product(
                                                         }
                                                     }
                                                 } else {
-                                                    AssetsCard(data, { selectedAsset = it }, { dialog = "price" })
+                                                    AssetsCard(data, assetPreference, busy, ::saveAssetPreference, { selectedAsset = it }, {
+                                                        dialog =
+                                                            "price"
+                                                    })
                                                 }
                                             }
                                         DashboardWidget.HEALTH ->
@@ -1131,35 +1146,30 @@ private fun ValueChart(
 @Composable
 private fun AssetsCard(
     data: PortfolioSnapshot,
+    preference: AssetListPreference,
+    busy: Boolean,
+    onPreference: (AssetListPreference) -> Unit,
     onAsset: (AssetValuation) -> Unit,
     onPrice: () -> Unit,
 ) {
-    var sortByValue by rememberSaveable { mutableStateOf(true) }
+    val sortByValue = preference.sort == AssetSort.VALUE
     val sorted =
-        remember(data.valuations, sortByValue) {
-            if (sortByValue) {
-                data.valuations.sortedWith { a, b ->
-                    val aValue = a.value
-                    val bValue = b.value
-                    when {
-                        aValue == null && bValue != null -> 1
-                        aValue != null && bValue == null -> -1
-                        aValue != null && bValue != null ->
-                            bValue.compareTo(aValue).takeIf { it != 0 }
-                                ?: a.asset.value.compareTo(b.asset.value)
-                        else -> a.asset.value.compareTo(b.asset.value)
-                    }
-                }
-            } else {
-                data.valuations.sortedWith(compareBy({ (it.metadata?.name ?: it.asset.value).lowercase() }, { it.asset.value }))
-            }
+        remember(data.valuations, preference) {
+            displayedAssets(data.valuations, preference)
         }
     Panel {
         SectionTitle("Your assets", "Prices") { onPrice() }
         if (data.valuations.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = sortByValue, onClick = { sortByValue = true }, label = { Text("Value") })
-                FilterChip(selected = !sortByValue, onClick = { sortByValue = false }, label = { Text("Name") })
+                FilterChip(selected = sortByValue, enabled = !busy, onClick = {
+                    onPreference(preference.copy(sort = AssetSort.VALUE))
+                }, label = { Text("Value") })
+                FilterChip(selected = !sortByValue, enabled = !busy, onClick = {
+                    onPreference(preference.copy(sort = AssetSort.NAME))
+                }, label = { Text("Name") })
+                FilterChip(selected = preference.hideEmpty, enabled = !busy, onClick = {
+                    onPreference(preference.copy(hideEmpty = !preference.hideEmpty))
+                }, label = { Text("Hide empty") }, modifier = Modifier.testTag("hide-empty-assets"))
             }
         }
         if (data.valuations.isEmpty()) {
@@ -1169,6 +1179,9 @@ private fun AssetsCard(
                 fontSize = 13.sp,
                 lineHeight = 21.sp,
             )
+        }
+        if (data.valuations.isNotEmpty() && sorted.isEmpty()) {
+            Text("All positions are empty. Turn off Hide empty to see them.", color = Muted, fontSize = 13.sp)
         }
         sorted.forEach { asset ->
             Row(

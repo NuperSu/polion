@@ -223,6 +223,25 @@ class PolionUiTest {
     }
 
     @Test
+    fun assetDisplayChoiceIsSavedFromPortfolio() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 1000, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-OVERVIEW").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasTestTag("hide-empty-assets"))
+                    onNodeWithTag("hide-empty-assets").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.assetListPreference().hideEmpty }
+                    assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.assetListPreference().hideEmpty)
+                }
+            }
+        }
+    }
+
+    @Test
     fun erasingLocalDataReturnsToFreshOnboardingWithoutHostRevision() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

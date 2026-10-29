@@ -1175,6 +1175,17 @@ class PortfolioApplication(
         putSetting("appearance_theme", theme)
     }
 
+    fun assetListPreference(): AssetListPreference {
+        val parts = setting("asset_list_preference")?.split(':') ?: return AssetListPreference()
+        if (parts.size != 2 || parts[1] !in setOf("0", "1")) return AssetListPreference()
+        val sort = AssetSort.entries.firstOrNull { it.name == parts[0] } ?: return AssetListPreference()
+        return AssetListPreference(sort, parts[1] == "1")
+    }
+
+    fun setAssetListPreference(preference: AssetListPreference) {
+        putSetting("asset_list_preference", "${preference.sort.name}:${if (preference.hideEmpty) 1 else 0}")
+    }
+
     fun dashboardWidgets(): List<DashboardWidgetPreference> {
         val saved = setting("dashboard_widgets") ?: return DashboardWidget.entries.map { DashboardWidgetPreference(it, true) }
         val entries =
