@@ -753,25 +753,25 @@ class PortfolioApplication(
         val result = mutableListOf<JobState>()
         var pagesFetched = 0
         var transactionsFetched = 0
-        val historyFetcher =
-            ConnectorRegistry(
-                listOf(
-                    RegisteredConnector(
-                        IntegrationManifest(
-                            BITCOIN_CONNECTOR_ID,
-                            setOf(BITCOIN_MAINNET),
-                            setOf("address"),
-                            setOf(Capability.HISTORY, Capability.DECODING),
-                            requiresAuthentication = false,
-                            coverage = Coverage.PARTIAL,
-                        ),
-                        EsploraHistoryFetcher(scanned.associate { it.accountId to it.address }, recordingTransport) {
-                            Instant.fromEpochMilliseconds(now()).toString()
-                        },
-                    ),
-                ),
-            ).historyFetcher(BITCOIN_MAINNET)
         for ((addressIndex, scan) in scanned.withIndex()) {
+            val historyFetcher =
+                ConnectorRegistry(
+                    listOf(
+                        RegisteredConnector(
+                            IntegrationManifest(
+                                BITCOIN_CONNECTOR_ID,
+                                setOf(BITCOIN_MAINNET),
+                                setOf("address"),
+                                setOf(Capability.HISTORY, Capability.DECODING),
+                                requiresAuthentication = false,
+                                coverage = Coverage.PARTIAL,
+                            ),
+                            EsploraHistoryFetcher(mapOf(scan.accountId to scan.address), recordingTransport) {
+                                Instant.fromEpochMilliseconds(now()).toString()
+                            },
+                        ),
+                    ),
+                ).historyFetcher(BITCOIN_MAINNET)
             val counter = (setting("sync_sequence")?.toLong() ?: 0L) + 1
             putSetting("sync_sequence", counter.toString())
             val jobId = SyncJobId("bitcoin-${session.generation}-${sha256(scan.address).take(16)}")
