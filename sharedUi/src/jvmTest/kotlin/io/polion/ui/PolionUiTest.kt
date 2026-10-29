@@ -24,7 +24,13 @@ import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.PortfolioApplication
+import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityKind
+import io.polion.core.ledger.ActivityRepository
+import io.polion.core.ledger.ActivityStatus
+import io.polion.core.ledger.Movement
+import io.polion.core.ledger.MovementRole
+import io.polion.core.model.AccountId
 import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
@@ -33,6 +39,7 @@ import io.polion.core.model.ExactInteger
 import io.polion.core.model.SourceRecordId
 import io.polion.core.reconcile.ActivityOverlay
 import io.polion.core.reconcile.ClassificationRule
+import io.polion.core.reconcile.LinkState
 import io.polion.core.storage.JvmSqliteDatabase
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -273,6 +280,82 @@ class PolionUiTest {
                     assertTrue(app.sourceConsent())
                     host.syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Reading page 1")
                     onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun transferReviewRemovesRelationshipsRejectsConflictsAndKeepsSuggestionsUsable() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { 1000L }
+
+                fun activity(
+                    id: String,
+                    amount: String,
+                    status: ActivityStatus = ActivityStatus.CONFIRMED,
+                ) = Activity(
+                    ActivityId(id),
+                    100,
+                    id,
+                    ActivityKind.TRANSFER,
+                    status,
+                    listOf(
+                        Movement(
+                            EventId("$id-event"),
+                            AccountId(id),
+                            AtomicAmount(AssetId("bitcoin:btc"), ExactInteger.parse(amount)),
+                            MovementRole.TRANSFER,
+                        ),
+                    ),
+                    emptySet(),
+                    null,
+                    manual = true,
+                )
+                val records =
+                    listOf(
+                        activity("accepted-out", "-10"),
+                        activity("accepted-in", "10"),
+                        activity("conflict-out", "-20"),
+                        activity("conflict-in", "20", ActivityStatus.REVERSED),
+                        activity("candidate-out", "-30"),
+                        activity("candidate-in", "30"),
+                    )
+                val repository = ActivityRepository(db)
+                records.forEach { repository.save(it) }
+                app.setDecision(ActivityId("accepted-out"), ActivityId("accepted-in"), LinkState.ACCEPTED)
+                app.setDecision(ActivityId("conflict-out"), ActivityId("conflict-in"), LinkState.ACCEPTED)
+                val original = repository.current()
+                val data = app.snapshot()
+                var closed = false
+                runDesktopComposeUiTest(width = 800, height = 1000) {
+                    setContent {
+                        WorkflowDialog("reconcile", data, app, host, { closed = true }, { _, operation -> operation() }, {}, { _, _ -> })
+                    }
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Outgoing: accepted-out · accepted-out-event").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithText("Outgoing: accepted-out · accepted-out-event").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("Incoming: accepted-in · accepted-in-event").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("Unresolved: activity inactive").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("remove-transfer-accepted-out-accepted-in").performScrollTo().performClick()
+                    onNodeWithText("No accepted transfer relationships.").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("reject-transfer-conflict-conflict-in-conflict-out").performScrollTo().performClick()
+                    onNodeWithText("No transfer link conflicts.").performScrollTo().assertIsDisplayed()
+                    runOnIdle {
+                        assertTrue(app.transferLinks().isEmpty())
+                        assertTrue(app.transferLinkConflicts().isEmpty())
+                        assertEquals(1, app.reconciliationCandidates(86_400_000).size)
+                        assertEquals(original, repository.current())
+                    }
+                    onNodeWithTag("accept-transfer-candidate-in-candidate-out").performScrollTo().performClick()
+                    runOnIdle {
+                        assertTrue(closed)
+                        assertEquals(ActivityId("candidate-out"), app.transferLinks().single().outgoingActivity)
+                        assertEquals(original, repository.current())
+                        assertTrue(app.reconciliationCandidates(86_400_000).isEmpty())
+                    }
                 }
             }
         }

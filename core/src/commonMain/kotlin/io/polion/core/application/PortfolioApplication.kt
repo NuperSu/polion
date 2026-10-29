@@ -74,6 +74,8 @@ import io.polion.core.reconcile.LinkState
 import io.polion.core.reconcile.OverlayRepository
 import io.polion.core.reconcile.Reconciliation
 import io.polion.core.reconcile.ReconciliationCandidate
+import io.polion.core.reconcile.TransferLink
+import io.polion.core.reconcile.TransferLinkConflict
 import io.polion.core.storage.OwnershipRepository
 import io.polion.core.storage.OwnershipSnapshot
 import io.polion.core.storage.SqliteDatabase
@@ -561,6 +563,10 @@ class PortfolioApplication(
             orderingUncertain,
         )
     }
+
+    fun transferLinks(): List<TransferLink> = ledger().transferLinks
+
+    fun transferLinkConflicts(): List<TransferLinkConflict> = ledger().transferLinkConflicts
 
     fun reconciliationCandidates(windowMillis: Long): List<ReconciliationCandidate> {
         val reviewedPairs = overlays.decisions().map { it.first to it.second }.toSet()

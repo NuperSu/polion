@@ -79,6 +79,8 @@ import io.polion.core.reconcile.ClassificationRule
 import io.polion.core.reconcile.EffectiveActivity
 import io.polion.core.reconcile.LinkState
 import io.polion.core.reconcile.ReconciliationCandidate
+import io.polion.core.reconcile.TransferLink
+import io.polion.core.reconcile.TransferLinkConflict
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
@@ -129,6 +131,9 @@ internal fun WorkflowDialog(
     var priceMessage by remember { mutableStateOf<String?>(null) }
     var background by remember { mutableStateOf(host.backgroundRefreshEnabled()) }
     var candidates by remember { mutableStateOf<List<ReconciliationCandidate>>(emptyList()) }
+    var transferLinks by remember { mutableStateOf<List<TransferLink>>(emptyList()) }
+    var transferConflicts by remember { mutableStateOf<List<TransferLinkConflict>>(emptyList()) }
+    var transfersLoaded by remember { mutableStateOf(false) }
     var selectedAccounts by remember { mutableStateOf(emptySet<AccountId>()) }
     var acceptedBackup by rememberSaveable { mutableStateOf(false) }
     var acceptedRecovery by rememberSaveable { mutableStateOf(false) }
@@ -140,7 +145,14 @@ internal fun WorkflowDialog(
             rulesLoaded = true
         }
         if (type == "price") priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
-        if (type == "reconcile") candidates = withContext(host.dispatcher) { app.reconciliationCandidates(86_400_000) }
+        if (type == "reconcile") {
+            withContext(host.dispatcher) {
+                candidates = app.reconciliationCandidates(86_400_000)
+                transferLinks = app.transferLinks()
+                transferConflicts = app.transferLinkConflicts()
+            }
+            transfersLoaded = true
+        }
     }
     val title =
         when (type) {
@@ -693,10 +705,46 @@ internal fun WorkflowDialog(
             }
             "reconcile" -> {
                 Text(
-                    "These opposite movements may be internal transfers. Accepting a link preserves both source records; it does not suppress a duplicate or change quantities.",
+                    "Links record an informational relationship between movements. They preserve source records and quantities, do not establish shared ownership, and do not assign an accounting treatment.",
                     fontSize = 13.sp,
                 )
-                if (candidates.isEmpty()) Text("No transfer candidates in the current history.")
+                Text("Accepted relationships", fontWeight = FontWeight.SemiBold)
+                if (!transfersLoaded) Text("Loading transfer review…")
+                if (transfersLoaded && transferLinks.isEmpty()) Text("No accepted transfer relationships.")
+                transferLinks.forEach { link ->
+                    HorizontalDivider()
+                    Text("Outgoing: ${link.outgoingActivity.value} · ${link.outgoingEvent.value}", fontSize = 11.sp)
+                    Text("Incoming: ${link.incomingActivity.value} · ${link.incomingEvent.value}", fontSize = 11.sp)
+                    TextButton(onClick = {
+                        execute("Transfer link removed; decision marked rejected") {
+                            app.setDecision(link.outgoingActivity, link.incomingActivity, LinkState.REJECTED)
+                            transferLinks = app.transferLinks()
+                            transferConflicts = app.transferLinkConflicts()
+                            candidates = app.reconciliationCandidates(86_400_000)
+                        }
+                    }, modifier = Modifier.testTag("remove-transfer-${link.outgoingActivity.value}-${link.incomingActivity.value}")) {
+                        Text("Remove link")
+                    }
+                }
+                Text("Accepted decisions needing review", fontWeight = FontWeight.SemiBold)
+                if (transfersLoaded && transferConflicts.isEmpty()) Text("No transfer link conflicts.")
+                transferConflicts.forEach { conflict ->
+                    HorizontalDivider()
+                    Text("${conflict.first.value} ↔ ${conflict.second.value}", fontSize = 11.sp)
+                    Text("Unresolved: ${conflict.reason}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    TextButton(onClick = {
+                        execute("Transfer decision rejected") {
+                            app.setDecision(conflict.first, conflict.second, LinkState.REJECTED)
+                            transferLinks = app.transferLinks()
+                            transferConflicts = app.transferLinkConflicts()
+                            candidates = app.reconciliationCandidates(86_400_000)
+                        }
+                    }, modifier = Modifier.testTag("reject-transfer-conflict-${conflict.first.value}-${conflict.second.value}")) {
+                        Text("Reject decision")
+                    }
+                }
+                Text("Suggestions", fontWeight = FontWeight.SemiBold)
+                if (transfersLoaded && candidates.isEmpty()) Text("No transfer candidates in the current history.")
                 candidates.take(50).forEach { candidate ->
                     HorizontalDivider()
                     Text(candidate.first.value, fontSize = 11.sp)
@@ -706,10 +754,16 @@ internal fun WorkflowDialog(
                         fontSize = 12.sp,
                     )
                     Row {
-                        TextButton(onClick = {
-                            execute("Transfer link accepted") { app.setDecision(candidate.first, candidate.second, LinkState.ACCEPTED) }
-                            close()
-                        }) { Text("Link") }
+                        TextButton(
+                            onClick = {
+                                execute("Transfer link accepted") { app.setDecision(candidate.first, candidate.second, LinkState.ACCEPTED) }
+                                close()
+                            },
+                            modifier =
+                                Modifier.testTag(
+                                    "accept-transfer-${candidate.first.value}-${candidate.second.value}",
+                                ),
+                        ) { Text("Link") }
                         TextButton(onClick = {
                             execute("Suggestion rejected") { app.setDecision(candidate.first, candidate.second, LinkState.REJECTED) }
                             close()
