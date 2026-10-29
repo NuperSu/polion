@@ -26,7 +26,7 @@ import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.Executors
 import javax.swing.SwingUtilities
 
-private class DesktopHost(
+internal class DesktopHost(
     private val directory: Path,
     demo: Boolean,
 ) : PlatformActions {
@@ -96,49 +96,51 @@ private class DesktopHost(
         onResult: (String) -> Unit,
     ) {
         executor.execute {
-            if (syncQueue.busy) {
-                SwingUtilities.invokeLater { onResult("Wait for the active sync to finish, then restore") }
-                return@execute
-            }
-            var staging: Path? = null
-            var result = "Could not restore backup"
-            var swapped = false
-            var reopened = false
-            try {
-                staging = Files.createTempFile(directory, "restore-", ".sqlite")
-                JvmSqliteDatabase(staging.toString()).use { app.value.restoreToStaging(it, bytes, password.toCharArray()) }
-                java.nio.channels.FileChannel
-                    .open(staging, java.nio.file.StandardOpenOption.WRITE)
-                    .use { it.force(true) }
-                db.close()
-                try {
-                    Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                    swapped = true
-                } finally {
-                    db = JvmSqliteDatabase(file.toString())
-                    reopened = true
-                }
-                val replacement = PortfolioApplication(db, System::currentTimeMillis)
-                SwingUtilities.invokeAndWait {
-                    app.value = replacement
-                    dataRevision.update { it + 1 }
-                }
-                result = "Backup restored"
-            } catch (_: Exception) {
-                if (swapped) result = "Backup restored; reopen the app to load it"
-                if (reopened && !swapped) {
-                    runCatching {
+            var message = "Could not restore backup"
+            val accepted =
+                syncQueue.tryRunExclusive {
+                    var staging: Path? = null
+                    var result = "Could not restore backup"
+                    var swapped = false
+                    var reopened = false
+                    try {
+                        staging = Files.createTempFile(directory, "restore-", ".sqlite")
+                        JvmSqliteDatabase(staging.toString()).use { app.value.restoreToStaging(it, bytes, password.toCharArray()) }
+                        java.nio.channels.FileChannel
+                            .open(staging, java.nio.file.StandardOpenOption.WRITE)
+                            .use { it.force(true) }
+                        closeSyncConnection()
+                        db.close()
+                        try {
+                            Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                            swapped = true
+                        } finally {
+                            db = JvmSqliteDatabase(file.toString())
+                            reopened = true
+                        }
                         val replacement = PortfolioApplication(db, System::currentTimeMillis)
                         SwingUtilities.invokeAndWait {
                             app.value = replacement
                             dataRevision.update { it + 1 }
                         }
+                        result = "Backup restored"
+                    } catch (_: Exception) {
+                        if (swapped) result = "Backup restored; reopen the app to load it"
+                        if (reopened && !swapped) {
+                            runCatching {
+                                val replacement = PortfolioApplication(db, System::currentTimeMillis)
+                                SwingUtilities.invokeAndWait {
+                                    app.value = replacement
+                                    dataRevision.update { it + 1 }
+                                }
+                            }
+                        }
+                    } finally {
+                        staging?.let { runCatching { Files.deleteIfExists(it) } }
                     }
+                    message = result
                 }
-            } finally {
-                staging?.let { runCatching { Files.deleteIfExists(it) } }
-            }
-            val message = result
+            if (!accepted) message = "Wait for the active sync to finish, then restore"
             SwingUtilities.invokeLater { onResult(message) }
         }
     }
@@ -147,7 +149,7 @@ private class DesktopHost(
      * Runs one network task on the sync worker with its own database connection, so UI reads, saves and unlock
      * stay on the UI queue. A task is refused while another sync is active.
      */
-    private fun runSync(
+    internal fun runSync(
         start: SyncStatus,
         onResult: (String) -> Unit,
         task: (PortfolioApplication) -> SyncStatus,

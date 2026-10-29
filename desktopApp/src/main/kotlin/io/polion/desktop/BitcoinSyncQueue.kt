@@ -37,6 +37,17 @@ internal class BitcoinSyncQueue(
         return true
     }
 
+    /** Reserves the sync slot for a database replacement on the caller's worker queue. */
+    fun tryRunExclusive(task: () -> Unit): Boolean {
+        if (!active.compareAndSet(false, true)) return false
+        try {
+            task()
+        } finally {
+            active.set(false)
+        }
+        return true
+    }
+
     fun shutdown() {
         executor.shutdown()
     }
