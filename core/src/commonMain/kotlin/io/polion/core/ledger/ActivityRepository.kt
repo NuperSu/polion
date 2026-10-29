@@ -75,7 +75,7 @@ class ActivityRepository(
     }
 
     fun history(id: ActivityId): List<Activity> =
-        db.query("SELECT * FROM ledger_activities WHERE id=? ORDER BY revision", listOf(id.value)).map { row ->
+        db.query("SELECT * FROM ledger_activities WHERE id=? ORDER BY CAST(revision AS INTEGER)", listOf(id.value)).map { row ->
             val revision = row[1]!!
             Activity(
                 id,

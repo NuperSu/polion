@@ -203,6 +203,9 @@ class PortfolioApplication(
     private val market = MarketRepository(db)
     private val treatments = TreatmentRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
+    private val bitcoinGraph =
+        io.polion.core.bitcoin
+            .BitcoinGraphRepository(db)
     private var cachedLedger: EffectiveLedger? = null
     private var holdingsCurrent = false
 
@@ -657,6 +660,29 @@ class PortfolioApplication(
             sha256(
                 "${providerSource.value}|" + addresses.entries.sortedBy { it.key }.joinToString("|") { "${it.key}=${it.value.value}" },
             )
+        val acceptedAnchors = bitcoinGraph.anchors(addresses)
+        val previousCheckpoint = acceptedAnchors.maxByOrNull { it.height }
+        if (previousCheckpoint != null) {
+            require(previousCheckpoint.height <= anchorHeight) {
+                throw BitcoinProviderException(BitcoinProviderFailure.LAGGING_CHAIN)
+            }
+            val canonical = transport.get("/block-height/${previousCheckpoint.height}").trim()
+            require(canonical.matches(Regex("[0-9a-f]{64}"))) { "Invalid checkpoint response" }
+            if (canonical != previousCheckpoint.hash) {
+                val continuity =
+                    try {
+                        io.polion.core.bitcoin
+                            .BitcoinReorgDetector(transport)
+                            .check(acceptedAnchors, anchorHeight)
+                    } catch (_: io.polion.core.bitcoin.BitcoinReorgBeyondBoundException) {
+                        throw BitcoinProviderException(BitcoinProviderFailure.REORG_RECOVERY_REQUIRED)
+                    }
+                require(continuity.aboveTip.isEmpty() && continuity.commonAncestor != null) {
+                    throw BitcoinProviderException(BitcoinProviderFailure.REORG_RECOVERY_REQUIRED)
+                }
+                bitcoinStage.clear()
+            }
+        }
         val pending = bitcoinStage.session()
         val resumable = pending != null && pending.fingerprint == fingerprint && pending.anchorHeight <= anchorHeight
         if (!resumable) {
@@ -771,16 +797,46 @@ class PortfolioApplication(
             require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
+            require(transport.get("/block-height/$anchorHeight").trim() == startTip) {
+                throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
+            }
+            bitcoinStage.validateBlocks(transport)
             val graph = BitcoinUtxoGraph.build(bitcoinStage.payloads(), addresses)
+            require(graph.transactions.values.all { it.block == null || it.block.height <= anchorHeight }) {
+                throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+            }
             val utxoComparison = compareUtxoSets(graph, provider)
             val mismatchCount = utxoComparison.mismatches.size + utxoComparison.missingParents.size
             runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "apply")) }
-            bitcoinStage.applyComplete(ownedAddresses, reconciledAccounts, requireBlockPositions = verifyBlockPositions)
-            putSetting("utxo_mismatch_count", mismatchCount.toString())
-            bitcoinStage.clear()
+            require(
+                transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash &&
+                    transport.get("/block-height/$anchorHeight").trim() == startTip,
+            ) {
+                throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
+            }
+            db.transaction {
+                bitcoinGraph.saveInTransaction(
+                    graph = graph,
+                    providerSourceId = providerSource.value,
+                    anchor =
+                        io.polion.core.bitcoin
+                            .BitcoinBlockAnchor(anchorHeight, startTip),
+                    observedAt = Instant.fromEpochMilliseconds(now()).toString(),
+                    rawChecksums = bitcoinStage.rawChecksums(),
+                    comparison = utxoComparison,
+                )
+                bitcoinStage.applyCompleteInTransaction(
+                    ownedAddresses,
+                    reconciledAccounts,
+                    requireBlockPositions = verifyBlockPositions,
+                    graph = graph,
+                )
+                putSetting("utxo_mismatch_count", mismatchCount.toString())
+                bitcoinStage.clearInTransaction()
+                putSetting("source_last_success", now().toString())
+                db.execute("DELETE FROM application_settings WHERE key='source_error'")
+            }
             invalidate()
-            putSetting("source_last_success", now().toString())
-            db.execute("DELETE FROM application_settings WHERE key='source_error'")
         } else {
             putSetting("source_error", providerFailure?.reason?.userMessage ?: "History is incomplete. Saved data is unchanged; retry.")
         }

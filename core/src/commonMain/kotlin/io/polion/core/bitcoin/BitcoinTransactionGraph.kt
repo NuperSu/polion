@@ -2,6 +2,7 @@ package io.polion.core.bitcoin
 
 import io.polion.core.model.AccountId
 import io.polion.core.model.ExactInteger
+import io.polion.core.storage.sha256
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -223,7 +224,7 @@ data class BitcoinAccountUtxoBalance(
  * Supply all transactions touching every owned address; spends of owned outputs whose creating transaction is
  * absent are reported in [missingParents] because the reconstruction is then incomplete.
  */
-class BitcoinUtxoGraph private constructor(
+class BitcoinUtxoGraph internal constructor(
     val ownedAddresses: Map<String, AccountId>,
     val transactions: Map<String, BitcoinGraphTransaction>,
     val states: Map<String, BitcoinTransactionState>,
@@ -263,7 +264,7 @@ class BitcoinUtxoGraph private constructor(
 
     companion object {
         fun build(
-            payloads: Collection<String>,
+            payloads: Iterable<String>,
             ownedAddresses: Map<String, AccountId>,
         ): BitcoinUtxoGraph {
             val owners = ownedAddresses.mapKeys { bitcoinMainnetAddress(it.key) }
@@ -271,8 +272,8 @@ class BitcoinUtxoGraph private constructor(
             payloads.forEach { payload ->
                 val tx = parseBitcoinGraphTransaction(payload)
                 val previous = byId[tx.id]
-                require(previous == null || previous.first == payload) { "Transaction has conflicting observations" }
-                byId[tx.id] = payload to tx
+                require(previous == null || previous.first == sha256(payload)) { "Transaction has conflicting observations" }
+                byId[tx.id] = sha256(payload) to tx
             }
             val transactions = byId.mapValues { it.value.second }.toSortedMap()
             val spenders = mutableMapOf<BitcoinOutpoint, MutableList<String>>()

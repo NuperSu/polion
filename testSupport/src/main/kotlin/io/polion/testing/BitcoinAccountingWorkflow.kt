@@ -4,6 +4,7 @@ import io.polion.core.accounting.QuoteValue
 import io.polion.core.accounting.Treatment
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BITCOIN_MAINNET
+import io.polion.core.bitcoin.BitcoinGraphRepository
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.ledger.MovementRole
 import io.polion.core.model.AccountId
@@ -182,8 +183,15 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
             val restored = PortfolioApplication(staging) { 1_000_000L }
             assertEquals(verified, restored.accountingReport())
             assertEquals(app.exportCsv(), restored.exportCsv())
+            val savedGraph = BitcoinGraphRepository(db).latest()!!
+            val restoredGraph = BitcoinGraphRepository(staging).latest()!!
+            assertEquals(savedGraph.anchor, restoredGraph.anchor)
+            assertEquals(savedGraph.graph.transactions, restoredGraph.graph.transactions)
+            assertEquals(savedGraph.graph.ownedOutputs, restoredGraph.graph.ownedOutputs)
+            assertEquals(savedGraph.rawChecksums, restoredGraph.rawChecksums)
+            assertEquals(savedGraph.comparison, restoredGraph.comparison)
         }
-        listOf("d", "e", "f").forEachIndexed { index, hash -> hashes[index] = hash.repeat(64) }
+        hashes[2] = "f".repeat(64)
         app.refreshBitcoin(transport)
         assertTrue(app.accountingReport().orderingUncertain.isNotEmpty())
         app

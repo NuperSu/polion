@@ -1,5 +1,13 @@
 # Foundation validation
 
+## Durable Bitcoin graph and operational chain acceptance — 2026-10-29
+
+The integrated graph/reorg run passed `ktlintCheck`, core JVM and Android-host tests, shared UI and desktop tests, both Android APK builds and Android lint: `BUILD SUCCESSFUL in 25s`, 173 tasks. XML reports contain **155 core JVM, 29 Android host, 15 shared UI and 7 desktop tests**, with zero failures, errors or skips. A final added regression for a chain change during block validation passed with **156 core JVM tests** and formatting checks. The Android transport file also passes the standalone ktlint CLI.
+
+New tests cover persisted outpoints/scripts/states, reopen, scoped membership, possible and confirmed replacement evidence, version-4 archive restore into schema 5, graph/ledger rollback, conflict descendants, confirmation/reorg/disappearance revisions, and operational shallow/deep/lagging-chain acceptance. The shared financial workflow preserves its exact valuation/FIFO/CSV assertions and tests a shallow reorg with an unchanged ancestor; its encrypted restore compares persisted graph evidence too.
+
+The API 29 disposable emulator reports **9 native checks, 0 failures**, including the shared Bitcoin accounting and graph-restore workflow. The green APK was installed and opened on the Pixel's current user 10 after verifying that sync was idle; the package update preserves records. These results establish deterministic storage and application paths; they do not establish independent real-chain completeness or close full-history recovery UI, bounded-memory normalized graph construction, hosted CI, or remaining product/device gates. See [chain evidence](bitcoin-chain-state.md).
+
 Baseline: Kotlin 2.4.21, Compose Multiplatform plugin 1.12.2, AGP 9.2.0, Gradle 9.4.1, JDK 21, Android compile/target SDK 37 and min SDK 26.
 
 ## Reproduce

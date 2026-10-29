@@ -20,7 +20,8 @@ class BlockstreamTransport(
     override fun get(path: String): String {
         require(
             (
-                path.startsWith("/address/") || path == "/blocks/tip/hash" || path.matches(Regex("/block/[0-9a-f]{64}(/txids)?")) ||
+                path.startsWith("/address/") || path == "/blocks/tip/hash" || path == "/blocks/tip/height" ||
+                    path.matches(Regex("/block/[0-9a-f]{64}(/txids)?")) ||
                     path.matches(Regex("/block-height/[0-9]+"))
             ) &&
                 !path.contains("..") &&

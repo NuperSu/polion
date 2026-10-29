@@ -9,6 +9,10 @@ enum class BitcoinProviderFailure(
     UNAVAILABLE("The provider rejected the request. Check the endpoint or try again later."),
     HISTORY_CHANGED("Public history changed during the scan. Saved data is unchanged; retry."),
     REORGANIZED("The Bitcoin chain reorganized during the scan. Saved data is unchanged; retry."),
+    LAGGING_CHAIN("The provider is behind the saved Bitcoin checkpoint. Saved data is unchanged; retry with an up-to-date provider."),
+    REORG_RECOVERY_REQUIRED(
+        "The saved Bitcoin chain has no verified ancestor within the automatic rewind bound. Saved data is unchanged; a full history recovery is required.",
+    ),
 }
 
 /** Contains a fixed public message, never an address, URL or transport exception text. */

@@ -54,10 +54,11 @@ class BitcoinScanStage(
             )
     }
 
-    fun clear() =
-        db.transaction {
-            SCRATCH_TABLES.forEach { db.execute("DELETE FROM $it") }
-        }
+    fun clear() = db.transaction { clearInTransaction() }
+
+    fun clearInTransaction() {
+        SCRATCH_TABLES.forEach { db.execute("DELETE FROM $it") }
+    }
 
     /** The pending scan whose staged pages and per-address progress may be resumed; null when none is pending. */
     fun session(): BitcoinScanSession? =
@@ -86,7 +87,22 @@ class BitcoinScanStage(
             .map { BitcoinScanAddress(it[0]!!, AccountId(it[1]!!), it[2]) }
 
     /** Staged transaction payloads for the pending scan, one per transaction id. */
-    fun payloads(): List<String> = db.query("SELECT payload FROM bitcoin_scan_stage ORDER BY id").map { it.single()!! }
+    fun payloads(): Iterable<String> =
+        Iterable {
+            sequence {
+                var after = ""
+                while (true) {
+                    val row =
+                        db.query("SELECT id, payload FROM bitcoin_scan_stage WHERE id>? ORDER BY id LIMIT 1", listOf(after)).singleOrNull()
+                            ?: break
+                    yield(row[1]!!)
+                    after = row[0]!!
+                }
+            }.iterator()
+        }
+
+    fun rawChecksums(): Map<String, String> =
+        db.query("SELECT external_id, checksum FROM bitcoin_scan_stage ORDER BY id").associate { it[0]!! to it[1]!! }
 
     /** Records the digest of the unconfirmed-transaction list observed for an address on its first page. */
     fun recordMempool(
@@ -290,13 +306,24 @@ class BitcoinScanStage(
         ownedAddresses: Map<String, AccountId>,
         reconciledAccounts: Set<AccountId> = ownedAddresses.values.toSet(),
         requireBlockPositions: Boolean = true,
+        graph: BitcoinUtxoGraph? = null,
+    ) = db.transaction {
+        applyCompleteInTransaction(ownedAddresses, reconciledAccounts, requireBlockPositions, graph)
+    }
+
+    /** Caller owns the transaction, including durable graph and successful-refresh metadata. */
+    fun applyCompleteInTransaction(
+        ownedAddresses: Map<String, AccountId>,
+        reconciledAccounts: Set<AccountId> = ownedAddresses.values.toSet(),
+        requireBlockPositions: Boolean = true,
+        graph: BitcoinUtxoGraph? = null,
     ) {
         require(ownedAddresses.isNotEmpty())
         require(!requireBlockPositions || db.query("SELECT hash FROM bitcoin_scan_blocks WHERE resolved=0 LIMIT 1").isEmpty()) {
             "Block positions are incomplete"
         }
         val decoder = BitcoinDecoder(ownedAddresses)
-        db.transaction {
+        run {
             db.execute("DELETE FROM bitcoin_scan_present")
             var after = ""
             while (true) {
@@ -307,7 +334,14 @@ class BitcoinScanStage(
                     )
                 if (rows.isEmpty()) break
                 rows.forEach { row ->
-                    decoder.decode(row.toObservation()).forEach { activity ->
+                    decoder.decode(row.toObservation()).forEach { decoded ->
+                        val state = graph?.states?.get(row[2]!!)
+                        val activity =
+                            when (state) {
+                                BitcoinTransactionState.CONFLICTING -> decoded.copy(status = ActivityStatus.SUPERSEDED)
+                                BitcoinTransactionState.REPLACED -> decoded.copy(status = ActivityStatus.REVERSED)
+                                else -> decoded
+                            }
                         db.execute("INSERT INTO bitcoin_scan_present VALUES (?)", listOf(activity.id.value))
                         val previous = activities.history(activity.id).lastOrNull()
                         val block = row[10]

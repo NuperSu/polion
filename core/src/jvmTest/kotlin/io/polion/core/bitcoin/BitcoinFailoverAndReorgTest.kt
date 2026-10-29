@@ -120,12 +120,73 @@ class BitcoinFailoverAndReorgTest {
     @Test
     fun reorgBeyondBoundThrowsInsteadOfFetchingDeeperHistory() {
         val anchors = listOf(BitcoinBlockAnchor(1000, hashAt(1000)), BitcoinBlockAnchor(1100, hashAt(1100)))
+        val calls = mutableListOf<String>()
+        val chain = anchorsChain(tip = 1200, canonicalFrom = 1050)
         val failure =
             assertFailsWith<BitcoinReorgBeyondBoundException> {
-                BitcoinReorgDetector(anchorsChain(tip = 1200, canonicalFrom = 1050), maxDepth = 100).check(anchors)
+                BitcoinReorgDetector(
+                    EsploraTransport { path ->
+                        calls.add(path)
+                        chain.get(path)
+                    },
+                    maxDepth = 100,
+                ).check(anchors)
             }
         assertEquals(1200L, failure.tipHeight)
-        assertEquals(1000L, failure.deepestStaleHeight)
+        assertEquals(1100L, failure.deepestStaleHeight)
+        assertEquals(listOf("/blocks/tip/height", "/block-height/1100"), calls)
+    }
+
+    @Test
+    fun oldAnchorsRemainUnverifiedWithoutClaimingACommonAncestor() {
+        val anchors = listOf(BitcoinBlockAnchor(900, hashAt(900)), BitcoinBlockAnchor(1000, hashAt(1000)))
+        val calls = mutableListOf<String>()
+        val check =
+            BitcoinReorgDetector(
+                EsploraTransport { path ->
+                    calls.add(path)
+                    check(path == "/blocks/tip/height")
+                    "1200"
+                },
+            ).check(anchors)
+        assertNull(check.commonAncestor)
+        assertEquals(listOf(1000L, 900L), check.unverifiedAnchors.map { it.height })
+        assertEquals(false, check.reorganized)
+        assertNull(check.rewindFromHeight)
+        assertEquals(listOf("/blocks/tip/height"), calls)
+    }
+
+    @Test
+    fun suppliedTipIsUsedWithoutRequestingAnotherProviderTip() {
+        val anchor = BitcoinBlockAnchor(1000, hashAt(1000))
+        val calls = mutableListOf<String>()
+        val check =
+            BitcoinReorgDetector(
+                EsploraTransport { path ->
+                    calls.add(path)
+                    hashAt(1000)
+                },
+            ).check(listOf(anchor), tipHeight = 1100)
+        assertEquals(anchor, check.commonAncestor)
+        assertEquals(1100L, check.tipHeight)
+        assertEquals(listOf("/block-height/1000"), calls)
+    }
+
+    @Test
+    fun negativeSuppliedTipIsRejectedBeforeFetchingAnchors() {
+        assertFailsWith<IllegalArgumentException> {
+            BitcoinReorgDetector(EsploraTransport { error("Unexpected request") }).check(emptyList(), tipHeight = -1)
+        }
+    }
+
+    @Test
+    fun staleAnchorsWithoutAStoredCommonAncestorRemainExplicit() {
+        val anchors = listOf(BitcoinBlockAnchor(1000, hashAt(1000)), BitcoinBlockAnchor(1010, hashAt(1010)))
+        val check = BitcoinReorgDetector(anchorsChain(tip = 1020, canonicalFrom = 900)).check(anchors)
+        assertNull(check.commonAncestor)
+        assertEquals(listOf(1010L, 1000L), check.staleAnchors.map { it.height })
+        assertEquals(1000L, check.rewindFromHeight)
+        assertTrue(check.reorganized)
     }
 
     @Test
@@ -134,5 +195,25 @@ class BitcoinFailoverAndReorgTest {
         val check = BitcoinReorgDetector(anchorsChain(tip = 1020, canonicalFrom = 2000)).check(anchors)
         assertEquals(listOf(1030L), check.aboveTip.map { it.height })
         assertEquals(false, check.reorganized)
+    }
+
+    @Test
+    fun laggingProviderDoesNotFetchOrInvalidateHigherAnchors() {
+        val anchors = listOf(BitcoinBlockAnchor(1030, hashAt(1030)), BitcoinBlockAnchor(1040, hashAt(1040)))
+        val calls = mutableListOf<String>()
+        val check =
+            BitcoinReorgDetector(
+                EsploraTransport { path ->
+                    calls.add(path)
+                    check(path == "/blocks/tip/height")
+                    "1020"
+                },
+            ).check(anchors)
+        assertEquals(listOf(1040L, 1030L), check.aboveTip.map { it.height })
+        assertNull(check.commonAncestor)
+        assertTrue(check.staleAnchors.isEmpty())
+        assertTrue(check.unverifiedAnchors.isEmpty())
+        assertNull(check.rewindFromHeight)
+        assertEquals(listOf("/blocks/tip/height"), calls)
     }
 }

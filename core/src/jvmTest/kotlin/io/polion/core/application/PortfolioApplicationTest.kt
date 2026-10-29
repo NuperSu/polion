@@ -386,7 +386,10 @@ class PortfolioApplicationTest {
             db.execute("INSERT INTO application_settings VALUES ('source_in_progress','true')")
             assertTrue(PortfolioApplication(db) { 15552000000L }.snapshot().sourceStatus.interrupted)
             db.execute("DELETE FROM application_settings WHERE key='source_in_progress'")
-            assertEquals(io.polion.core.bitcoin.BitcoinProviderFailure.REORGANIZED.userMessage, app.snapshot().sourceStatus.lastError)
+            assertEquals(
+                io.polion.core.bitcoin.BitcoinProviderFailure.REORG_RECOVERY_REQUIRED.userMessage,
+                app.snapshot().sourceStatus.lastError,
+            )
             assertEquals(15552000000L, app.snapshot().sourceStatus.lastSuccessfulRefresh)
         }
     }
