@@ -8,7 +8,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import io.polion.core.bitcoin.EsploraTransport
+import io.polion.core.bitcoin.BitcoinProviderException
+import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
 import kotlinx.coroutines.flow.update
@@ -54,18 +55,15 @@ class BitcoinRefreshService : Service() {
             val status =
                 RefreshWorker.performRefresh(
                     applicationContext,
-                    { transport ->
-                        EsploraTransport { path ->
-                            check(!stopping) { "Sync stopped" }
-                            transport.get(path)
-                        }
-                    },
                     walletId =
                         intent?.getStringExtra(
                             "wallet_id",
                         ),
                     verifyOrder = intent?.getBooleanExtra("verify_order", false) == true,
                     recoverHistory = intent?.getBooleanExtra("recover_history", false) == true,
+                    ensureActive = {
+                        if (stopping) throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+                    },
                 ) { detail ->
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastNotification >= 1000) {

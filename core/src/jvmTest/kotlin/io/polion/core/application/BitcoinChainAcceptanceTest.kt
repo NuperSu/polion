@@ -6,6 +6,7 @@ import io.polion.core.bitcoin.BitcoinBlockAnchor
 import io.polion.core.bitcoin.BitcoinGraphRepository
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
+import io.polion.core.bitcoin.BitcoinScanStage
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.model.AccountId
 import io.polion.core.model.OwnerId
@@ -343,6 +344,42 @@ class BitcoinChainAcceptanceTest {
     }
 
     @Test
+    fun orphanedInterruptedSessionIsDiscardedAndNextRetryAcceptsFreshHistory() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+            provider.tipHeight = 111
+            val interrupted =
+                EsploraTransport { path ->
+                    if (path.endsWith("/utxo")) throw BitcoinProviderException(BitcoinProviderFailure.RATE_LIMITED)
+                    provider.transport.get(path)
+                }
+            val interruptedFailure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(interrupted) }
+            assertEquals(BitcoinProviderFailure.RATE_LIMITED, interruptedFailure.reason)
+            assertEquals("1", db.query("SELECT COUNT(*) FROM bitcoin_scan_session").single().single())
+            assertEquals("1", db.query("SELECT COUNT(*) FROM bitcoin_scan_validated_blocks").single().single())
+            assertEquals(before, acceptedData(db))
+
+            provider.tipHeight = 112
+            provider.changedBlocks[111] = "e".repeat(64)
+            val reorgFailure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(provider.transport) }
+            assertEquals(BitcoinProviderFailure.REORGANIZED, reorgFailure.reason)
+            assertEquals(before, acceptedData(db))
+            BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
+                assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
+            }
+
+            provider.calls.clear()
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertTrue("/address/$address/txs/chain" in provider.calls)
+            assertEquals(BitcoinBlockAnchor(112, blockHash(112)), BitcoinGraphRepository(db).latest()?.anchor)
+            assertEquals(1, app.snapshot().activityTotal)
+        }
+    }
+
+    @Test
     fun unverifiedPositionScanRejectsNoncanonicalTransactionBlockBeforeApply() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
@@ -356,6 +393,93 @@ class BitcoinChainAcceptanceTest {
             assertEquals(BitcoinProviderFailure.REORGANIZED, failure.reason)
             assertEquals(before, acceptedData(db))
             assertTrue("/block-height/100" in provider.calls)
+        }
+    }
+
+    @Test
+    fun endpointChangeDuringInitialTipRequestCannotAttributeOldResponseToNewProvider() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+            val endpoints = app.bitcoinProviderEndpoints()
+            val changingEndpoint =
+                EsploraTransport { path ->
+                    provider.transport.get(path).also {
+                        if (path == "/blocks/tip/hash") app.setSourceEndpoint("https://different.example/api")
+                    }
+                }
+            val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(changingEndpoint) }
+            assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
+            assertEquals(listOf("/blocks/tip/hash"), provider.calls)
+            assertEquals(before, acceptedData(db))
+            assertEquals(endpoints, app.bitcoinProviderEndpoints())
+            BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
+                assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
+            }
+        }
+    }
+
+    @Test
+    fun endpointChangeAfterBlockVerificationPreservesAcceptedDataAndDiscardsOldStage() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+            val endpoints = app.bitcoinProviderEndpoints()
+            provider.tipHeight = 111
+            val changingEndpoint =
+                EsploraTransport { path ->
+                    provider.transport.get(path).also {
+                        if (path.endsWith("/utxo")) app.setSourceEndpoint("https://different.example/api")
+                    }
+                }
+            val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(changingEndpoint) }
+            assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
+            assertEquals(before, acceptedData(db))
+            assertEquals(endpoints, app.bitcoinProviderEndpoints())
+            BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
+                assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
+            }
+
+            provider.calls.clear()
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertTrue("/address/$address/txs/chain" in provider.calls)
+            assertEquals(2, app.bitcoinProviderEndpoints().size)
+        }
+    }
+
+    @Test
+    fun precreatedTransportEndpointMismatchCannotResumePendingOldProviderSession() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+            val originalEndpoint = app.sourceEndpoint()
+            provider.tipHeight = 111
+            val interrupted =
+                EsploraTransport { path ->
+                    if (path.endsWith("/utxo")) throw BitcoinProviderException(BitcoinProviderFailure.RATE_LIMITED)
+                    provider.transport.get(path)
+                }
+            assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(interrupted) }
+            assertEquals("1", db.query("SELECT COUNT(*) FROM bitcoin_scan_validation").single().single())
+            app.setSourceEndpoint("https://different.example/api")
+            provider.calls.clear()
+
+            val failure =
+                assertFailsWith<BitcoinProviderException> {
+                    app.refreshBitcoin(provider.transport, providerEndpoint = originalEndpoint)
+                }
+            assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
+            assertEquals(emptyList(), provider.calls)
+            assertEquals(before, acceptedData(db))
+            BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
+                assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
+            }
         }
     }
 
@@ -377,6 +501,9 @@ class BitcoinChainAcceptanceTest {
             assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
             assertEquals(before, acceptedData(db))
             assertEquals(1, BitcoinGraphRepository(db).snapshots().size)
+            BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
+                assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
+import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.core.storage.AndroidSqliteDatabase
 import io.polion.core.sync.JobState
 import io.polion.ui.SyncPhase
@@ -22,7 +23,13 @@ class RefreshWorker(
         if (syncStatus.value.phase == SyncPhase.SYNCING) return Result.retry()
         setForegroundAsync(SyncNotification.foreground(applicationContext)).get()
         syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")
-        val status = executor.submit<SyncStatus> { performRefresh(applicationContext) }.get()
+        val status =
+            executor
+                .submit<SyncStatus> {
+                    performRefresh(applicationContext, ensureActive = {
+                        if (isStopped) throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+                    })
+                }.get()
         syncStatus.value = status
         dataRevision.update { it + 1 }
         return if (status.phase == SyncPhase.ERROR) Result.retry() else Result.success()
@@ -39,6 +46,7 @@ class RefreshWorker(
             walletId: String? = null,
             verifyOrder: Boolean = false,
             recoverHistory: Boolean = false,
+            ensureActive: () -> Unit = {},
             onProgress: (String) -> Unit = {},
         ): SyncStatus =
             try {
@@ -49,7 +57,23 @@ class RefreshWorker(
                     if (!app.sourceConsent()) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
-                        val transport = wrap(BlockstreamTransport(app.sourceEndpoint()))
+                        val endpoint = app.sourceEndpoint()
+                        val transport =
+                            wrap(
+                                BlockstreamTransport(
+                                    endpoint,
+                                    onProgress = { detail ->
+                                        syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
+                                        onProgress(detail)
+                                    },
+                                    ensureActive = {
+                                        ensureActive()
+                                        if (!app.sourceConsent() || app.sourceEndpoint() != endpoint) {
+                                            throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+                                        }
+                                    },
+                                ),
+                            )
                         if (walletId != null) {
                             app.discoverBitcoinWallet(
                                 io.polion.core.model
@@ -69,7 +93,7 @@ class RefreshWorker(
                             )
                         }
                         val states =
-                            app.refreshBitcoin(transport, recoverHistory = recoverHistory) { progress ->
+                            app.refreshBitcoin(transport, recoverHistory = recoverHistory, providerEndpoint = endpoint) { progress ->
                                 val detail =
                                     when (progress.phase) {
                                         "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"

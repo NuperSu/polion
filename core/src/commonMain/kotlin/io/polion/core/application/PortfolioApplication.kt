@@ -639,19 +639,37 @@ class PortfolioApplication(
     /**
      * Fetches tracked mainnet addresses after consent and applies only a complete, consistent scan.
      * Explicit [recoverHistory] starts fresh history and establishes a new continuity baseline on successful apply.
+     * [providerEndpoint] binds a pre-created transport to its captured endpoint throughout the scan.
      */
     @OptIn(ExperimentalTime::class)
     fun refreshBitcoin(
         transport: EsploraTransport,
         verifyBlockPositions: Boolean = false,
         recoverHistory: Boolean = false,
+        providerEndpoint: String = sourceEndpoint(),
         onProgress: (BitcoinScanProgress) -> Unit = {},
     ): List<JobState> {
         require(sourceConsent()) { "Source consent required" }
         putSetting("source_in_progress", "true")
         return try {
-            refreshBitcoinScan(transport, verifyBlockPositions, recoverHistory, onProgress)
+            fun requireEndpoint() {
+                require(sourceEndpoint() == providerEndpoint) {
+                    throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+                }
+            }
+            requireEndpoint()
+            val boundTransport =
+                EsploraTransport { path ->
+                    requireEndpoint()
+                    transport.get(path).also { requireEndpoint() }
+                }
+            refreshBitcoinScan(boundTransport, verifyBlockPositions, recoverHistory, providerEndpoint, onProgress)
         } catch (failure: Exception) {
+            if (failure is BitcoinProviderException &&
+                (failure.reason == BitcoinProviderFailure.REORGANIZED || failure.reason == BitcoinProviderFailure.HISTORY_CHANGED)
+            ) {
+                bitcoinStage.clear()
+            }
             putSetting(
                 "source_error",
                 (failure as? BitcoinProviderException)?.reason?.userMessage
@@ -668,6 +686,7 @@ class PortfolioApplication(
         transport: EsploraTransport,
         verifyBlockPositions: Boolean,
         recoverHistory: Boolean,
+        providerEndpoint: String,
         onProgress: (BitcoinScanProgress) -> Unit,
     ): List<JobState> {
         require(sourceConsent()) { "Source consent required" }
@@ -727,8 +746,8 @@ class PortfolioApplication(
             require(chain >= 0 && mempool >= 0)
             return chain to mempool
         }
-        val providerSource = SourceId("esplora:" + sha256(sourceEndpoint()))
-        putSetting("provider_endpoint:${providerSource.value}", sourceEndpoint())
+        val providerSource = SourceId("esplora:" + sha256(providerEndpoint))
+        putSetting("provider_endpoint:${providerSource.value}", providerEndpoint)
         val fingerprint =
             sha256(
                 "${providerSource.value}|" + addresses.entries.sortedBy { it.key }.joinToString("|") { "${it.key}=${it.value.value}" },
@@ -878,7 +897,15 @@ class PortfolioApplication(
             require(transport.get("/block-height/$anchorHeight").trim() == startTip) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
-            bitcoinStage.validateBlocks(transport)
+            bitcoinStage.validateBlocks(
+                transport,
+                io.polion.core.bitcoin
+                    .BitcoinBlockAnchor(anchorHeight, startTip),
+            ) { validated, total ->
+                onProgress(
+                    BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "verify", validated, total),
+                )
+            }
             val stagedGraph =
                 io.polion.core.bitcoin
                     .BitcoinStagedGraph(db)
@@ -905,6 +932,9 @@ class PortfolioApplication(
             }
             db.transaction {
                 require(sourceConsent()) { "Source consent required" }
+                require(sourceEndpoint() == providerEndpoint) {
+                    throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+                }
                 val currentTargets =
                     ownership.loadInTransaction().targets.filter {
                         it.role == io.polion.core.ownership.TargetRole.LEAF &&

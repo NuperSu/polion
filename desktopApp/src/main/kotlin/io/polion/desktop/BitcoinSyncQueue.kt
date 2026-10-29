@@ -3,6 +3,7 @@ package io.polion.desktop
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -16,30 +17,36 @@ internal class BitcoinSyncQueue(
         },
 ) {
     private val active = AtomicBoolean(false)
+    private val lifecycleLock = Any()
+    private var closed = false
 
     val busy: Boolean get() = active.get()
 
     /** Returns false without running [task] when a sync is already active or queued. */
     fun tryStart(task: () -> Unit): Boolean {
-        if (!active.compareAndSet(false, true)) return false
-        try {
-            executor.execute {
-                try {
-                    task()
-                } finally {
-                    active.set(false)
+        synchronized(lifecycleLock) {
+            if (closed || !active.compareAndSet(false, true)) return false
+            try {
+                executor.execute {
+                    try {
+                        task()
+                    } finally {
+                        active.set(false)
+                    }
                 }
+            } catch (_: RejectedExecutionException) {
+                active.set(false)
+                return false
             }
-        } catch (rejected: RejectedExecutionException) {
-            active.set(false)
-            throw rejected
         }
         return true
     }
 
     /** Reserves the sync slot for a database replacement on the caller's worker queue. */
     fun tryRunExclusive(task: () -> Unit): Boolean {
-        if (!active.compareAndSet(false, true)) return false
+        synchronized(lifecycleLock) {
+            if (closed || !active.compareAndSet(false, true)) return false
+        }
         try {
             task()
         } finally {
@@ -49,6 +56,11 @@ internal class BitcoinSyncQueue(
     }
 
     fun shutdown() {
-        executor.shutdown()
+        synchronized(lifecycleLock) {
+            closed = true
+            if (executor.shutdownNow().isNotEmpty()) active.set(false)
+        }
     }
+
+    fun awaitTermination(timeoutMillis: Long): Boolean = executor.awaitTermination(timeoutMillis, TimeUnit.MILLISECONDS)
 }

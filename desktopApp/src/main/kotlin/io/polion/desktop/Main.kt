@@ -9,6 +9,9 @@ import androidx.compose.ui.window.application
 import io.polion.core.ApplicationInfo
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
+import io.polion.core.bitcoin.BitcoinProviderFailure
+import io.polion.core.bitcoin.EsploraTransport
+import io.polion.core.model.TrackingTargetId
 import io.polion.core.storage.JvmSqliteDatabase
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
@@ -24,7 +27,54 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
+
+internal fun discoverWalletStatus(
+    application: PortfolioApplication,
+    walletId: TrackingTargetId,
+    transport: EsploraTransport,
+    providerEndpoint: String = application.sourceEndpoint(),
+    onProgress: (String) -> Unit,
+): SyncStatus =
+    runCatching {
+        var queries = 0
+        val discoveryTransport =
+            EsploraTransport { path ->
+                transport.get(path).also {
+                    queries++
+                    onProgress("Discovering wallet · address queries answered: $queries")
+                }
+            }
+        val result = application.discoverBitcoinWallet(walletId, discoveryTransport)
+        val states =
+            application.refreshBitcoin(transport, providerEndpoint = providerEndpoint) { progress ->
+                onProgress(
+                    when (progress.phase) {
+                        "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
+                        "verify" -> "Checking chain consistency…"
+                        "apply" -> "Applying verified history…"
+                        else ->
+                            "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
+                                "${progress.pages} pages · ${progress.transactions} transactions"
+                    },
+                )
+            }
+        if (states.isEmpty() || states.any { it != io.polion.core.sync.JobState.COMPLETED }) {
+            SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "Wallet history is incomplete; retry.")
+        } else {
+            SyncStatus(
+                SyncPhase.SUCCESS,
+                "Wallet discovery complete: ${result.addresses} addresses checked; coverage remains unverified.",
+            )
+        }
+    }.getOrElse {
+        SyncStatus(
+            SyncPhase.ERROR,
+            (it as? BitcoinProviderException)?.reason?.userMessage
+                ?: "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
+        )
+    }
 
 internal class DesktopHost(
     private val directory: Path,
@@ -49,6 +99,7 @@ internal class DesktopHost(
     val locked = mutableStateOf(lockStore.hasLock)
     private var refreshTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val hostLock = Any()
+    private val closing = AtomicBoolean(false)
     private val refreshPreference = directory.resolve("background-refresh")
 
     init {
@@ -191,12 +242,32 @@ internal class DesktopHost(
         }
     }
 
+    private fun bitcoinTransport(
+        application: PortfolioApplication,
+        endpoint: String = application.sourceEndpoint(),
+    ): EsploraTransport =
+        BlockstreamTransport(
+            endpoint,
+            onProgress = { syncStatus.value = SyncStatus(SyncPhase.SYNCING, it) },
+            ensureActive = {
+                if (closing.get() || !application.sourceConsent() || application.sourceEndpoint() != endpoint) {
+                    throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+                }
+            },
+        )
+
     override fun verifyAccountingOrder(onResult: (String) -> Unit) {
         runSync(SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…"), onResult) { application ->
             runCatching {
-                application.verifyAccountingOrder(BlockstreamTransport(application.sourceEndpoint()))
+                application.verifyAccountingOrder(bitcoinTransport(application))
                 SyncStatus(SyncPhase.SUCCESS, "Bitcoin order verified. Mixed-source chronology may still require review.")
-            }.getOrElse { SyncStatus(SyncPhase.ERROR, "Could not verify order. Check consent, provider and saved history.") }
+            }.getOrElse {
+                SyncStatus(
+                    SyncPhase.ERROR,
+                    (it as? BitcoinProviderException)?.reason?.userMessage
+                        ?: "Could not verify order. Check consent, provider and saved history.",
+                )
+            }
         }
     }
 
@@ -205,17 +276,9 @@ internal class DesktopHost(
         onResult: (String) -> Unit,
     ) {
         runSync(SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…"), onResult) { application ->
-            runCatching {
-                val transport = BlockstreamTransport(application.sourceEndpoint())
-                val result = application.discoverBitcoinWallet(walletId, transport)
-                val states = application.refreshBitcoin(transport)
-                check(states.all { it == io.polion.core.sync.JobState.COMPLETED })
-                SyncStatus(SyncPhase.SUCCESS, "Wallet discovery complete: ${result.addresses} addresses checked.")
-            }.getOrElse {
-                SyncStatus(
-                    SyncPhase.ERROR,
-                    "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
-                )
+            val endpoint = application.sourceEndpoint()
+            discoverWalletStatus(application, walletId, bitcoinTransport(application, endpoint), providerEndpoint = endpoint) { detail ->
+                syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
             }
         }
     }
@@ -256,10 +319,12 @@ internal class DesktopHost(
             onResult,
         ) { application ->
             runCatching {
+                val endpoint = application.sourceEndpoint()
                 val states =
                     application.refreshBitcoin(
-                        BlockstreamTransport(application.sourceEndpoint()),
+                        bitcoinTransport(application, endpoint),
                         recoverHistory = recoverHistory,
+                        providerEndpoint = endpoint,
                     ) { progress ->
                         syncStatus.value =
                             SyncStatus(
@@ -382,9 +447,15 @@ internal class DesktopHost(
     }
 
     fun close() {
+        if (!closing.compareAndSet(false, true)) return
+        refreshTask?.cancel(false)
         syncQueue.shutdown()
-        closeSyncConnection()
-        executor.execute { db.close() }
+        executor.execute {
+            // The network worker must finish cancellation and release SQLite before either connection closes.
+            while (!syncQueue.awaitTermination(1_000)) Unit
+            closeSyncConnection()
+            db.close()
+        }
         executor.shutdown()
         unlockExecutor.shutdown()
     }

@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 
-/** Disk-backed working set for one fresh Bitcoin scan. A caller must serialize scans per database. */
+/** Disk-backed working set for one pending Bitcoin scan. A caller must serialize scans per database. */
 class BitcoinScanStage(
     private val db: SqliteDatabase,
     private val store: Store,
@@ -31,6 +31,12 @@ class BitcoinScanStage(
             "CREATE TABLE IF NOT EXISTS bitcoin_scan_blocks (hash TEXT PRIMARY KEY, height INTEGER NOT NULL, resolved INTEGER NOT NULL)",
         )
         db.execute("CREATE TABLE IF NOT EXISTS bitcoin_scan_present (id TEXT PRIMARY KEY)")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS bitcoin_scan_validation (id INTEGER PRIMARY KEY CHECK (id = 1), generation INTEGER NOT NULL, fingerprint TEXT NOT NULL, anchor_hash TEXT NOT NULL, anchor_height INTEGER NOT NULL)",
+        )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS bitcoin_scan_validated_blocks (hash TEXT PRIMARY KEY, height INTEGER NOT NULL)",
+        )
         db.execute(
             "CREATE TABLE IF NOT EXISTS bitcoin_scan_session (id INTEGER PRIMARY KEY CHECK (id = 1), generation INTEGER NOT NULL, fingerprint TEXT NOT NULL, anchor_hash TEXT NOT NULL, anchor_height INTEGER NOT NULL)",
         )
@@ -49,6 +55,8 @@ class BitcoinScanStage(
                 "bitcoin_scan_stage",
                 "bitcoin_scan_blocks",
                 "bitcoin_scan_present",
+                "bitcoin_scan_validation",
+                "bitcoin_scan_validated_blocks",
                 "bitcoin_scan_session",
                 "bitcoin_scan_addresses",
                 "bitcoin_scan_seen",
@@ -273,6 +281,91 @@ class BitcoinScanStage(
             require(transport.get("/block-height/${row[1]}").trim() == row[0]) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
+        }
+    }
+
+    /**
+     * Resume active-chain checks within the pending session, whose fingerprint includes the provider and scope.
+     * Cached checks are reusable only while their fixed upper anchor remains canonical. The caller must also
+     * recheck [anchor] immediately before accepting the scan, after any further provider requests.
+     */
+    fun validateBlocks(
+        transport: EsploraTransport,
+        anchor: BitcoinBlockAnchor,
+        onBlock: (validated: Int, total: Int) -> Unit = { _, _ -> },
+    ) {
+        val session = requireNotNull(session()) { "Resumable block validation requires a pending scan" }
+        require(anchor.height >= session.anchorHeight && anchor.hash.matches(Regex("[0-9a-f]{64}")))
+        require(
+            db.query("SELECT 1 FROM bitcoin_scan_blocks WHERE height>? LIMIT 1", listOf(anchor.height.toString())).isEmpty(),
+        ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+
+        fun clearValidationInTransaction() {
+            db.execute("DELETE FROM bitcoin_scan_validated_blocks")
+            db.execute("DELETE FROM bitcoin_scan_validation")
+        }
+
+        fun clearValidation() = db.transaction { clearValidationInTransaction() }
+
+        fun canonical(checked: BitcoinBlockAnchor): Boolean = transport.get("/block-height/${checked.height}").trim() == checked.hash
+
+        if (!canonical(anchor)) {
+            clearValidation()
+            throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
+        }
+        val cached =
+            db.query("SELECT generation, fingerprint, anchor_hash, anchor_height FROM bitcoin_scan_validation WHERE id=1").singleOrNull()
+        val reusable =
+            cached != null &&
+                cached[0]!!.toLong() == session.generation &&
+                cached[1] == session.fingerprint &&
+                cached[3]!!.toLong() <= anchor.height &&
+                (
+                    cached[3]!!.toLong() == anchor.height &&
+                        cached[2] == anchor.hash ||
+                        canonical(BitcoinBlockAnchor(cached[3]!!.toLong(), cached[2]!!))
+                )
+        db.transaction {
+            if (!reusable) clearValidationInTransaction()
+            db.execute(
+                "INSERT OR REPLACE INTO bitcoin_scan_validation VALUES (1, ?, ?, ?, ?)",
+                listOf(session.generation.toString(), session.fingerprint, anchor.hash, anchor.height.toString()),
+            )
+        }
+        val total =
+            db
+                .query("SELECT COUNT(*) FROM bitcoin_scan_blocks")
+                .single()
+                .single()!!
+                .toInt()
+        var validated =
+            db
+                .query(
+                    "SELECT COUNT(*) FROM bitcoin_scan_blocks b JOIN bitcoin_scan_validated_blocks v ON v.hash=b.hash AND v.height=b.height",
+                ).single()
+                .single()!!
+                .toInt()
+        runCatching { onBlock(validated, total) }
+        var after = ""
+        while (true) {
+            val row =
+                db
+                    .query(
+                        "SELECT b.hash, b.height FROM bitcoin_scan_blocks b WHERE b.hash>? AND NOT EXISTS (SELECT 1 FROM bitcoin_scan_validated_blocks v WHERE v.hash=b.hash AND v.height=b.height) ORDER BY b.hash LIMIT 1",
+                        listOf(after),
+                    ).singleOrNull() ?: break
+            if (transport.get("/block-height/${row[1]}").trim() != row[0]) {
+                clearValidation()
+                throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
+            }
+            db.execute("INSERT OR REPLACE INTO bitcoin_scan_validated_blocks VALUES (?, ?)", listOf(row[0], row[1]))
+            after = row[0]!!
+            validated++
+            runCatching { onBlock(validated, total) }
+        }
+        if (!canonical(anchor)) {
+            clearValidation()
+            throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
         }
     }
 

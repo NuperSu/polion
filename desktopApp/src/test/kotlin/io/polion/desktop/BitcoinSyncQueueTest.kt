@@ -67,6 +67,34 @@ class BitcoinSyncQueueTest {
         }
     }
 
+    @Test
+    fun shutdownInterruptsWorkerAndRefusesNewSyncOrRestore() {
+        val queue = BitcoinSyncQueue(Executors.newSingleThreadExecutor())
+        val started = CountDownLatch(1)
+        val cancelled = CountDownLatch(1)
+        assertTrue(
+            queue.tryStart {
+                started.countDown()
+                try {
+                    CountDownLatch(1).await()
+                } catch (_: InterruptedException) {
+                    cancelled.countDown()
+                }
+            },
+        )
+        try {
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+            queue.shutdown()
+            assertTrue(cancelled.await(10, TimeUnit.SECONDS))
+            assertTrue(queue.awaitTermination(10_000))
+            assertFalse(queue.busy)
+            assertFalse(queue.tryStart { error("Closed queue must refuse sync") })
+            assertFalse(queue.tryRunExclusive { error("Closed queue must refuse restore") })
+        } finally {
+            queue.shutdown()
+        }
+    }
+
     private fun awaitIdle(queue: BitcoinSyncQueue) {
         repeat(1000) {
             if (!queue.busy) return
