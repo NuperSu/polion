@@ -83,6 +83,8 @@ Accepted source state → holdings projection
 
 Changing the portfolio updates scope-dependent figures together. Filtering Activity changes its result page, not the accounting ownership policy or historical chart definition. Changing a method in a future accounting strategy recalculates derived reports, never raw source evidence.
 
+Activity can be filtered by status as well as account, kind and search. Status filtering applies before pagination and to scoped CSV exports when requested; changing it returns to the first page.
+
 The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. ALL begins with the first confirmed activity in the selected account scope; missing historical prices leave gaps. Previous and Next inspect sampled UTC timestamps and show a total only when every holding at that point has a price. The chart shows portfolio value, not a return measure.
 
 The asset list saves its value/name sort and optional empty-position filter. Hiding empty positions changes only the list; it does not delete balances or change portfolio totals. Nonzero unpriced and negative positions remain visible.

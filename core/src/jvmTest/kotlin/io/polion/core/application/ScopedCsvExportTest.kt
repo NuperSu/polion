@@ -25,6 +25,39 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ScopedCsvExportTest {
+    @Test fun statusFilterMatchesSnapshotAndExportAcrossPages() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = fixture(db)
+            app.saveManualActivity(activity("confirmed", ActivityKind.DEPOSIT, listOf(movement("confirmed", first, btc, "5"))))
+            app.saveManualActivity(
+                activity(
+                    "pending-1",
+                    ActivityKind.DEPOSIT,
+                    listOf(movement("pending-1", first, btc, "2")),
+                ).copy(status = ActivityStatus.PENDING),
+            )
+            app.saveManualActivity(
+                activity(
+                    "pending-2",
+                    ActivityKind.DEPOSIT,
+                    listOf(movement("pending-2", first, btc, "3")),
+                ).copy(status = ActivityStatus.PENDING),
+            )
+            val filter = ActivityFilter(portfolio = selected, status = ActivityStatus.PENDING, offset = 1, limit = 1)
+            val snapshot = app.snapshot(filter)
+            assertEquals(2, snapshot.activityTotal)
+            assertEquals(1, snapshot.activities.size)
+            assertEquals(
+                ActivityStatus.PENDING,
+                snapshot.activities
+                    .single()
+                    .activity.status,
+            )
+            assertEquals(setOf("pending-1", "pending-2"), rows(app.exportCsv(filter)).map { it[0] }.toSet())
+            assertEquals(1, app.snapshot(ActivityFilter(portfolio = selected, status = ActivityStatus.CONFIRMED)).activityTotal)
+        }
+    }
+
     private val first = AccountId("first-account")
     private val sibling = AccountId("sibling-account")
     private val foreign = AccountId("foreign-account")

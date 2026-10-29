@@ -233,6 +233,7 @@ private fun Product(
     }
     var search by presenter.field({ it.search }) { presenter.dispatch(ProductEvent.Search(it)) }
     var kind by presenter.field({ it.kind }) { presenter.dispatch(ProductEvent.Kind(it)) }
+    var activityStatus by presenter.field({ it.activityStatus }) { presenter.dispatch(ProductEvent.Status(it)) }
     var offset by presenter.field({ it.offset }) { presenter.dispatch(ProductEvent.Offset(it)) }
     var selectedAccount by presenter.field({ it.selectedAccount }) { presenter.dispatch(ProductEvent.Account(it)) }
     var selectedPortfolio by presenter.field({ it.selectedPortfolio }) { presenter.dispatch(ProductEvent.Portfolio(it)) }
@@ -558,11 +559,12 @@ private fun Product(
                                 }
                                 item {
                                     Text(
-                                        "${data.activityTotal} activities · confirmed and pending",
+                                        "${data.activityTotal} activities · matching filters",
                                         color = Muted,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
+                                item { FilterActivityStatus(activityStatus) { activityStatus = it } }
                                 if (data.activities.isEmpty()) {
                                     item {
                                         EmptyCard(
@@ -1499,6 +1501,35 @@ private fun FilterKinds(
             FilterChip(selected == kind, {
                 onSelect(kind)
             }, label = { Text(kind.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 11.sp) })
+        }
+    }
+}
+
+@Composable
+private fun FilterActivityStatus(
+    selected: ActivityStatus?,
+    onSelect: (ActivityStatus?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.testTag("activity-status-filter")) {
+            Text("Status: ${selected?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "All"} ▾")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("All statuses") }, onClick = {
+                onSelect(null)
+                expanded = false
+            }, modifier = Modifier.testTag("status-all"))
+            ActivityStatus.entries.forEach { status ->
+                DropdownMenuItem(
+                    text = { Text(status.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                    onClick = {
+                        onSelect(status)
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("status-${status.name}"),
+                )
+            }
         }
     }
 }

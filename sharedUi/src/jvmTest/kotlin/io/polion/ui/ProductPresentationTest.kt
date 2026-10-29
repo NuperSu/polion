@@ -96,6 +96,9 @@ class ProductPresentationTest {
             assertEquals(ProductDialog.SYNC, state.dialog)
         }
         assertEquals(100, initial.reduce(ProductEvent.Period(7)).offset)
+        val filtered = initial.reduce(ProductEvent.Status(io.polion.core.ledger.ActivityStatus.PENDING))
+        assertEquals(0, filtered.offset)
+        assertEquals(io.polion.core.ledger.ActivityStatus.PENDING, filtered.requestedFilter().status)
         assertEquals(ProductDialog.entries.toSet(), ProductDialog.entries.map { ProductDialog.fromKey(it.key) }.toSet())
     }
 

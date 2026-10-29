@@ -54,6 +54,7 @@ internal data class ProductPresentation(
     val page: Page = Page.HOME,
     val search: String = "",
     val kind: ActivityKind? = null,
+    val activityStatus: io.polion.core.ledger.ActivityStatus? = null,
     val offset: Int = 0,
     val selectedAccount: AccountId? = null,
     val selectedPortfolio: PortfolioId? = null,
@@ -75,7 +76,14 @@ internal data class ProductPresentation(
 ) {
     fun requestedFilter(): ActivityFilter =
         if (page == Page.ACTIVITY) {
-            ActivityFilter(search = search, account = selectedAccount, kind = kind, offset = offset, portfolio = selectedPortfolio)
+            ActivityFilter(
+                search = search,
+                account = selectedAccount,
+                kind = kind,
+                status = activityStatus,
+                offset = offset,
+                portfolio = selectedPortfolio,
+            )
         } else {
             ActivityFilter(portfolio = selectedPortfolio)
         }
@@ -94,6 +102,10 @@ internal sealed interface ProductEvent {
 
     data class Kind(
         val value: ActivityKind?,
+    ) : ProductEvent
+
+    data class Status(
+        val value: io.polion.core.ledger.ActivityStatus?,
     ) : ProductEvent
 
     data class Account(
@@ -122,6 +134,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Navigate -> copy(page = event.page, offset = 0)
         is ProductEvent.Search -> copy(search = event.value, offset = 0)
         is ProductEvent.Kind -> copy(kind = event.value, offset = 0)
+        is ProductEvent.Status -> copy(activityStatus = event.value, offset = 0)
         is ProductEvent.Account -> copy(selectedAccount = event.value, offset = 0)
         is ProductEvent.Portfolio -> copy(selectedPortfolio = event.value)
         is ProductEvent.Offset -> copy(offset = event.value.also { require(it >= 0) })

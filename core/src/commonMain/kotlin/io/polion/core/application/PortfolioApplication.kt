@@ -101,6 +101,7 @@ data class ActivityFilter(
     val kind: ActivityKind? = null,
     val offset: Int = 0,
     val limit: Int = 50,
+    val status: io.polion.core.ledger.ActivityStatus? = null,
 ) {
     init {
         require(offset >= 0 && limit in 1..500)
@@ -254,6 +255,7 @@ class PortfolioApplication(
                                 }
                         ) &&
                         (filter.kind == null || activity.kind == filter.kind) &&
+                        (filter.status == null || activity.status == filter.status) &&
                         (
                             filter.search.isBlank() ||
                                 listOfNotNull(item.label, item.note, activity.id.value, activity.kind.name)
@@ -1820,6 +1822,7 @@ class PortfolioApplication(
         overlays.replayForLedger(activities.current()).activities.forEach { item ->
             val activity = item.activity
             if (filter.kind != null && activity.kind != filter.kind) return@forEach
+            if (filter.status != null && activity.status != filter.status) return@forEach
             if (filter.search.isNotBlank() &&
                 listOfNotNull(item.label, item.note, activity.id.value, activity.kind.name)
                     .none { it.contains(filter.search, ignoreCase = true) }

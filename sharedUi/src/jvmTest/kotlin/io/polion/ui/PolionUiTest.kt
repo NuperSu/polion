@@ -223,6 +223,30 @@ class PolionUiTest {
     }
 
     @Test
+    fun activityStatusMenuFiltersConfirmedHistory() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 1000, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-ACTIVITY").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasTestTag("activity-status-filter"))
+                    onNodeWithTag("activity-status-filter").performScrollTo().performClick()
+                    onNodeWithTag("status-PENDING").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Search activity"))
+                    waitUntil(
+                        timeoutMillis = 10_000,
+                    ) { onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Status: Pending ▾"))
+                    onNodeWithText("Status: Pending ▾").assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
     fun assetDisplayChoiceIsSavedFromPortfolio() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

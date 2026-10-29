@@ -190,6 +190,9 @@ internal fun rememberProductPresenter(
                             it.state.dialog
                                 ?.key
                                 .orEmpty(),
+                            it.state.activityStatus
+                                ?.name
+                                .orEmpty(),
                         )
                     },
                     restore = {
@@ -200,6 +203,10 @@ internal fun rememberProductPresenter(
                                 offset = it[2] as Int,
                                 period = it[3] as Int,
                                 dialog = ProductDialog.fromKey((it[4] as String).ifEmpty { null }),
+                                activityStatus =
+                                    (it.getOrNull(5) as? String)
+                                        ?.takeIf { value -> value.isNotEmpty() }
+                                        ?.let(io.polion.core.ledger.ActivityStatus::valueOf),
                             ),
                             applicationQueries(app),
                             host.dispatcher,
