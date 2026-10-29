@@ -724,7 +724,7 @@ private fun Product(
                                             "Apply a repeatable classification to matching activity. Per-activity corrections take precedence.",
                                             color = Muted,
                                         )
-                                        OutlinedButton(onClick = { dialog = "rule" }) { Text("Add a rule") }
+                                        OutlinedButton(onClick = { dialog = "rule" }) { Text("Manage rules") }
                                     }
                                 }
                                 if (data.ownership.owners.isEmpty()) {

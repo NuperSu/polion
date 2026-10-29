@@ -24,12 +24,15 @@ import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.PortfolioApplication
+import io.polion.core.ledger.ActivityKind
 import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
+import io.polion.core.model.SourceRecordId
 import io.polion.core.reconcile.ActivityOverlay
+import io.polion.core.reconcile.ClassificationRule
 import io.polion.core.storage.JvmSqliteDatabase
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -270,6 +273,57 @@ class PolionUiTest {
                     assertTrue(app.sourceConsent())
                     host.syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Reading page 1")
                     onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun ruleManagerEditsAndTogglesWithoutBroadeningFilters() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                val original =
+                    ClassificationRule(
+                        "filtered-rule",
+                        37,
+                        ActivityKind.DEPOSIT,
+                        ActivityKind.PAYMENT,
+                        AssetId("bitcoin:btc"),
+                        SourceRecordId("filtered-source"),
+                        enabled = false,
+                    )
+                val anyKind = original.copy(id = "any-kind-rule", matchKind = null, priority = 12)
+                app.saveRule(original)
+                app.saveRule(anyKind)
+                val data = app.snapshot()
+                runDesktopComposeUiTest(width = 800, height = 1000) {
+                    setContent {
+                        WorkflowDialog("rule", data, app, host, {}, { _, operation -> operation() }, {}, { _, _ -> })
+                    }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText(original.id).fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("edit-rule-${original.id}").performScrollTo().performClick()
+                    onNodeWithText("Match asset ID (blank for any)").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("deposit").performScrollTo().performClick()
+                    onNodeWithText("reward").performClick()
+                    onNodeWithText("Save rule").performScrollTo().performClick()
+                    runOnIdle { assertEquals(original.copy(result = ActivityKind.REWARD), app.rules().first { it.id == original.id }) }
+                    onNodeWithTag("toggle-rule-${original.id}").performScrollTo().performClick()
+                    runOnIdle {
+                        assertEquals(
+                            original.copy(result = ActivityKind.REWARD, enabled = true),
+                            app.rules().first {
+                                it.id ==
+                                    original.id
+                            },
+                        )
+                    }
+                    onNodeWithTag("toggle-rule-${original.id}").performScrollTo().performClick()
+                    runOnIdle { assertEquals(original.copy(result = ActivityKind.REWARD), app.rules().first { it.id == original.id }) }
+                    onNodeWithTag("edit-rule-${anyKind.id}").performScrollTo().performClick()
+                    onNodeWithText("Any classification").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("Save rule").performScrollTo().performClick()
+                    runOnIdle { assertEquals(anyKind, app.rules().first { it.id == anyKind.id }) }
                 }
             }
         }

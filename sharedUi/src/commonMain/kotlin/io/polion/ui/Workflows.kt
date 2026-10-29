@@ -65,6 +65,7 @@ import io.polion.core.model.NetworkId
 import io.polion.core.model.OwnerId
 import io.polion.core.model.PortfolioId
 import io.polion.core.model.Price
+import io.polion.core.model.SourceRecordId
 import io.polion.core.model.TrackingTargetId
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
@@ -115,7 +116,10 @@ internal fun WorkflowDialog(
     }
     var parent by remember { mutableStateOf<AccountId?>(null) }
     var selectedKind by remember { mutableStateOf(ActivityKind.DEPOSIT) }
-    var matchKind by remember { mutableStateOf(ActivityKind.DEPOSIT) }
+    var rules by remember { mutableStateOf<List<ClassificationRule>>(emptyList()) }
+    var rulesLoaded by remember { mutableStateOf(false) }
+    var editingRule by remember { mutableStateOf<ClassificationRule?>(null) }
+    var showRuleEditor by remember { mutableStateOf(false) }
     var asset by remember { mutableStateOf(AssetId("bitcoin:btc")) }
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
     var priceConsent by rememberSaveable { mutableStateOf(false) }
@@ -131,6 +135,10 @@ internal fun WorkflowDialog(
     val syncStatus by host.syncStatus.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(type) {
+        if (type == "rule") {
+            rules = withContext(host.dispatcher) { app.rules() }
+            rulesLoaded = true
+        }
         if (type == "price") priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
         if (type == "reconcile") candidates = withContext(host.dispatcher) { app.reconciliationCandidates(86_400_000) }
     }
@@ -147,7 +155,7 @@ internal fun WorkflowDialog(
             "restore" -> "Restore a backup"
             "wipe" -> "Erase local data"
             "lock" -> "Set a privacy lock"
-            "rule" -> "Classification rule"
+            "rule" -> "Manage classification rules"
             "reconcile" -> "Review transfers"
             else -> "Details"
         }
@@ -637,25 +645,51 @@ internal fun WorkflowDialog(
                 ) { Text("Erase this device’s data") }
             }
             "rule" -> {
-                Field("Rule name", name) { name = it }
-                Choice(
-                    "Match original classification",
-                    ActivityKind.entries.map { it to it.name.lowercase() },
-                    matchKind,
-                ) { matchKind = it }
-                Choice("Classify as", ActivityKind.entries.map { it to it.name.lowercase() }, selectedKind) { selectedKind = it }
-                Text(
-                    "Rules apply in priority order; activity-specific corrections take precedence. Source evidence remains unchanged.",
-                    fontSize = 12.sp,
-                )
-                Button(onClick = {
-                    if (name.isBlank()) {
-                        error = "Enter a rule name."
-                        return@Button
+                if (!rulesLoaded) {
+                    Text("Loading classification rules…")
+                } else if (showRuleEditor) {
+                    RuleEditor(
+                        editingRule,
+                        rules.map { it.id }.toSet(),
+                        { showRuleEditor = false },
+                    ) { value ->
+                        execute("Classification rule saved") {
+                            app.saveRule(value)
+                            rules = app.rules()
+                            showRuleEditor = false
+                        }
                     }
-                    execute("Classification rule saved") { app.saveRule(ClassificationRule(name.trim(), 100, selectedKind, matchKind)) }
-                    close()
-                }) { Text("Save rule") }
+                } else {
+                    Text("Rules run by descending priority, then ID. Activity-specific corrections take precedence.", fontSize = 12.sp)
+                    if (rules.isEmpty()) Text("No classification rules saved.")
+                    rules.forEach { rule ->
+                        HorizontalDivider()
+                        Text(rule.id, fontWeight = FontWeight.SemiBold)
+                        Text("${if (rule.enabled) "Enabled" else "Disabled"} · Priority ${rule.priority} · ${rule.result.name.lowercase()}")
+                        Text(
+                            "Original classification: ${rule.matchKind?.name?.lowercase() ?: "any"} · Asset: ${rule.matchAsset?.value ?: "any"} · Source: ${rule.matchSource?.value ?: "any"}",
+                            fontSize = 12.sp,
+                        )
+                        Row {
+                            TextButton(onClick = {
+                                editingRule = rule
+                                showRuleEditor = true
+                            }, modifier = Modifier.testTag("edit-rule-${rule.id}")) { Text("Edit") }
+                            TextButton(onClick = {
+                                execute(if (rule.enabled) "Rule disabled" else "Rule enabled") {
+                                    app.saveRule(rule.copy(enabled = !rule.enabled))
+                                    rules = app.rules()
+                                }
+                            }, modifier = Modifier.testTag("toggle-rule-${rule.id}")) {
+                                Text(if (rule.enabled) "Disable" else "Enable")
+                            }
+                        }
+                    }
+                    OutlinedButton(onClick = {
+                        editingRule = null
+                        showRuleEditor = true
+                    }) { Text("Add a rule") }
+                }
             }
             "reconcile" -> {
                 Text(
@@ -685,6 +719,71 @@ internal fun WorkflowDialog(
             }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+    }
+}
+
+@Composable
+private fun RuleEditor(
+    existing: ClassificationRule?,
+    existingIds: Set<String>,
+    cancel: () -> Unit,
+    save: (ClassificationRule) -> Unit,
+) {
+    var id by remember(existing) { mutableStateOf(existing?.id.orEmpty()) }
+    var priority by remember(existing) { mutableStateOf((existing?.priority ?: 100).toString()) }
+    var enabled by remember(existing) { mutableStateOf(existing?.enabled ?: true) }
+    var result by remember(existing) { mutableStateOf(existing?.result ?: ActivityKind.DEPOSIT) }
+    var matchKind by remember(existing) { mutableStateOf(existing?.matchKind) }
+    var matchAsset by remember(existing) { mutableStateOf(existing?.matchAsset?.value.orEmpty()) }
+    var matchSource by remember(existing) { mutableStateOf(existing?.matchSource?.value.orEmpty()) }
+    var error by remember(existing) { mutableStateOf<String?>(null) }
+    if (existing == null) Field("Rule ID", id) { id = it } else Text("Rule ID: ${existing.id}")
+    Field("Priority", priority) { priority = it }
+    Row {
+        Text("Enabled")
+        Switch(enabled, { enabled = it }, modifier = Modifier.testTag("rule-enabled"))
+    }
+    Choice(
+        "Match original classification",
+        listOf(null to "Any classification") +
+            ActivityKind.entries.map {
+                it to it.name.lowercase()
+            },
+        matchKind,
+    ) {
+        matchKind =
+            it
+    }
+    Field("Match asset ID (blank for any)", matchAsset) { matchAsset = it }
+    Field("Match source record ID (blank for any)", matchSource) { matchSource = it }
+    Choice("Classify as", ActivityKind.entries.map { it to it.name.lowercase() }, result) { result = it }
+    Text(
+        "Filters all apply together. Rules change classification; source evidence and accounting treatments remain explicit.",
+        fontSize = 12.sp,
+    )
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    Row {
+        TextButton(onClick = cancel) { Text("Back to rules") }
+        Button(onClick = {
+            val parsedPriority = priority.toIntOrNull()
+            if (id.isBlank() || parsedPriority == null) {
+                error = "Enter a rule ID and a whole-number priority."
+            } else if (existing == null && id.trim() in existingIds) {
+                error = "That rule ID exists. Edit it from the rule list."
+            } else {
+                save(
+                    ClassificationRule(
+                        existing?.id ?: id.trim(),
+                        parsedPriority,
+                        result,
+                        matchKind,
+                        matchAsset.takeIf { it.isNotBlank() }?.let(::AssetId),
+                        matchSource.takeIf { it.isNotBlank() }?.let(::SourceRecordId),
+                        enabled,
+                    ),
+                )
+            }
+        }) { Text("Save rule") }
     }
 }
 
