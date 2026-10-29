@@ -724,7 +724,12 @@ class PortfolioApplication(
                 ),
                 addresses.map { (address, account) -> BitcoinScanAddress(address, account, null) },
             )
-            db.execute("DELETE FROM sync_jobs WHERE source='esplora' OR source LIKE 'esplora:%'")
+            db.transaction {
+                val jobs = "SELECT id FROM sync_jobs WHERE source='esplora' OR source LIKE 'esplora:%'"
+                db.execute("DELETE FROM sync_cursors WHERE job_id IN ($jobs)")
+                db.execute("DELETE FROM sync_errors WHERE job_id IN ($jobs)")
+                db.execute("DELETE FROM sync_jobs WHERE source='esplora' OR source LIKE 'esplora:%'")
+            }
         }
         val session = requireNotNull(bitcoinStage.session())
         val scanned = bitcoinStage.scanAddresses()

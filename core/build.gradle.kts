@@ -2,6 +2,17 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.kmp)
 }
+
+tasks.register<JavaExec>("bitcoinHeapStress") {
+    group = "verification"
+    description = "Runs two generated Bitcoin refreshes in a separate JVM with a 64 MiB heap."
+    dependsOn("jvmTestClasses")
+    classpath = tasks.named<Test>("jvmTest").get().classpath
+    mainClass.set("io.polion.core.application.BitcoinHeapStress")
+    maxHeapSize = "64m"
+    jvmArgs("-XX:+ExitOnOutOfMemoryError")
+    args(providers.gradleProperty("bitcoinStressTransactions").orElse("100000").get())
+}
 kotlin {
     jvmToolchain(21)
     jvm()
