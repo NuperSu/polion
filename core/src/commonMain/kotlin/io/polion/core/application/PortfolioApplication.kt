@@ -1663,7 +1663,15 @@ class PortfolioApplication(
     }
 
     fun exportCsv(): String {
-        fun cell(value: String): String = "\"" + value.replace("\"", "\"\"") + "\""
+        fun cell(
+            value: String,
+            text: Boolean,
+        ): String {
+            val first = value.dropWhile { it.isWhitespace() || it < ' ' }.firstOrNull()
+            val unsafe = first in listOf('=', '+', '-', '@') || value.firstOrNull() in listOf('\t', '\r', '\n')
+            val safe = if (text && unsafe) "'" + value else value
+            return "\"" + safe.replace("\"", "\"\"") + "\""
+        }
         val lines = mutableListOf("activity_id,occurred_at,kind,status,account,asset,atomic_units,role,label,note")
         overlays.replayForLedger(activities.current()).activities.forEach { item ->
             item.activity.movements.forEach { movement ->
@@ -1679,7 +1687,7 @@ class PortfolioApplication(
                         movement.role.name,
                         item.label.orEmpty(),
                         item.note.orEmpty(),
-                    ).joinToString(",", transform = ::cell)
+                    ).mapIndexed { index, value -> cell(value, index in setOf(0, 4, 5, 8, 9)) }.joinToString(",")
             }
         }
         return lines.joinToString("\r\n", postfix = "\r\n")

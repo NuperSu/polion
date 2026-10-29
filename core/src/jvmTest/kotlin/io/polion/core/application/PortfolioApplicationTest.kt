@@ -15,6 +15,20 @@ import kotlin.test.assertFails
 import kotlin.test.assertTrue
 
 class PortfolioApplicationTest {
+    @Test
+    fun csvEscapesSpreadsheetFormulasWithoutChangingSignedAmounts() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 15552000000L }
+            app.seedDemo()
+            app.saveOverlay(ActivityOverlay(ActivityId("demo-deposit"), label = "  =2+2", note = "@formula,\"quoted\""))
+            val csv = app.exportCsv()
+            assertTrue(csv.contains("\"'  =2+2\""))
+            assertTrue(csv.contains("\"'@formula,\"\"quoted\"\"\""))
+            assertTrue(csv.contains("\"-"))
+            assertTrue(!csv.contains("\"'-"))
+        }
+    }
+
     @Test fun persistedCorrectionsHistoryAndPagination() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 15552000000L }
