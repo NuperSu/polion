@@ -59,12 +59,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,11 +93,7 @@ import io.polion.core.model.PortfolioId
 import io.polion.core.model.Rounding
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
-import io.polion.core.ownership.TrackingTarget
 import io.polion.core.reconcile.EffectiveActivity
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -123,21 +115,6 @@ private val palette =
         onBackground = Ink,
         outline = Line,
     )
-
-private class CacheRevision(
-    var value: Long? = null,
-)
-
-private enum class Page(
-    val label: String,
-    val glyph: String,
-) {
-    OVERVIEW("Overview", "◈"),
-    ACTIVITY("Activity", "⇄"),
-    ACCOUNTS("Accounts", "▣"),
-    REPORTS("Reports", "◷"),
-    SETTINGS("Settings", "⚙"),
-}
 
 @Composable
 fun PolionApp(
@@ -161,113 +138,42 @@ private fun Product(
     app: PortfolioApplication,
     host: PlatformActions,
 ) {
-    var page by rememberSaveable(
-        stateSaver =
-            Saver<Page, String>(save = {
-                it.name
-            }, restore = { Page.valueOf(it) }),
-    ) { mutableStateOf(Page.OVERVIEW) }
+    val presenter = rememberProductPresenter(app, host)
+    var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
+    val snapshot = presenter.state.snapshot
+    val snapshotFilter = presenter.state.snapshotFilter
+    var revision by presenter.field({ it.revision }) { presenter.update { copy(revision = it) } }
+    var search by presenter.field({ it.search }) { presenter.dispatch(ProductEvent.Search(it)) }
+    var kind by presenter.field({ it.kind }) { presenter.dispatch(ProductEvent.Kind(it)) }
+    var offset by presenter.field({ it.offset }) { presenter.dispatch(ProductEvent.Offset(it)) }
+    var selectedAccount by presenter.field({ it.selectedAccount }) { presenter.dispatch(ProductEvent.Account(it)) }
+    var selectedPortfolio by presenter.field({ it.selectedPortfolio }) { presenter.dispatch(ProductEvent.Portfolio(it)) }
+    var sourceDraftEndpoint by presenter.field({ it.sourceDraftEndpoint }) { presenter.update { copy(sourceDraftEndpoint = it) } }
+    var sourceDraftConsent by presenter.field({ it.sourceDraftConsent }) { presenter.update { copy(sourceDraftConsent = it) } }
+    val busy = presenter.state.busy
+    var selectedActivity by presenter.field({ it.selectedActivity }) { presenter.update { copy(selectedActivity = it) } }
+    var addressWallet by presenter.field({ it.addressWallet }) { presenter.update { copy(addressWallet = it) } }
+    var removeAccount by presenter.field({ it.removeAccount }) { presenter.update { copy(removeAccount = it) } }
+    var selectedAsset by presenter.field({ it.selectedAsset }) { presenter.update { copy(selectedAsset = it) } }
+    val chart = presenter.state.chart
+    var period by presenter.field({ it.period }) { presenter.dispatch(ProductEvent.Period(it)) }
+    var dialog by presenter.field({ it.dialog?.key }) { presenter.dispatch(ProductEvent.Dialog(ProductDialog.fromKey(it))) }
+    var message by presenter.field<String?>({ null }) { it?.let(presenter::notify) }
     val overviewScroll = rememberLazyListState()
     val activityScroll = rememberLazyListState()
     val accountScroll = rememberLazyListState()
     val reportScroll = rememberLazyListState()
     val settingsScroll = rememberLazyListState()
-    var snapshot by remember(app) { mutableStateOf<PortfolioSnapshot?>(null) }
-    var snapshotFilter by remember(app) { mutableStateOf(ActivityFilter()) }
-    var revision by remember { mutableIntStateOf(0) }
-    var search by rememberSaveable { mutableStateOf("") }
-    var kind by remember { mutableStateOf<ActivityKind?>(null) }
-    var offset by rememberSaveable { mutableIntStateOf(0) }
-    var selectedAccount by remember(app) { mutableStateOf<AccountId?>(null) }
-    var selectedPortfolio by remember(app) { mutableStateOf<PortfolioId?>(null) }
-    var sourceDraftEndpoint by remember(app) { mutableStateOf<String?>(null) }
-    var sourceDraftConsent by remember(app) { mutableStateOf<Boolean?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var dialog by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedActivity by remember { mutableStateOf<EffectiveActivity?>(null) }
-    var addressWallet by remember { mutableStateOf<TrackingTarget?>(null) }
-    var removeAccount by remember { mutableStateOf<Account?>(null) }
-    var selectedAsset by remember { mutableStateOf<AssetValuation?>(null) }
-    var chart by remember { mutableStateOf<List<HistoryPoint>>(emptyList()) }
-    var period by rememberSaveable { mutableIntStateOf(30) }
     val hostRevision by host.dataRevision.collectAsState()
     val syncStatus by host.syncStatus.collectAsState()
-    val cacheRevision = remember(app) { CacheRevision() }
-    val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
     fun execute(
         success: String = "Saved on this device",
         action: () -> Unit,
-    ) {
-        scope.launch {
-            busy = true
-            try {
-                withContext(host.dispatcher) { action() }
-                revision++
-                message = success
-            } catch (_: Exception) {
-                message = "Could not save. Check your input and available storage, then try again."
-            } finally {
-                busy = false
-            }
-        }
-    }
-    LaunchedEffect(app, page, revision, hostRevision, search, kind, offset, selectedAccount, selectedPortfolio) {
-        try {
-            val filter =
-                if (page == Page.ACTIVITY) {
-                    ActivityFilter(
-                        search = search,
-                        account = selectedAccount,
-                        kind = kind,
-                        offset = offset,
-                        portfolio = selectedPortfolio,
-                    )
-                } else {
-                    ActivityFilter(portfolio = selectedPortfolio)
-                }
-            val loaded =
-                withContext(host.dispatcher) {
-                    if (cacheRevision.value != hostRevision) {
-                        app.reload()
-                        cacheRevision.value = hostRevision
-                    }
-                    app.snapshot(filter)
-                }
-            snapshot = loaded
-            snapshotFilter = filter
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            message = "Your data could not be loaded. Check storage and reopen the app."
-        }
-    }
-    LaunchedEffect(app, page, revision, hostRevision, selectedPortfolio, period) {
-        if (page != Page.OVERVIEW && page != Page.REPORTS) return@LaunchedEffect
-        chart = emptyList()
-        try {
-            chart =
-                withContext(host.dispatcher) {
-                    if (cacheRevision.value != hostRevision) {
-                        app.reload()
-                        cacheRevision.value = hostRevision
-                    }
-                    val end = Clock.System.now().toEpochMilliseconds()
-                    app.historySeries((0..12).map { end - (12L - it) * period * 86_400_000L / 12 }, selectedPortfolio)
-                }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            message = "Historical values could not be loaded. Saved balances are still available."
-        }
-    }
-    LaunchedEffect(message) {
-        message?.let {
-            snackbar.showSnackbar(it)
-            message = null
-        }
+    ) = presenter.execute(success, action)
+    LaunchedEffect(presenter, snackbar) {
+        presenter.messages.collect { snackbar.showSnackbar(it) }
     }
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         val compact = maxWidth < 700.dp
@@ -626,13 +532,23 @@ private fun Product(
                                         )
                                         OutlinedButton(onClick = {
                                             execute("Export ready") {
-                                                val csv = app.exportCsv()
+                                                val csv = app.exportCsv(ActivityFilter(portfolio = selectedPortfolio))
                                                 host.saveFile("polion-activities.csv", csv.encodeToByteArray()) {
                                                     message =
                                                         it
                                                 }
                                             }
-                                        }) { Text("↓  Export exact activity CSV") }
+                                        }) {
+                                            Text(
+                                                if (selectedPortfolio ==
+                                                    null
+                                                ) {
+                                                    "↓  Export all active activity CSV"
+                                                } else {
+                                                    "↓  Export selected portfolio CSV"
+                                                },
+                                            )
+                                        }
                                     }
                                 }
                                 item { SectionTitle("Reconciliation", "Review") { dialog = "reconcile" } }
@@ -701,7 +617,7 @@ private fun Product(
                                             listOf(
                                                 "Encrypted backup" to { dialog = "backup" },
                                                 "Restore backup" to { dialog = "restore" },
-                                                "Activity CSV" to
+                                                "All active activity CSV" to
                                                     {
                                                         execute("Export ready") {
                                                             host.saveFile("polion-activities.csv", app.exportCsv().encodeToByteArray()) {

@@ -657,8 +657,8 @@ class PolionUiTest {
                         timeoutMillis = 10_000,
                     ) { onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
                     onAllNodesWithText("Reports").filter(hasClickAction()).onFirst().performClick()
-                    onNodeWithTag("page-content").performScrollToNode(hasText("↓  Export exact activity CSV"))
-                    onNodeWithText("↓  Export exact activity CSV").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("↓  Export all active activity CSV"))
+                    onNodeWithText("↓  Export all active activity CSV").performClick()
                     waitUntil(timeoutMillis = 10_000) { host.exported != null }
                     assertEquals("polion-activities.csv", host.exportedName)
                     assertTrue(host.exported!!.decodeToString().contains("Reviewed deposit"))
