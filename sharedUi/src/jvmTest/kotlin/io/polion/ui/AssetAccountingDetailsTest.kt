@@ -46,7 +46,7 @@ class AssetAccountingDetailsTest {
             setContent {
                 PolionTheme(AppearanceTheme.LIGHT) {
                     Column(Modifier.verticalScroll(rememberScrollState())) {
-                        AssetAccountingContent(view, btc, 0, mapOf(account to "Wallet"))
+                        AssetAccountingContent(view, btc, 0, mapOf(account to "Wallet")) { }
                     }
                 }
             }

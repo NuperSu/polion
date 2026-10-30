@@ -25,9 +25,22 @@ import io.polion.core.ownership.Portfolio
 import io.polion.core.storage.JvmSqliteDatabase
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AccountingScopeTest {
+    @Test fun effectiveActivityLookupRespectsPortfolioScope() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setup(db)
+            buy(app, "own", first, "USD")
+            buy(app, "other", second, "USD")
+            assertEquals(ActivityId("own"), app.effectiveActivity(ActivityId("own"), selected)?.activity?.id)
+            assertNull(app.effectiveActivity(ActivityId("other"), selected))
+            assertEquals(ActivityId("other"), app.effectiveActivity(ActivityId("other"))?.activity?.id)
+            assertNull(app.effectiveActivity(ActivityId("missing"), selected))
+        }
+    }
+
     private val btc = AssetId("bitcoin:btc")
     private val first = AccountId("first")
     private val second = AccountId("second")

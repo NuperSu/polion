@@ -489,6 +489,17 @@ class PortfolioApplication(
         treatments.save(activityId, values)
     }
 
+    /** Resolve an effective activity only when it intersects the current portfolio scope. */
+    fun effectiveActivity(
+        activityId: ActivityId,
+        portfolio: PortfolioId? = null,
+    ): EffectiveActivity? {
+        val selected = scopedAccounts(ownership.load(), portfolio)
+        return ledger().activities.firstOrNull { entry ->
+            entry.activity.id == activityId && entry.activity.movements.any { it.accountId in selected }
+        }
+    }
+
     fun accountingReport(portfolio: PortfolioId? = null): AccountingView {
         ensureDefaultAssets()
         val catalog = ownership.load()

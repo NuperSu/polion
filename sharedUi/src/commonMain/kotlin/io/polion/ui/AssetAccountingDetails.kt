@@ -25,10 +25,12 @@ import io.polion.core.application.AccountingView
 import io.polion.core.application.AssetValuation
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
+import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.PortfolioId
+import io.polion.core.reconcile.EffectiveActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlin.time.Instant
@@ -41,10 +43,13 @@ internal fun AssetAccountingDetails(
     data: PortfolioSnapshot,
     portfolio: PortfolioId?,
     revision: Int,
+    onActivity: (EffectiveActivity) -> Unit,
 ) {
     val hostRevision by host.dataRevision.collectAsState()
     var view by remember(app, asset.asset, portfolio) { mutableStateOf<AccountingView?>(null) }
     var error by remember(app, asset.asset, portfolio) { mutableStateOf(false) }
+    var activityRequest by remember(app, asset.asset, portfolio) { mutableStateOf<ActivityId?>(null) }
+    var activityError by remember(app, asset.asset, portfolio) { mutableStateOf(false) }
     LaunchedEffect(app, asset.asset, portfolio, revision, hostRevision) {
         view = null
         error = false
@@ -54,6 +59,20 @@ internal fun AssetAccountingDetails(
             throw cancelled
         } catch (_: Exception) {
             error = true
+        }
+    }
+    LaunchedEffect(app, portfolio, activityRequest) {
+        val id = activityRequest ?: return@LaunchedEffect
+        activityError = false
+        try {
+            val activity = withContext(host.dispatcher) { app.effectiveActivity(id, portfolio) }
+            if (activity == null) activityError = true else onActivity(activity)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            activityError = true
+        } finally {
+            activityRequest = null
         }
     }
     when {
@@ -68,7 +87,16 @@ internal fun AssetAccountingDetails(
                     it.id to
                         it.label
                 },
+                { id -> activityRequest = id },
             )
+    }
+    if (activityRequest != null) Text("Loading activity…", color = Muted, fontSize = 12.sp)
+    if (activityError) {
+        Text(
+            "Activity could not be loaded or is no longer in this portfolio scope.",
+            color = MaterialTheme.colorScheme.error,
+            fontSize = 12.sp,
+        )
     }
 }
 
@@ -78,6 +106,7 @@ internal fun AssetAccountingContent(
     asset: AssetId,
     decimals: Int?,
     accounts: Map<io.polion.core.model.AccountId, String>,
+    onActivity: (ActivityId) -> Unit,
 ) {
     val lots = remember(view, asset) { view.report.lots.filter { it.asset == asset } }
     val disposals = remember(view, asset) { view.report.disposals.filter { it.asset == asset } }
@@ -130,6 +159,7 @@ internal fun AssetAccountingContent(
                     fontSize = 12.sp,
                 )
                 Text("Activity ${disposal.activityId.value}${if (disposal.fee) " · fee" else ""}", color = Muted, fontSize = 11.sp)
+                TextButton(onClick = { onActivity(disposal.activityId) }) { Text("View disposal activity") }
                 disposal.consumed.forEach { part ->
                     Text(
                         "Consumed ${quantity(part.quantity)} from ${part.lotId ?: "unknown lot"} · exact basis ${part.basis ?: "unknown"}",

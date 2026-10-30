@@ -1018,7 +1018,10 @@ private fun Product(
             AssetDialog(asset, snapshot!!, app, host, selectedPortfolio, revision, { selectedAsset = null }, {
                 selectedAsset = null
                 dialog = "price"
-            }, { presenter.dispatch(ProductEvent.AssetActivity(asset.asset)) })
+            }, { presenter.dispatch(ProductEvent.AssetActivity(asset.asset)) }, { activity ->
+                selectedAsset = null
+                selectedActivity = activity
+            })
         }
     }
 }

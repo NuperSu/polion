@@ -953,6 +953,7 @@ internal fun AssetDialog(
     close: () -> Unit,
     price: () -> Unit,
     activity: () -> Unit,
+    disposalActivity: (EffectiveActivity) -> Unit,
 ) {
     var showAccounting by remember(asset.asset, portfolio) { mutableStateOf(false) }
     FormDialog(asset.metadata?.name ?: asset.asset.value, close) {
@@ -979,7 +980,7 @@ internal fun AssetDialog(
         AssetAccountBreakdown(asset, data.balances, data.ownership.accounts)
         OutlinedButton(onClick = activity) { Text("View asset activity") }
         if (showAccounting) {
-            AssetAccountingDetails(app, host, asset, data, portfolio, revision)
+            AssetAccountingDetails(app, host, asset, data, portfolio, revision, disposalActivity)
         } else {
             OutlinedButton(onClick = { showAccounting = true }, modifier = Modifier.testTag("load-asset-accounting")) {
                 Text("View FIFO lots and disposals")

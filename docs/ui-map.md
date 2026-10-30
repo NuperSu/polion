@@ -91,6 +91,8 @@ The asset list saves its value/name sort and optional empty-position filter. Hid
 
 Asset detail links to the activity explorer filtered to that asset and the current portfolio. The link clears other activity filters so they do not hide relevant movements; the asset filter remains visible and can be cleared. Results are shown only after the requested filter has loaded.
 
+Each classified FIFO disposal links to its effective activity within the portfolio scope. Activity details show movements, original quantities and source identifiers, and provide the existing correction workflow.
+
 ## Presentation contract and acceptance
 
 Extract immutable screen states and typed events for navigation, dialogs, filters, selection and operations. Model loading, empty, offline, partial, stale, unpriced, limited, denied, error and available states explicitly. Keep asynchronous work in existing host/use-case owners; recomposition must not trigger repeated financial replay or network requests.

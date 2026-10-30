@@ -58,6 +58,30 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
     @Test
+    fun disposalOpensRecordedActivityAndEvidence() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-OVERVIEW").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Bitcoin"))
+                    onNodeWithText("Bitcoin").performClick()
+                    onNodeWithText("View FIFO lots and disposals").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("View disposal activity").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithText("View disposal activity").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Activity details").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithText("demo-payment").assertIsDisplayed()
+                    onNodeWithText("Source evidence").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("Manual entry").performScrollTo().assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
     fun assetDetailOpensAndClearsActivityFilter() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
