@@ -335,6 +335,13 @@ class PolionUiTest {
                     ) { onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("page-content").performScrollToNode(hasText("Network: network-test ▾"))
                     onNodeWithText("Network: network-test ▾").assertIsDisplayed()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("1970-01-01 · 1 source records"))
+                    onNodeWithText("1970-01-01 · 1 source records").performClick()
+                    onNodeWithText("View saved observations").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Source provider · retrieved 2024-01-01T00:00:00Z").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    onNodeWithText("Source provider · retrieved 2024-01-01T00:00:00Z").performScrollTo().assertIsDisplayed()
                 }
             }
         }
@@ -915,7 +922,7 @@ class PolionUiTest {
             val item = base.copy(original = source, activity = source)
             var saved: ActivityOverlay? = null
             runDesktopComposeUiTest(width = 360, height = 800) {
-                setContent { ActivityDialog(item, data, {}, { saved = it }) }
+                setContent { ActivityDialog(item, data, {}, {}, { saved = it }) }
                 onNodeWithText("Correct quantity 2 (atomic units; empty = keep)").performScrollTo().performTextInput("123")
                 onNodeWithText("Save correction").performScrollTo().performClick()
                 assertEquals(ExactInteger.parse("123"), saved?.amounts?.get(second.id)?.atomicUnits)

@@ -155,6 +155,22 @@ data class AccountingView(
     val orderingUncertain: List<ActivityId>,
 )
 
+data class SavedObservation(
+    val source: String,
+    val retrievedAt: String,
+    val checksum: String,
+    val payloadVersion: String,
+)
+
+data class ActivitySourceEvidence(
+    val id: String,
+    val namespace: String?,
+    val externalId: String?,
+    val network: String?,
+    val observations: List<SavedObservation>,
+    val hasMoreObservations: Boolean,
+)
+
 data class SourceStatus(
     val lastSuccessfulRefresh: Long?,
     val lastError: String?,
@@ -497,6 +513,32 @@ class PortfolioApplication(
         val selected = scopedAccounts(ownership.load(), portfolio)
         return ledger().activities.firstOrNull { entry ->
             entry.activity.id == activityId && entry.activity.movements.any { it.accountId in selected }
+        }
+    }
+
+    /** Observation metadata is evidence of saved revisions, not proof of which revision a decoder used. */
+    fun activitySourceEvidence(
+        activityId: ActivityId,
+        portfolio: PortfolioId? = null,
+    ): List<ActivitySourceEvidence>? {
+        val activity = effectiveActivity(activityId, portfolio) ?: return null
+        return activity.original.sources.sortedBy { it.value }.map { source ->
+            val record = db.query("SELECT namespace, external_id, network FROM raw_records WHERE id=?", listOf(source.value)).singleOrNull()
+            val observations =
+                db.query(
+                    "SELECT o.source_id, o.retrieved_at, o.checksum, r.payload_version FROM raw_observations o " +
+                        "JOIN raw_revisions r ON r.record_id=o.record_id AND r.checksum=o.checksum " +
+                        "WHERE o.record_id=? ORDER BY o.retrieved_at DESC, o.source_id, o.checksum LIMIT 11",
+                    listOf(source.value),
+                )
+            ActivitySourceEvidence(
+                source.value,
+                record?.get(0),
+                record?.get(1),
+                record?.get(2),
+                observations.take(10).map { SavedObservation(it[0]!!, it[1]!!, it[2]!!, it[3]!!) },
+                observations.size > 10,
+            )
         }
     }
 

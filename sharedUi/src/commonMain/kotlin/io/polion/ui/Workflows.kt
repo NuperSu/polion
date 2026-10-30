@@ -845,6 +845,7 @@ private fun RuleEditor(
 internal fun ActivityDialog(
     item: EffectiveActivity,
     data: PortfolioSnapshot,
+    evidence: @Composable () -> Unit,
     close: () -> Unit,
     save: (ActivityOverlay) -> Unit,
 ) {
@@ -885,6 +886,7 @@ internal fun ActivityDialog(
             "Original quantities: ${item.original.movements.joinToString { it.amount.atomicUnits.toString() }} atomic units",
             fontSize = 11.sp,
         )
+        if (!item.original.manual) evidence()
         if (item.unresolvedMovementIds.isNotEmpty()) {
             Text(
                 "Correction conflict: some original movement IDs could not be matched.",

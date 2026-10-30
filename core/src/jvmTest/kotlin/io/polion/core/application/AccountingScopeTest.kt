@@ -23,12 +23,49 @@ import io.polion.core.ownership.AccountKind
 import io.polion.core.ownership.Owner
 import io.polion.core.ownership.Portfolio
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.core.storage.RawObservation
+import io.polion.core.storage.Store
+import io.polion.core.storage.sha256
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AccountingScopeTest {
+    @Test fun savedEvidenceIsScopedBoundedAndContainsRevisionMetadata() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setup(db)
+            val store = Store(db)
+            val payload = "fixture transaction"
+            repeat(11) { index ->
+                store.ingest(
+                    RawObservation(
+                        "source:own",
+                        "bitcoin",
+                        "txid",
+                        "bitcoin-mainnet",
+                        "provider",
+                        "2024-01-${(index + 1).toString().padStart(2, '0')}T00:00:00Z",
+                        payload,
+                        "v1",
+                        sha256(payload),
+                        "private-context",
+                    ),
+                )
+            }
+            ActivityRepository(db).save(activity("own", 1, listOf(movement("own", first, "1")), false, "decoder"))
+            val record = app.activitySourceEvidence(ActivityId("own"), selected)!!.single()
+            assertEquals("bitcoin-mainnet", record.network)
+            assertEquals(10, record.observations.size)
+            assertEquals("2024-01-11T00:00:00Z", record.observations.first().retrievedAt)
+            assertEquals("provider", record.observations.first().source)
+            assertEquals(sha256(payload), record.observations.first().checksum)
+            assertTrue(record.hasMoreObservations)
+            app.savePortfolio(Portfolio(PortfolioId("other-scope"), "Other", "USD", accountIds = setOf(second)))
+            assertNull(app.activitySourceEvidence(ActivityId("own"), PortfolioId("other-scope")))
+        }
+    }
+
     @Test fun effectiveActivityLookupRespectsPortfolioScope() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setup(db)

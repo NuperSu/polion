@@ -1008,7 +1008,9 @@ private fun Product(
             )
         }
         selectedActivity?.let { item ->
-            ActivityDialog(item, snapshot!!, { selectedActivity = null }) { overlay ->
+            ActivityDialog(item, snapshot!!, {
+                ActivityEvidence(app, host, item.activity.id, selectedPortfolio)
+            }, { selectedActivity = null }) { overlay ->
                 execute("Correction saved; original evidence preserved") { app.saveOverlay(overlay) }
                 selectedActivity =
                     null

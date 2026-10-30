@@ -93,6 +93,8 @@ Asset detail links to the activity explorer filtered to that asset and the curre
 
 Each classified FIFO disposal links to its effective activity within the portfolio scope. Activity details show movements, original quantities and source identifiers, and provide the existing correction workflow.
 
+For sourced activity, saved observation details can be loaded on demand. They show record identity, provider/source, retrieval time and revision checksum; they do not assert which saved revision the decoder used. The ten most recent observations per record are shown.
+
 ## Presentation contract and acceptance
 
 Extract immutable screen states and typed events for navigation, dialogs, filters, selection and operations. Model loading, empty, offline, partial, stale, unpriced, limited, denied, error and available states explicitly. Keep asynchronous work in existing host/use-case owners; recomposition must not trigger repeated financial replay or network requests.
