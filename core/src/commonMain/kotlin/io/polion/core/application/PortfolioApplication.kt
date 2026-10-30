@@ -42,6 +42,7 @@ import io.polion.core.market.CoingeckoPrices
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
+import io.polion.core.market.KrakenPrices
 import io.polion.core.market.MarketRepository
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
@@ -1217,6 +1218,49 @@ class PortfolioApplication(
 
     fun priceSourceConsent(): Boolean = setting("price_source_consent") == "true"
 
+    fun automaticPriceConsent(): Boolean = setting("automatic_price_consent") == "true"
+
+    fun automaticPriceStatus(): String? = setting("automatic_price_status")
+
+    fun recordAutomaticPriceStatus(success: Boolean) =
+        db.transaction {
+            if (automaticPriceConsent()) {
+                putSetting(
+                    "automatic_price_status",
+                    if (success) {
+                        "Last refresh succeeded at ${Instant.fromEpochMilliseconds(
+                            now(),
+                        )}"
+                    } else {
+                        "Last refresh failed; saved prices remain available"
+                    },
+                )
+            }
+        }
+
+    fun setAutomaticPriceConsent(accepted: Boolean) =
+        db.transaction {
+            putSetting("automatic_price_generation", priceRequestNonce())
+            putSetting("automatic_price_consent", accepted.toString())
+        }
+
+    fun refreshAutomaticPrices(
+        transport: (String) -> String,
+        authorize: () -> Unit = {},
+    ): Int {
+        require(automaticPriceConsent()) { "Price provider consent required" }
+        ensureDefaultAssets()
+        val quote = currency()
+        val generation = requireNotNull(setting("automatic_price_generation"))
+        val observedAt = now()
+        return KrakenPrices.fetch(transport, market, BITCOIN_ASSET, quote, observedAt, "kraken:${quote.value}:${priceRequestNonce()}") {
+            authorize()
+            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || currency() != quote) {
+                throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+            }
+        }
+    }
+
     fun setPriceSourceConsent(accepted: Boolean) =
         db.transaction {
             putSetting("price_source_generation", priceRequestNonce())
@@ -1285,7 +1329,8 @@ class PortfolioApplication(
     }
 
     /** Saved provider quotes remain selectable offline, independently of permission for new requests. */
-    private fun pricePolicy() = PricePolicy(listOf(ProviderId(CoingeckoPrices.PROVIDER_ID)), 86_400_000L)
+    private fun pricePolicy() =
+        PricePolicy(listOf(ProviderId(KrakenPrices.PROVIDER_ID), ProviderId(CoingeckoPrices.PROVIDER_ID)), 86_400_000L)
 
     fun sourceConsent(): Boolean = setting("source_consent") == "true"
 

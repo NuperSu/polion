@@ -69,6 +69,8 @@ interface PlatformActions {
 
     fun setBackgroundRefresh(enabled: Boolean)
 
+    fun setAutomaticPriceRefresh(enabled: Boolean) {}
+
     fun backgroundRefreshEnabled(): Boolean
 
     fun lock()

@@ -58,6 +58,26 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
     @Test
+    fun automaticPricesRequireConsentAndScheduleRefresh() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                val data = app.snapshot()
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { WorkflowDialog("price", data, app, host, {}, { _, operation -> operation() }, {}, { _, _ -> }) }
+                    assertEquals(false, app.automaticPriceConsent())
+                    onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { host.automaticPrices }
+                    assertTrue(app.automaticPriceConsent())
+                    onNodeWithTag("automatic-price-consent").performClick()
+                    waitUntil(timeoutMillis = 10_000) { !host.automaticPrices }
+                    assertEquals(false, app.automaticPriceConsent())
+                }
+            }
+        }
+    }
+
+    @Test
     fun openLotLinksToItsAcquisitionActivity() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
@@ -187,6 +207,8 @@ class PolionUiTest {
 
         @Volatile var priceRequests = 0
 
+        @Volatile var automaticPrices = false
+
         @Volatile var recoveryRequests = 0
 
         @Volatile var refreshRequests = 0
@@ -240,6 +262,10 @@ class PolionUiTest {
         ) {
             priceRequests++
             onResult("Saved Bitcoin price history.")
+        }
+
+        override fun setAutomaticPriceRefresh(enabled: Boolean) {
+            automaticPrices = enabled
         }
 
         override fun refresh(onResult: (String) -> Unit) {

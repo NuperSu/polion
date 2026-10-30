@@ -83,6 +83,8 @@ internal class DesktopHost(
     private val executor = Executors.newSingleThreadScheduledExecutor()
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     private val unlockExecutor = Executors.newSingleThreadExecutor()
+    private val priceExecutor = Executors.newSingleThreadScheduledExecutor()
+    private var automaticPriceTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val syncQueue = BitcoinSyncQueue()
     private val priceTransport = DesktopCoingeckoTransport()
     override val dataRevision = MutableStateFlow(0L)
@@ -120,6 +122,7 @@ internal class DesktopHost(
             }
         if (demo) app.value.seedDemo()
         if (Files.exists(refreshPreference)) setBackgroundRefresh(true)
+        if (app.value.automaticPriceConsent()) setAutomaticPriceRefresh(true)
     }
 
     override fun saveFile(
@@ -400,6 +403,35 @@ internal class DesktopHost(
 
     override fun backgroundRefreshEnabled(): Boolean = Files.exists(refreshPreference)
 
+    override fun setAutomaticPriceRefresh(enabled: Boolean) {
+        automaticPriceTask?.cancel(false)
+        automaticPriceTask =
+            if (enabled && !closing.get()) {
+                priceExecutor.scheduleWithFixedDelay({
+                    try {
+                        JvmSqliteDatabase(file.toString()).use { connection ->
+                            val application = PortfolioApplication(connection, System::currentTimeMillis)
+                            if (application.automaticPriceConsent()) {
+                                try {
+                                    application.refreshAutomaticPrices(KrakenPriceTransport()::get) { check(!closing.get()) }
+                                    application.recordAutomaticPriceStatus(true)
+                                } catch (failure: Exception) {
+                                    if (!closing.get()) application.recordAutomaticPriceStatus(false)
+                                    throw failure
+                                } finally {
+                                    dataRevision.update { it + 1 }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // Saved observations remain available until a later refresh succeeds.
+                    }
+                }, 0, 1, java.util.concurrent.TimeUnit.HOURS)
+            } else {
+                null
+            }
+    }
+
     override fun removeLockPassword(onResult: (String) -> Unit) {
         if (locked.value) {
             onResult("Unlock first")
@@ -470,6 +502,8 @@ internal class DesktopHost(
     fun close() {
         if (!closing.compareAndSet(false, true)) return
         refreshTask?.cancel(false)
+        automaticPriceTask?.cancel(false)
+        priceExecutor.shutdownNow()
         syncQueue.shutdown()
         executor.execute {
             // The network worker must finish cancellation and release SQLite before either connection closes.

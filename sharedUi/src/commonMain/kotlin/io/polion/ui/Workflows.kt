@@ -126,6 +126,8 @@ internal fun WorkflowDialog(
     var asset by remember { mutableStateOf(AssetId("bitcoin:btc")) }
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
     var priceConsent by rememberSaveable { mutableStateOf(false) }
+    var automaticPriceConsent by remember { mutableStateOf(false) }
+    var automaticPriceStatus by remember { mutableStateOf<String?>(null) }
     var priceApiKey by remember { mutableStateOf("") }
     var priceDays by rememberSaveable { mutableIntStateOf(90) }
     var fetchingPrice by remember { mutableStateOf(false) }
@@ -139,13 +141,17 @@ internal fun WorkflowDialog(
     var acceptedBackup by rememberSaveable { mutableStateOf(false) }
     var acceptedRecovery by rememberSaveable { mutableStateOf(false) }
     val syncStatus by host.syncStatus.collectAsState()
+    val priceRevision by host.dataRevision.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(type) {
         if (type == "rule") {
             rules = withContext(host.dispatcher) { app.rules() }
             rulesLoaded = true
         }
-        if (type == "price") priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
+        if (type == "price") {
+            priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
+            automaticPriceConsent = withContext(host.dispatcher) { app.automaticPriceConsent() }
+        }
         if (type == "reconcile") {
             withContext(host.dispatcher) {
                 candidates = app.reconciliationCandidates(86_400_000)
@@ -154,6 +160,9 @@ internal fun WorkflowDialog(
             }
             transfersLoaded = true
         }
+    }
+    LaunchedEffect(type, priceRevision, automaticPriceConsent) {
+        if (type == "price") automaticPriceStatus = withContext(host.dispatcher) { app.automaticPriceStatus() }
     }
     val title =
         when (type) {
@@ -404,6 +413,28 @@ internal fun WorkflowDialog(
                     close()
                 }, modifier = Modifier.fillMaxWidth()) { Text("Save price observation") }
                 HorizontalDivider()
+                Text("Automatic Bitcoin prices", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Kraken receives the Bitcoin pair in your default currency and your IP address; wallet addresses are not sent. Closed hourly prices refresh automatically while scheduling is available. No API key is needed.",
+                    fontSize = 13.sp,
+                )
+                Row {
+                    Checkbox(automaticPriceConsent, { accepted ->
+                        automaticPriceConsent = accepted
+                        scope.launch {
+                            withContext(host.dispatcher) { app.setAutomaticPriceConsent(accepted) }
+                            host.setAutomaticPriceRefresh(accepted)
+                        }
+                    }, modifier = Modifier.testTag("automatic-price-consent"))
+                    Text("Allow automatic Kraken prices", modifier = Modifier.padding(top = 12.dp))
+                }
+                if (automaticPriceConsent) {
+                    Text(
+                        automaticPriceStatus ?: "Waiting for the first price refresh.",
+                        color = Muted,
+                        fontSize = 12.sp,
+                    )
+                }
                 Text("Bitcoin price history", fontWeight = FontWeight.SemiBold)
                 Text(
                     "CoinGecko receives the coin, currency and time range, plus your IP address. Wallet addresses are not sent. Saved quotes are available offline and do not establish acquisition cost. The 90-day range includes hourly points; the 365-day range uses daily points.",

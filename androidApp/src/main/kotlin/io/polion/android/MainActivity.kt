@@ -293,6 +293,18 @@ private class AndroidHost(
 
     override fun backgroundRefreshEnabled(): Boolean = preferences.getBoolean("background_refresh", false)
 
+    override fun setAutomaticPriceRefresh(enabled: Boolean) {
+        val manager = androidx.work.WorkManager.getInstance(activity)
+        if (enabled) {
+            val work = androidx.work.PeriodicWorkRequestBuilder<AutomaticPriceWorker>(1, java.util.concurrent.TimeUnit.HOURS)
+                .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+                .build()
+            manager.enqueueUniquePeriodicWork("polion-price-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
+        } else {
+            manager.cancelUniqueWork("polion-price-refresh")
+        }
+    }
+
     override fun removeLockPassword(onResult: (String) -> Unit) {
         if (locked.value) {
             onResult("Unlock first")
