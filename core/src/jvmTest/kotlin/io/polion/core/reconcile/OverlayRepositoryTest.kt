@@ -18,10 +18,50 @@ import io.polion.core.storage.Store
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class OverlayRepositoryTest {
+    @Test
+    fun batchedClassificationMatchesReplayAndRollsBackConsumerWrites() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val overlays = OverlayRepository(db)
+            overlays.saveRule(ClassificationRule("rule", 1, ActivityKind.REWARD, matchKind = ActivityKind.TRANSFER))
+            val activities = (0 until 260).map { base().copy(id = ActivityId("tx-$it")) }
+            overlays.saveOverlay(ActivityOverlay(activities.first().id, label = "Edited", kind = ActivityKind.PAYMENT))
+            overlays.saveOverlay(
+                ActivityOverlay(
+                    activities.last().id,
+                    amounts =
+                        mapOf(
+                            EventId("missing") to AtomicAmount(AssetId("btc"), ExactInteger.parse("9")),
+                        ),
+                ),
+            )
+            val expected = overlays.replay(activities)
+            val actual = mutableListOf<EffectiveActivity>()
+            overlays.replayClassificationsBatched(activities.chunked(128).asSequence()) { actual.addAll(it) }
+            assertEquals(expected, actual)
+            assertEquals(setOf(EventId("missing")), actual.last().unresolvedMovementIds)
+            db.execute("CREATE TABLE batch_fixture (id TEXT PRIMARY KEY)")
+            assertFailsWith<IllegalStateException> {
+                overlays.replayClassificationsBatched(activities.chunked(128).asSequence()) { batch ->
+                    batch.forEach { db.execute("INSERT INTO batch_fixture VALUES (?)", listOf(it.activity.id.value)) }
+                    if (batch.first().activity.id == activities[128].id) error("interrupted")
+                }
+            }
+            assertEquals("0", db.query("SELECT COUNT(*) FROM batch_fixture").single().single())
+            assertFailsWith<IllegalArgumentException> {
+                overlays.replayClassificationsBatched(sequenceOf(listOf(activities.first()), listOf(activities.first()))) { }
+            }
+            assertFailsWith<IllegalArgumentException> {
+                overlays.replayClassificationsBatched(sequenceOf(List(501) { activities.first() })) { }
+            }
+        }
+    }
+
     private fun base() =
         Activity(
             ActivityId("tx"),

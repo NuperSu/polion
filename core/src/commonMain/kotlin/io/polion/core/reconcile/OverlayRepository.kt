@@ -142,31 +142,63 @@ class OverlayRepository(
     private fun replayInTransaction(activities: Collection<Activity>): List<EffectiveActivity> {
         require(activities.map { it.id }.distinct().size == activities.size) { "Duplicate activity identity" }
         val rules = readRules()
-        return activities.map { base ->
-            val saved = readOverlay(base.id)
-            val user = saved?.second
-            val chosenRule = rules.firstOrNull { it.second.matches(base) }
-            val kind = user?.kind ?: chosenRule?.second?.result ?: base.kind
-            val origin =
-                when {
-                    user?.kind != null -> ClassificationOrigin.USER
-                    chosenRule != null -> ClassificationOrigin.RULE
-                    else -> ClassificationOrigin.ORIGINAL
+        return activities.map { base -> replayOne(base, rules) }
+    }
+
+    /**
+     * Apply classifications and corrections in bounded batches under one database transaction.
+     * The consumer must write to this database and resolve duplicate and transfer decisions globally
+     * before treating its output as an effective ledger.
+     */
+    fun replayClassificationsBatched(
+        batches: Sequence<List<Activity>>,
+        consume: (List<EffectiveActivity>) -> Unit,
+    ) = db.transaction {
+        val rules = readRules()
+        db.execute("CREATE TEMP TABLE overlay_replay_seen (id TEXT PRIMARY KEY)")
+        try {
+            batches.forEach { batch ->
+                require(batch.size <= 500) { "Classification batch exceeds 500 activities" }
+                batch.forEach { base ->
+                    require(db.query("SELECT 1 FROM overlay_replay_seen WHERE id=?", listOf(base.id.value)).isEmpty()) {
+                        "Duplicate activity identity"
+                    }
+                    db.execute("INSERT INTO overlay_replay_seen VALUES (?)", listOf(base.id.value))
                 }
-            val amounts = user?.amounts.orEmpty()
-            val corrected = base.movements.map { movement -> amounts[movement.id]?.let { movement.copy(amount = it) } ?: movement }
-            EffectiveActivity(
-                base,
-                base.copy(kind = kind, movements = corrected),
-                user?.label,
-                user?.note,
-                origin,
-                chosenRule?.second?.id?.takeIf { origin == ClassificationOrigin.RULE },
-                chosenRule?.first?.takeIf { origin == ClassificationOrigin.RULE },
-                saved?.first,
-                amounts.keys - base.movements.map { it.id }.toSet(),
-            )
+                consume(batch.map { base -> replayOne(base, rules) })
+            }
+        } finally {
+            db.execute("DROP TABLE overlay_replay_seen")
         }
+    }
+
+    private fun replayOne(
+        base: Activity,
+        rules: List<Pair<Int, ClassificationRule>>,
+    ): EffectiveActivity {
+        val saved = readOverlay(base.id)
+        val user = saved?.second
+        val chosenRule = rules.firstOrNull { it.second.matches(base) }
+        val kind = user?.kind ?: chosenRule?.second?.result ?: base.kind
+        val origin =
+            when {
+                user?.kind != null -> ClassificationOrigin.USER
+                chosenRule != null -> ClassificationOrigin.RULE
+                else -> ClassificationOrigin.ORIGINAL
+            }
+        val amounts = user?.amounts.orEmpty()
+        val corrected = base.movements.map { movement -> amounts[movement.id]?.let { movement.copy(amount = it) } ?: movement }
+        return EffectiveActivity(
+            base,
+            base.copy(kind = kind, movements = corrected),
+            user?.label,
+            user?.note,
+            origin,
+            chosenRule?.second?.id?.takeIf { origin == ClassificationOrigin.RULE },
+            chosenRule?.first?.takeIf { origin == ClassificationOrigin.RULE },
+            saved?.first,
+            amounts.keys - base.movements.map { it.id }.toSet(),
+        )
     }
 
     fun setDecision(

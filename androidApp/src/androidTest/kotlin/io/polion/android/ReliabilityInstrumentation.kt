@@ -29,6 +29,39 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "batchedClassificationRollback" to {
+                    fixture { file ->
+                        AndroidSqliteDatabase(file.path).use { db ->
+                            Store(db)
+                            val overlays = io.polion.core.reconcile.OverlayRepository(db)
+                            val account = io.polion.core.model.AccountId("account")
+                            val asset = io.polion.core.model.AssetId("asset")
+                            val entries = (0 until 130).map { index ->
+                                val id = "batch-$index"
+                                io.polion.core.ledger.Activity(
+                                    io.polion.core.model.ActivityId(id), index.toLong(), id,
+                                    io.polion.core.ledger.ActivityKind.DEPOSIT, io.polion.core.ledger.ActivityStatus.CONFIRMED,
+                                    listOf(io.polion.core.ledger.Movement(io.polion.core.model.EventId(id), account,
+                                        io.polion.core.model.AtomicAmount(asset, io.polion.core.model.ExactInteger.parse("1")),
+                                        io.polion.core.ledger.MovementRole.TRANSFER)), emptySet(), null, manual = true,
+                                )
+                            }
+                            overlays.saveOverlay(io.polion.core.reconcile.ActivityOverlay(entries.last().id, label = "checked"))
+                            val expected = overlays.replay(entries)
+                            val actual = mutableListOf<io.polion.core.reconcile.EffectiveActivity>()
+                            overlays.replayClassificationsBatched(entries.chunked(128).asSequence()) { actual.addAll(it) }
+                            check(expected == actual)
+                            db.execute("CREATE TABLE batch_fixture (id TEXT PRIMARY KEY)")
+                            check(runCatching {
+                                overlays.replayClassificationsBatched(entries.chunked(128).asSequence()) { batch ->
+                                    batch.forEach { db.execute("INSERT INTO batch_fixture VALUES (?)", listOf(it.activity.id.value)) }
+                                    error("interrupted")
+                                }
+                            }.isFailure)
+                            check(db.query("SELECT COUNT(*) FROM batch_fixture").single().single() == "0")
+                        }
+                    }
+                },
                 "streamedHoldingsRollback" to {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
