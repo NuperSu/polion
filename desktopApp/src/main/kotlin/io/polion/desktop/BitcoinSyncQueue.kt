@@ -23,7 +23,10 @@ internal class BitcoinSyncQueue(
     val busy: Boolean get() = active.get()
 
     /** Returns false without running [task] when a sync is already active or queued. */
-    fun tryStart(task: () -> Unit): Boolean {
+    fun tryStart(
+        onReleased: () -> Unit = {},
+        task: () -> Unit,
+    ): Boolean {
         synchronized(lifecycleLock) {
             if (closed || !active.compareAndSet(false, true)) return false
             try {
@@ -31,7 +34,10 @@ internal class BitcoinSyncQueue(
                     try {
                         task()
                     } finally {
-                        active.set(false)
+                        synchronized(lifecycleLock) {
+                            active.set(false)
+                            onReleased()
+                        }
                     }
                 }
             } catch (_: RejectedExecutionException) {

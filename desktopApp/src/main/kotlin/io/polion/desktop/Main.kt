@@ -205,10 +205,15 @@ internal class DesktopHost(
         onResult: (String) -> Unit,
         task: (PortfolioApplication) -> SyncStatus,
     ) {
-        syncStatus.value = start
+        var status = SyncStatus(SyncPhase.ERROR, "Could not finish sync. Check storage and provider, then retry.")
         val accepted =
-            syncQueue.tryStart {
-                val status =
+            syncQueue.tryStart(onReleased = {
+                syncStatus.value = status
+                dataRevision.update { it + 1 }
+                SwingUtilities.invokeLater { onResult(status.message) }
+            }) {
+                syncStatus.value = start
+                status =
                     try {
                         task(syncApplication())
                     } catch (failure: Exception) {
@@ -218,9 +223,6 @@ internal class DesktopHost(
                                 ?: "Could not finish sync. Check storage and provider, then retry.",
                         )
                     }
-                syncStatus.value = status
-                dataRevision.update { it + 1 }
-                SwingUtilities.invokeLater { onResult(status.message) }
             }
         if (!accepted) SwingUtilities.invokeLater { onResult("A sync is already running") }
     }

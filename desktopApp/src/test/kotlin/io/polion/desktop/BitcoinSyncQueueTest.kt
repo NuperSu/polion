@@ -12,6 +12,25 @@ import kotlin.test.assertTrue
 
 class BitcoinSyncQueueTest {
     @Test
+    fun completionIsPublishedAfterTheSyncSlotIsReleased() {
+        val queue = BitcoinSyncQueue(Executors.newSingleThreadExecutor())
+        val completed = CountDownLatch(1)
+        var exclusiveAccepted = false
+        try {
+            assertTrue(
+                queue.tryStart(onReleased = {
+                    exclusiveAccepted = queue.tryRunExclusive { }
+                    completed.countDown()
+                }) { },
+            )
+            assertTrue(completed.await(10, TimeUnit.SECONDS))
+            assertTrue(exclusiveAccepted)
+        } finally {
+            queue.shutdown()
+        }
+    }
+
+    @Test
     fun secondSyncIsRefusedWhileFirstIsActiveAndSlotFreesAfterwards() {
         val queue = BitcoinSyncQueue(Executors.newSingleThreadExecutor())
         val release = CountDownLatch(1)
