@@ -85,7 +85,7 @@ Changing the portfolio updates scope-dependent figures together. Filtering Activ
 
 Activity can be filtered by status and network as well as account, kind and search. Network choices come from recorded sources across all accounts; selecting one matches the current activity's raw source evidence. Manual entries without network evidence appear under All networks. Filters apply before pagination and to scoped CSV exports when requested; changing them returns to the first page.
 
-The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. ALL begins with the first confirmed activity in the selected account scope; missing historical prices leave gaps. Previous and Next inspect sampled UTC timestamps and show a total only when every holding at that point has a price. The chart shows portfolio value, not a return measure.
+The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. The 1D view samples hourly; longer ranges use progressively wider intervals. ALL begins with the first confirmed activity in the selected account scope; missing historical prices leave gaps. Previous and Next inspect sampled UTC timestamps and show a total only when every holding at that point has a price. The chart shows portfolio value, not a return measure.
 
 The asset list saves its value/name sort and optional empty-position filter. Hiding empty positions changes only the list; it does not delete balances or change portfolio totals. Nonzero unpriced and negative positions remain visible.
 

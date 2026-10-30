@@ -199,6 +199,26 @@ class ReliabilityInstrumentation : Instrumentation() {
                         }
                     }
                 },
+                "automaticHourlyPriceWorkflow" to {
+                    fixture { file ->
+                        AndroidSqliteDatabase(file.path).use { db ->
+                            val hour = 3_600_000L
+                            val current = System.currentTimeMillis() / hour * hour
+                            val at = current + 30_000
+                            val app = PortfolioApplication(db) { at }
+                            val payload = """{"error":[],"result":{"XXBTZUSD":[[${(current - 2 * hour) / 1000},"1","2","1","40000.12","1","1",1],[${(current - hour) / 1000},"1","2","1","41000.34","1","1",1],[${current / 1000},"1","2","1","99999","1","1",1]],"last":0}}"""
+                            app.setAutomaticPriceConsent(true)
+                            check(app.refreshAutomaticPrices({ payload }) == 2)
+                            val prices = db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at")
+                            check(prices == listOf(listOf((current - hour).toString(), "40000.12"), listOf(current.toString(), "41000.34")))
+                            var calls = 0
+                            check(runCatching { app.refreshAutomaticPrices({ payload }) { if (++calls == 3) error("cancelled") } }.isFailure)
+                            check(db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at") == prices)
+                            app.setAutomaticPriceConsent(false)
+                            check(runCatching { app.refreshAutomaticPrices({ error("must not fetch") }) }.isFailure)
+                        }
+                    }
+                },
                 "historicalPriceWorkflow" to {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->

@@ -135,8 +135,16 @@ internal class ProductPresenter(
                         } else {
                             (end - selected.period.toLong() * 86_400_000L).coerceAtLeast(0)
                         }
+                    val intervals =
+                        when (selected.period) {
+                            1 -> 24
+                            7 -> 28
+                            30 -> 30
+                            90 -> 45
+                            else -> 52
+                        }
                     queries.history(
-                        (0..12).map { start + (end - start) / 12 * it + ((end - start) % 12) * it / 12 },
+                        (0..intervals).map { start + (end - start) / intervals * it + ((end - start) % intervals) * it / intervals },
                         selected.selectedPortfolio,
                     )
                 }

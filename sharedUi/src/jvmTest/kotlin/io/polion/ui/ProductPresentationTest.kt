@@ -86,6 +86,8 @@ class ProductPresentationTest {
             presenter.loadChart(0)
             assertEquals(end - 86_400_000L, requested.first())
             assertEquals(end, requested.last())
+            assertEquals(25, requested.size)
+            assertEquals(3_600_000L, requested[1] - requested[0])
         }
 
     @Test
