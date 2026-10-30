@@ -58,6 +58,47 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
     @Test
+    fun accountSourceOpensScanDetails() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                val account =
+                    app
+                        .snapshot()
+                        .ownership.accounts
+                        .single()
+                        .id
+                app.saveTarget(
+                    io.polion.core.ownership.TrackingTarget(
+                        io.polion.core.model
+                            .TrackingTargetId("source-test"),
+                        account,
+                        io.polion.core.ownership.TargetIdentity(
+                            io.polion.core.model
+                                .NetworkId("bitcoin-mainnet"),
+                            "address",
+                            "1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+                        ),
+                        io.polion.core.ownership.TargetRole.LEAF,
+                        "Test source",
+                    ),
+                )
+                runDesktopComposeUiTest(width = 1000, height = 900) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-ACCOUNTS").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("View scan details"))
+                    onNodeWithText("View scan details").performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("No saved fetch job").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithText("Source scan details").assertIsDisplayed()
+                    onNodeWithText("No saved fetch job").assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
     fun disposalOpensRecordedActivityAndEvidence() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

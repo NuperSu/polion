@@ -243,6 +243,7 @@ private fun Product(
     val busy = presenter.state.busy
     var selectedActivity by presenter.field({ it.selectedActivity }) { presenter.update { copy(selectedActivity = it) } }
     var addressWallet by presenter.field({ it.addressWallet }) { presenter.update { copy(addressWallet = it) } }
+    var sourceScanTarget by remember { mutableStateOf<io.polion.core.ownership.TrackingTarget?>(null) }
     var removeAccount by presenter.field({ it.removeAccount }) { presenter.update { copy(removeAccount = it) } }
     var selectedAsset by presenter.field({ it.selectedAsset }) { presenter.update { copy(selectedAsset = it) } }
     val chart = presenter.state.chart
@@ -670,6 +671,7 @@ private fun Product(
                                             .forEach { target ->
                                                 HorizontalDivider(color = Line)
                                                 Text(target.label, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                                TextButton(onClick = { sourceScanTarget = target }) { Text("View scan details") }
                                                 if (target.role ==
                                                     io.polion.core.ownership.TargetRole.WALLET
                                                 ) {
@@ -1007,6 +1009,7 @@ private fun Product(
                 dismissButton = { TextButton(onClick = { removeAccount = null }) { Text("Keep account") } },
             )
         }
+        sourceScanTarget?.let { target -> SourceScanDialog(app, host, target) { sourceScanTarget = null } }
         selectedActivity?.let { item ->
             ActivityDialog(item, snapshot!!, {
                 ActivityEvidence(app, host, item.activity.id, selectedPortfolio)

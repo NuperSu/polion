@@ -171,6 +171,18 @@ data class ActivitySourceEvidence(
     val hasMoreObservations: Boolean,
 )
 
+data class SourceScanJob(
+    val state: String,
+    val pages: Int,
+    val coverage: String,
+    val provider: String?,
+)
+
+data class SourceAddressScan(
+    val target: TrackingTarget,
+    val job: SourceScanJob?,
+)
+
 data class SourceStatus(
     val lastSuccessfulRefresh: Long?,
     val lastError: String?,
@@ -514,6 +526,32 @@ class PortfolioApplication(
         return ledger().activities.firstOrNull { entry ->
             entry.activity.id == activityId && entry.activity.movements.any { it.accountId in selected }
         }
+    }
+
+    /** Saved scan jobs describe fetch progress; acceptance is established separately for the whole scan. */
+    fun sourceScanJobs(targetId: TrackingTargetId): List<SourceAddressScan> {
+        val targets = ownership.load().targets
+        val target = requireNotNull(targets.firstOrNull { it.id == targetId }) { "Unknown source" }
+        val leaves = if (target.role == TargetRole.WALLET) targets.filter { it.walletId == targetId } else listOf(target)
+        val hasJobs = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_jobs'").isNotEmpty()
+        return leaves
+            .filter { it.role == TargetRole.LEAF && it.identity.networkId == BITCOIN_MAINNET && it.identity.kind == "address" }
+            .sortedBy { it.identity.canonicalKey }
+            .map { leaf ->
+                val suffix = "-" + sha256(bitcoinMainnetAddress(leaf.identity.canonicalKey)).take(16)
+                val row =
+                    if (hasJobs) {
+                        db
+                            .query(
+                                "SELECT state, pages, coverage, last_provider FROM sync_jobs WHERE account=? AND network=? " +
+                                    "AND (source='esplora' OR source LIKE 'esplora:%') AND id LIKE 'bitcoin-%' AND substr(id, -17)=? LIMIT 1",
+                                listOf(leaf.accountId.value, BITCOIN_MAINNET.value, suffix),
+                            ).singleOrNull()
+                    } else {
+                        null
+                    }
+                SourceAddressScan(leaf, row?.let { SourceScanJob(it[0]!!, it[1]!!.toInt(), it[2]!!, it[3]) })
+            }
     }
 
     /** Observation metadata is evidence of saved revisions, not proof of which revision a decoder used. */

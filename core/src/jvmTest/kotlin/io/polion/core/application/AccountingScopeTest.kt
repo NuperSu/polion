@@ -14,14 +14,19 @@ import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
+import io.polion.core.model.NetworkId
 import io.polion.core.model.OwnerId
 import io.polion.core.model.PortfolioId
 import io.polion.core.model.Rational
 import io.polion.core.model.SourceRecordId
+import io.polion.core.model.TrackingTargetId
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
 import io.polion.core.ownership.Owner
 import io.polion.core.ownership.Portfolio
+import io.polion.core.ownership.TargetIdentity
+import io.polion.core.ownership.TargetRole
+import io.polion.core.ownership.TrackingTarget
 import io.polion.core.storage.JvmSqliteDatabase
 import io.polion.core.storage.RawObservation
 import io.polion.core.storage.Store
@@ -32,6 +37,34 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AccountingScopeTest {
+    @Test fun sourceJobsMatchAddressAndAccountWithoutInventingAcceptance() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setup(db)
+            val address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+            val target =
+                TrackingTarget(
+                    TrackingTargetId("target"),
+                    first,
+                    TargetIdentity(NetworkId("bitcoin-mainnet"), "address", address),
+                    TargetRole.LEAF,
+                    "Watch",
+                )
+            app.saveTarget(target)
+            assertNull(app.sourceScanJobs(target.id).single().job)
+            db.execute(
+                "INSERT INTO sync_jobs VALUES (?, 'esplora:fixture', ?, ?, NULL, NULL, ?, 0, 0, 0, 0, ?, ?, NULL, ?, NULL)",
+                listOf("bitcoin-1-${sha256(address).take(16)}", "bitcoin-mainnet", first.value, "COMPLETED", "2", "COMPLETE", "provider"),
+            )
+            val job = app.sourceScanJobs(target.id).single().job!!
+            assertEquals("COMPLETED", job.state)
+            assertEquals(2, job.pages)
+            assertEquals("COMPLETE", job.coverage)
+            assertEquals("provider", job.provider)
+            db.execute("UPDATE sync_jobs SET account=?", listOf(second.value))
+            assertNull(app.sourceScanJobs(target.id).single().job)
+        }
+    }
+
     @Test fun savedEvidenceIsScopedBoundedAndContainsRevisionMetadata() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setup(db)
