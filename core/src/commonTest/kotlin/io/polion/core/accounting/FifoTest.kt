@@ -58,6 +58,26 @@ class FifoTest {
         assertEquals(q("5"), report.disposals.single().gain)
         assertEquals(200, report.lots.single { it.account == b }.acquiredAt)
         assertEquals(q("3"), report.lots.single { it.account == b }.basis)
+        assertEquals(ActivityId("first"), report.lots.single { it.account == b }.acquisitionActivityId)
+        assertEquals(
+            ActivityId("first"),
+            report.disposals
+                .single()
+                .consumed
+                .single()
+                .acquisitionActivityId,
+        )
+    }
+
+    @Test fun transferWithoutKnownInventoryDoesNotInventAcquisitionIdentity() {
+        val report =
+            FifoAccounting.calculate(
+                listOf(AccountingAction.Transfer(ActivityId("move"), 1, "a", a, b, btc, n("1"))),
+                owners,
+                usd,
+            )
+        assertNull(report.lots.single().acquisitionActivityId)
+        assertNull(report.lots.single().basis)
     }
 
     @Test fun unknownBasisAndPriceAreNotInvented() {

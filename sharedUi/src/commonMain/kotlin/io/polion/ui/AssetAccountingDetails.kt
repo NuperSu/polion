@@ -140,8 +140,14 @@ internal fun AssetAccountingContent(
             val acquired = Instant.fromEpochMilliseconds(lot.acquiredAt).toString().take(10)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("${quantity(lot.quantity)} · ${accounts[lot.account] ?: lot.account.value}", fontWeight = FontWeight.Medium)
-                Text("Acquired $acquired UTC · basis ${lot.basis.displayAmount()} $quote", fontSize = 12.sp)
+                Text(
+                    "${if (lot.acquisitionActivityId == null) "Acquisition unknown" else "Acquired $acquired UTC"} · basis ${lot.basis.displayAmount()} $quote",
+                    fontSize = 12.sp,
+                )
                 Text("Lot ${lot.id} · exact basis ${lot.basis ?: "unknown"}", color = Muted, fontSize = 11.sp)
+                lot.acquisitionActivityId?.let { acquisition ->
+                    TextButton(onClick = { onActivity(acquisition) }) { Text("View acquisition activity") }
+                }
             }
         }
         if (lots.size > 10) AssetAccountingPages(lotPage, lots.size) { lotPage = it }
@@ -165,6 +171,9 @@ internal fun AssetAccountingContent(
                         "Consumed ${quantity(part.quantity)} from ${part.lotId ?: "unknown lot"} · exact basis ${part.basis ?: "unknown"}",
                         fontSize = 11.sp,
                     )
+                    part.acquisitionActivityId?.let { acquisition ->
+                        TextButton(onClick = { onActivity(acquisition) }) { Text("View consumed acquisition") }
+                    }
                 }
             }
         }

@@ -720,7 +720,14 @@ class PortfolioApplication(
                                         disposal.copy(
                                             basis = null,
                                             gain = null,
-                                            consumed = disposal.consumed.map { it.copy(lotId = null, basis = null) },
+                                            consumed =
+                                                disposal.consumed.map {
+                                                    it.copy(
+                                                        lotId = null,
+                                                        basis = null,
+                                                        acquisitionActivityId = null,
+                                                    )
+                                                },
                                         )
                                     } else {
                                         disposal

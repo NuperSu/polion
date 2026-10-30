@@ -61,12 +61,14 @@ data class Lot(
     val quantity: ExactInteger,
     val basis: Rational?,
     val opening: Boolean,
+    val acquisitionActivityId: ActivityId? = null,
 )
 
 data class Consumption(
     val lotId: String?,
     val quantity: ExactInteger,
     val basis: Rational?,
+    val acquisitionActivityId: ActivityId? = null,
 )
 
 data class DisposalReport(
@@ -171,13 +173,14 @@ object FifoAccounting {
                             action.quantity,
                             action.totalCost?.amount,
                             action.opening,
+                            action.activityId,
                         )
                 }
                 is AccountingAction.Disposal -> {
                     require(action.quantity.sign > 0 && (action.proceeds == null || action.proceeds.amount >= Rational.ZERO))
                     require(owners.containsKey(action.account))
                     val taken = take(action.account, action.asset, action.quantity)
-                    val consumed = taken.map { (lot, part) -> Consumption(lot?.id, part.first, part.second) }
+                    val consumed = taken.map { (lot, part) -> Consumption(lot?.id, part.first, part.second, lot?.acquisitionActivityId) }
                     val basis =
                         if (consumed.all { it.basis != null }) {
                             consumed.fold(
@@ -223,6 +226,7 @@ object FifoAccounting {
                                 part.first,
                                 part.second,
                                 lot?.opening ?: false,
+                                lot?.acquisitionActivityId,
                             )
                     }
                 }
