@@ -89,6 +89,8 @@ The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. ALL begins with th
 
 The asset list saves its value/name sort and optional empty-position filter. Hiding empty positions changes only the list; it does not delete balances or change portfolio totals. Nonzero unpriced and negative positions remain visible.
 
+Asset detail links to the activity explorer filtered to that asset and the current portfolio. The link clears other activity filters so they do not hide relevant movements; the asset filter remains visible and can be cleared. Results are shown only after the requested filter has loaded.
+
 ## Presentation contract and acceptance
 
 Extract immutable screen states and typed events for navigation, dialogs, filters, selection and operations. Model loading, empty, offline, partial, stale, unpriced, limited, denied, error and available states explicitly. Keep asynchronous work in existing host/use-case owners; recomposition must not trigger repeated financial replay or network requests.

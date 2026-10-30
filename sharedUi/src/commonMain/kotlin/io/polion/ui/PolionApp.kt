@@ -558,12 +558,15 @@ private fun Product(
                                         offset = 0
                                     }
                                 }
-                                item {
-                                    Text(
-                                        "${data.activityTotal} activities · matching filters",
-                                        color = Muted,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
+                                presenter.state.activityAsset?.let { asset ->
+                                    item {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("Asset: ${asset.value}", modifier = Modifier.weight(1f))
+                                            TextButton(
+                                                onClick = { presenter.dispatch(ProductEvent.ClearActivityAsset) },
+                                            ) { Text("Clear asset") }
+                                        }
+                                    }
                                 }
                                 item {
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -571,36 +574,59 @@ private fun Product(
                                         FilterActivityNetwork(data.activityNetworks, activityNetwork) { activityNetwork = it }
                                     }
                                 }
-                                if (data.activities.isEmpty()) {
+                                if (snapshotFilter != presenter.state.requestedFilter()) {
                                     item {
-                                        EmptyCard(
-                                            "No matching activity",
-                                            "Try another filter or sync an account to fetch its history.",
+                                        Text(
+                                            if (presenter.state.snapshotLoading) {
+                                                "Updating activity results…"
+                                            } else {
+                                                "Activity results are unavailable for these filters."
+                                            },
+                                            color = Muted,
                                         )
                                     }
                                 } else {
-                                    items(data.activities, key = { it.activity.id.value }) {
-                                        ActivityRow(it, data, compact, activityAccounts) {
-                                            selectedActivity =
-                                                it
+                                    item {
+                                        Text(
+                                            "${data.activityTotal} activities · matching filters",
+                                            color = Muted,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                    if (data.activities.isEmpty()) {
+                                        item {
+                                            EmptyCard(
+                                                "No matching activity",
+                                                "Try another filter or sync an account to fetch its history.",
+                                            )
+                                        }
+                                    } else {
+                                        items(data.activities, key = { it.activity.id.value }) {
+                                            ActivityRow(it, data, compact, activityAccounts) {
+                                                selectedActivity =
+                                                    it
+                                            }
                                         }
                                     }
-                                }
-                                item {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        OutlinedButton(
-                                            onClick = { offset = (offset - 50).coerceAtLeast(0) },
-                                            enabled = offset > 0,
-                                        ) { Text("Previous") }
-                                        Text(
-                                            "${if (data.activityTotal == 0) 0 else offset + 1}–${minOf(offset + 50, data.activityTotal)}",
-                                            color = Muted,
-                                            modifier = Modifier.padding(top = 12.dp),
-                                        )
-                                        OutlinedButton(
-                                            onClick = { offset += 50 },
-                                            enabled = offset + 50 < data.activityTotal,
-                                        ) { Text("Next") }
+                                    item {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            OutlinedButton(
+                                                onClick = { offset = (offset - 50).coerceAtLeast(0) },
+                                                enabled = offset > 0,
+                                            ) { Text("Previous") }
+                                            Text(
+                                                "${if (data.activityTotal == 0) 0 else offset + 1}–${minOf(
+                                                    offset + 50,
+                                                    data.activityTotal,
+                                                )}",
+                                                color = Muted,
+                                                modifier = Modifier.padding(top = 12.dp),
+                                            )
+                                            OutlinedButton(
+                                                onClick = { offset += 50 },
+                                                enabled = offset + 50 < data.activityTotal,
+                                            ) { Text("Next") }
+                                        }
                                     }
                                 }
                             }
@@ -992,7 +1018,7 @@ private fun Product(
             AssetDialog(asset, snapshot!!, app, host, selectedPortfolio, revision, { selectedAsset = null }, {
                 selectedAsset = null
                 dialog = "price"
-            })
+            }, { presenter.dispatch(ProductEvent.AssetActivity(asset.asset)) })
         }
     }
 }

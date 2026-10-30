@@ -57,6 +57,33 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
+    @Test
+    fun assetDetailOpensAndClearsActivityFilter() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                val asset = app.snapshot().valuations.first()
+                val expected = app.snapshot(ActivityFilter(asset = asset.asset)).activityTotal
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-OVERVIEW").performClick()
+                    val name = asset.metadata?.name ?: asset.asset.value
+                    onNodeWithTag("page-content").performScrollToNode(hasText(name))
+                    onNodeWithText(name).performClick()
+                    onNodeWithText("View asset activity").performScrollTo().performClick()
+                    waitUntil(
+                        timeoutMillis = 10_000,
+                    ) { onAllNodesWithText("$expected activities · matching filters").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithText("Asset: ${asset.asset.value}").assertIsDisplayed()
+                    onNodeWithText("Clear asset").performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Asset: ${asset.asset.value}").fetchSemanticsNodes().isEmpty() }
+                }
+            }
+        }
+    }
+
     private class Host :
         PlatformActions,
         AutoCloseable {

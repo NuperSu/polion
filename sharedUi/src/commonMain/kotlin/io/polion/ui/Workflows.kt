@@ -952,6 +952,7 @@ internal fun AssetDialog(
     revision: Int,
     close: () -> Unit,
     price: () -> Unit,
+    activity: () -> Unit,
 ) {
     var showAccounting by remember(asset.asset, portfolio) { mutableStateOf(false) }
     FormDialog(asset.metadata?.name ?: asset.asset.value, close) {
@@ -976,6 +977,7 @@ internal fun AssetDialog(
             fontSize = 13.sp,
         )
         AssetAccountBreakdown(asset, data.balances, data.ownership.accounts)
+        OutlinedButton(onClick = activity) { Text("View asset activity") }
         if (showAccounting) {
             AssetAccountingDetails(app, host, asset, data, portfolio, revision)
         } else {

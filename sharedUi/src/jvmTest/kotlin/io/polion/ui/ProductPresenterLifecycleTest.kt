@@ -61,6 +61,16 @@ class ProductPresenterLifecycleTest {
                         presenter.dispatch(ProductEvent.Offset(50))
                         presenter.dispatch(ProductEvent.Period(90))
                         presenter.dispatch(ProductEvent.Dialog(ProductDialog.BACKUP))
+                        presenter.update {
+                            copy(
+                                activityAsset =
+                                    io.polion.core.model
+                                        .AssetId("BTC"),
+                                selectedPortfolio =
+                                    io.polion.core.model
+                                        .PortfolioId("scope"),
+                            )
+                        }
                     }
                     waitForIdle()
                     val original = presenter
@@ -81,6 +91,16 @@ class ProductPresenterLifecycleTest {
                         assertEquals(50, presenter.state.offset)
                         assertEquals(90, presenter.state.period)
                         assertEquals(ProductDialog.BACKUP, presenter.state.dialog)
+                        assertEquals(
+                            io.polion.core.model
+                                .AssetId("BTC"),
+                            presenter.state.activityAsset,
+                        )
+                        assertEquals(
+                            io.polion.core.model
+                                .PortfolioId("scope"),
+                            presenter.state.selectedPortfolio,
+                        )
                     }
                 }
             }

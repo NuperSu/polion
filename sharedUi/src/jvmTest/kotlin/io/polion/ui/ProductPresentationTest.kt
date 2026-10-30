@@ -6,6 +6,7 @@ import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.ledger.ActivityKind
 import io.polion.core.model.AccountId
+import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import io.polion.core.storage.JvmSqliteDatabase
 import kotlinx.coroutines.CoroutineStart
@@ -22,6 +23,24 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProductPresentationTest {
+    @Test
+    fun assetDrilldownResetsUnrelatedFiltersButPreservesPortfolio() {
+        val portfolio = PortfolioId("portfolio")
+        val state =
+            ProductPresentation(
+                page = Page.OVERVIEW,
+                selectedPortfolio = portfolio,
+                search = "old",
+                kind = ActivityKind.TRANSFER,
+                selectedAccount = AccountId("old"),
+                offset = 50,
+            ).reduce(ProductEvent.AssetActivity(AssetId("BTC")))
+        assertEquals(Page.ACTIVITY, state.page)
+        assertEquals(ActivityFilter(asset = AssetId("BTC"), portfolio = portfolio, includeNetworkChoices = true), state.requestedFilter())
+        assertNull(state.reduce(ProductEvent.ClearActivityAsset).requestedFilter().asset)
+        assertEquals(ActivityFilter(portfolio = portfolio), state.reduce(ProductEvent.Navigate(Page.OVERVIEW)).requestedFilter())
+    }
+
     @Test
     fun chartRangesUseScopedFirstActivityAndIncludeEndpoints() =
         runBlocking {

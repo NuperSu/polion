@@ -194,6 +194,12 @@ internal fun rememberProductPresenter(
                                 ?.name
                                 .orEmpty(),
                             it.state.activityNetwork.orEmpty(),
+                            it.state.activityAsset
+                                ?.value
+                                .orEmpty(),
+                            it.state.selectedPortfolio
+                                ?.value
+                                .orEmpty(),
                         )
                     },
                     restore = {
@@ -209,6 +215,21 @@ internal fun rememberProductPresenter(
                                         ?.takeIf { value -> value.isNotEmpty() }
                                         ?.let(io.polion.core.ledger.ActivityStatus::valueOf),
                                 activityNetwork = (it.getOrNull(6) as? String)?.ifEmpty { null },
+                                activityAsset =
+                                    (it.getOrNull(7) as? String)
+                                        ?.takeIf { value ->
+                                            value.isNotEmpty()
+                                        }?.let { value ->
+                                            io.polion.core.model
+                                                .AssetId(value)
+                                        },
+                                selectedPortfolio =
+                                    (it.getOrNull(8) as? String)
+                                        ?.takeIf { value -> value.isNotEmpty() }
+                                        ?.let { value ->
+                                            io.polion.core.model
+                                                .PortfolioId(value)
+                                        },
                             ),
                             applicationQueries(app),
                             host.dispatcher,

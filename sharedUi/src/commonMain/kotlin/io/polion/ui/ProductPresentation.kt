@@ -6,6 +6,7 @@ import io.polion.core.application.HistoryPoint
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.ledger.ActivityKind
 import io.polion.core.model.AccountId
+import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.TrackingTarget
@@ -56,6 +57,7 @@ internal data class ProductPresentation(
     val kind: ActivityKind? = null,
     val activityStatus: io.polion.core.ledger.ActivityStatus? = null,
     val activityNetwork: String? = null,
+    val activityAsset: AssetId? = null,
     val offset: Int = 0,
     val selectedAccount: AccountId? = null,
     val selectedPortfolio: PortfolioId? = null,
@@ -80,6 +82,7 @@ internal data class ProductPresentation(
             ActivityFilter(
                 search = search,
                 account = selectedAccount,
+                asset = activityAsset,
                 kind = kind,
                 status = activityStatus,
                 network = activityNetwork,
@@ -119,6 +122,12 @@ internal sealed interface ProductEvent {
         val value: AccountId?,
     ) : ProductEvent
 
+    data class AssetActivity(
+        val asset: AssetId,
+    ) : ProductEvent
+
+    data object ClearActivityAsset : ProductEvent
+
     data class Portfolio(
         val value: PortfolioId?,
     ) : ProductEvent
@@ -144,6 +153,19 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Status -> copy(activityStatus = event.value, offset = 0)
         is ProductEvent.Network -> copy(activityNetwork = event.value, offset = 0)
         is ProductEvent.Account -> copy(selectedAccount = event.value, offset = 0)
+        is ProductEvent.AssetActivity ->
+            copy(
+                page = Page.ACTIVITY,
+                activityAsset = event.asset,
+                search = "",
+                kind = null,
+                activityStatus = null,
+                activityNetwork = null,
+                selectedAccount = null,
+                offset = 0,
+                selectedAsset = null,
+            )
+        ProductEvent.ClearActivityAsset -> copy(activityAsset = null, offset = 0)
         is ProductEvent.Portfolio -> copy(selectedPortfolio = event.value)
         is ProductEvent.Offset -> copy(offset = event.value.also { require(it >= 0) })
         is ProductEvent.Period -> copy(period = event.days.also { require(it in setOf(0, 1, 7, 30, 90, 365)) })
