@@ -8,9 +8,9 @@ The same 100,000-transaction fixture replayed its complete activity stream into 
 
 The fixture also replayed classifications and corrections for 100,049 activities in bounded batches under the same heap limit. The fixture has no duplicate or transfer decisions, and this result does not validate a globally reconciled snapshot. Android's native harness passed 12 checks, including batched classification rollback.
 
-A transaction-scoped scratch projection reconstructed all 100,049 fixture activities under the same JVM heap limit. The full snapshot still exhausts the heap. The projection's correction, stale-input and cleanup tests run on JVM; native projection validation remains open.
+A transaction-scoped scratch projection reconstructed all 100,049 fixture activities under the same JVM heap limit. The full snapshot still exhausts the heap. The projection's correction, stale-input and cleanup tests run on JVM.
 
-The scratch projection resolves duplicate decisions globally, using the same matching logic as the existing replay. JVM parity tests cover chained and conflicting decisions and 150 decisions across page boundaries. Transfer decisions and snapshot integration remain open. The 100,000-transaction fixture contains no duplicate decisions and still fails when the existing full snapshot loads; it does not establish large-scale duplicate-decision performance. The Android duplicate-projection fixture is built but has not run on a device.
+The scratch projection resolves duplicate and transfer decisions globally, using the same matching logic as the existing replay. JVM parity tests cover chained and conflicting decisions, shared movement claims, and 150 decisions across page boundaries. The Pixel's native harness passed 13 checks, including duplicate and transfer projection. Snapshot integration remains open. The 100,000-transaction fixture contains no duplicate or transfer decisions and still fails when the existing full snapshot loads; it does not establish large-scale decision performance.
 
 ## Disk-backed Bitcoin graph integration — 2026-10-29
 
