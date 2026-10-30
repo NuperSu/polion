@@ -11,7 +11,7 @@ This is the Phase 1 presentation specification for the [product contract](produc
 | Accounts | Owners/groups/accounts, public addresses, descriptor/xpub wallets, derived addresses, discovery, archive/restore, portfolio configuration | Sources; portfolio configuration remains reachable |
 | Reports | Portfolio scope, analytics, FIFO/treatments, ordering verification, reconciliation, CSV | Portfolio analytics and Reports reachable through More |
 | Settings | Quote currency, manual prices, consent/provider endpoint, background refresh, lock, backup/restore, CSV and local data controls | More → Settings |
-| Asset dialog | Quantity, quote, observation detail and on-demand FIFO lots and disposals for the current portfolio scope | Asset detail, incrementally expanded using implemented projections |
+| Asset dialog | Quantity, account breakdown, quote, observation detail and on-demand FIFO lots and disposals for the current portfolio scope | Asset detail, incrementally expanded using implemented projections |
 | Activity dialogs | Movements/provenance, correction, treatment and reconciliation workflows | Activity detail and contextual panels |
 | Source dialogs | Address/account form, wallet import, consent, refresh/recovery and UTXO review | Source wizard and source detail |
 

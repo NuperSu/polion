@@ -975,6 +975,7 @@ internal fun AssetDialog(
             "Confirmed quantities are reconstructed from the same effective ledger as reports. Pending movements are excluded. Missing prices remain unknown.",
             fontSize = 13.sp,
         )
+        AssetAccountBreakdown(asset, data.balances, data.ownership.accounts)
         if (showAccounting) {
             AssetAccountingDetails(app, host, asset, data, portfolio, revision)
         } else {
