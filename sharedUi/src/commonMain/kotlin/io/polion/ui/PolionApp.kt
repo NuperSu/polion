@@ -989,7 +989,7 @@ private fun Product(
             }
         }
         selectedAsset?.let { asset ->
-            AssetDialog(asset, snapshot!!, { selectedAsset = null }, {
+            AssetDialog(asset, snapshot!!, app, host, selectedPortfolio, revision, { selectedAsset = null }, {
                 selectedAsset = null
                 dialog = "price"
             })

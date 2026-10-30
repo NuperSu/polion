@@ -485,7 +485,7 @@ private fun AccountingPages(
     }
 }
 
-private fun Rational?.displayAmount(): String {
+internal fun Rational?.displayAmount(): String {
     if (this == null) return "unknown"
     val negative = numerator.sign < 0
     val digits = numerator.toString().removePrefix("-") + "000"

@@ -946,9 +946,14 @@ internal fun ActivityDialog(
 internal fun AssetDialog(
     asset: AssetValuation,
     data: PortfolioSnapshot,
+    app: PortfolioApplication,
+    host: PlatformActions,
+    portfolio: io.polion.core.model.PortfolioId?,
+    revision: Int,
     close: () -> Unit,
     price: () -> Unit,
 ) {
+    var showAccounting by remember(asset.asset, portfolio) { mutableStateOf(false) }
     FormDialog(asset.metadata?.name ?: asset.asset.value, close) {
         Text(asset.asset.value, fontSize = 12.sp)
         Text(
@@ -970,6 +975,13 @@ internal fun AssetDialog(
             "Confirmed quantities are reconstructed from the same effective ledger as reports. Pending movements are excluded. Missing prices remain unknown.",
             fontSize = 13.sp,
         )
+        if (showAccounting) {
+            AssetAccountingDetails(app, host, asset, data, portfolio, revision)
+        } else {
+            OutlinedButton(onClick = { showAccounting = true }, modifier = Modifier.testTag("load-asset-accounting")) {
+                Text("View FIFO lots and disposals")
+            }
+        }
         Button(onClick = price) { Text("Set a manual price") }
     }
 }
