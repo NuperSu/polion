@@ -34,6 +34,55 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HistoricalPriceWorkflowTest {
+    @Test fun rangeImportStoresIntradayPricesExactlyAndRejectsInvalidOrCancelledBatches() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { now }
+            app.setPriceSourceConsent(true)
+            val payload = """{"prices":[[$day,42000.125],[${day + 3_600_000},4.25e4]]}"""
+            val count =
+                app.fetchPriceHistory({ url ->
+                    assertEquals("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90", url)
+                    payload
+                }, btc, usd, 90)
+            assertEquals(2, count)
+            val stored = db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at")
+            assertEquals(listOf(day.toString(), "42000.125"), stored[0])
+            assertEquals(listOf((day + 3_600_000).toString(), "42500"), stored[1])
+            val owner = OwnerId("owner")
+            val account = AccountId("account")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
+            app.saveManualActivity(
+                Activity(
+                    ActivityId("deposit"),
+                    day - 1,
+                    "deposit",
+                    ActivityKind.DEPOSIT,
+                    ActivityStatus.CONFIRMED,
+                    listOf(
+                        Movement(EventId("deposit"), account, AtomicAmount(btc, ExactInteger.parse("100000000")), MovementRole.TRANSFER),
+                    ),
+                    emptySet(),
+                    null,
+                    true,
+                ),
+            )
+            val history = app.historySeries(listOf(day, day + 3_600_000))
+            assertEquals(ExactDecimal.parse("42000.12500000000"), history[0].valuations.single().value)
+            assertEquals(ExactDecimal.parse("42500.00000000"), history[1].valuations.single().value)
+            assertFailsWith<CoingeckoProviderException> {
+                app.fetchPriceHistory({ """{"prices":[[$day,5],[$day,6]]}""" }, btc, usd, 90)
+            }
+            var checks = 0
+            assertFailsWith<CoingeckoProviderException> {
+                app.fetchPriceHistory({ payload }, btc, usd, 90) {
+                    if (++checks == 3) throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+                }
+            }
+            assertEquals(stored, db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at"))
+        }
+    }
+
     private val day = 1_709_164_800_000L
     private val now = day + 43_200_000L
     private val btc = AssetId("bitcoin:btc")

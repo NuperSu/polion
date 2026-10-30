@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -126,7 +127,7 @@ internal fun WorkflowDialog(
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
     var priceConsent by rememberSaveable { mutableStateOf(false) }
     var priceApiKey by remember { mutableStateOf("") }
-    var historyDate by rememberSaveable { mutableStateOf("") }
+    var priceDays by rememberSaveable { mutableIntStateOf(90) }
     var fetchingPrice by remember { mutableStateOf(false) }
     var priceMessage by remember { mutableStateOf<String?>(null) }
     var background by remember { mutableStateOf(host.backgroundRefreshEnabled()) }
@@ -403,9 +404,9 @@ internal fun WorkflowDialog(
                     close()
                 }, modifier = Modifier.fillMaxWidth()) { Text("Save price observation") }
                 HorizontalDivider()
-                Text("Daily historical prices · Bitcoin", fontWeight = FontWeight.SemiBold)
+                Text("Bitcoin price history", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "CoinGecko receives the requested coin, currency and date, plus your IP address. Wallet addresses are not sent. Daily quotes are not live prices or acquisition costs. Saved prices remain available offline. Demo access covers the past 365 days; the latest completed day may be unavailable until 00:35 UTC.",
+                    "CoinGecko receives the coin, currency and time range, plus your IP address. Wallet addresses are not sent. Saved quotes are available offline and do not establish acquisition cost. The 90-day range includes hourly points; the 365-day range uses daily points.",
                     fontSize = 13.sp,
                 )
                 Row {
@@ -420,37 +421,23 @@ internal fun WorkflowDialog(
                     )
                     Text("Allow CoinGecko price requests", modifier = Modifier.padding(top = 12.dp))
                 }
-                SecretField("Demo API key (session only, optional)", priceApiKey) { priceApiKey = it }
-                Field("Historical UTC date (YYYY-MM-DD)", historyDate) { historyDate = it }
+                SecretField("CoinGecko Demo API key (session only)", priceApiKey) { priceApiKey = it }
+                Choice("Price history range", listOf(90 to "90 days · hourly", 365 to "365 days · daily"), priceDays) { priceDays = it }
                 Button(
                     onClick = {
-                        val day =
-                            runCatching {
-                                kotlin.time.Instant
-                                    .parse("${historyDate}T00:00:00Z")
-                                    .toEpochMilliseconds()
-                            }.getOrNull()
-                        if (day == null ||
-                            day < 0 ||
-                            day > Clock.System.now().toEpochMilliseconds() ||
-                            day < Clock.System.now().toEpochMilliseconds() - 365L * 86_400_000L
-                        ) {
-                            error = "Choose a UTC date within the past 365 days."
-                        } else {
-                            fetchingPrice = true
-                            scope.launch {
-                                withContext(host.dispatcher) { app.setPriceSourceConsent(priceConsent) }
-                                host.fetchHistoricalPrice(AssetId("bitcoin:btc"), data.currency, day, priceApiKey) { message ->
-                                    fetchingPrice = false
-                                    priceMessage = message
-                                    notify(message)
-                                }
+                        fetchingPrice = true
+                        scope.launch {
+                            withContext(host.dispatcher) { app.setPriceSourceConsent(priceConsent) }
+                            host.fetchPriceHistory(AssetId("bitcoin:btc"), data.currency, priceDays, priceApiKey) { message ->
+                                fetchingPrice = false
+                                priceMessage = message
+                                notify(message)
                             }
                         }
                     },
                     enabled = priceConsent && !fetchingPrice,
                     modifier = Modifier.fillMaxWidth().testTag("fetch-historical-price"),
-                ) { Text(if (fetchingPrice) "Fetching daily quote…" else "Fetch Bitcoin daily price") }
+                ) { Text(if (fetchingPrice) "Fetching price history…" else "Fetch Bitcoin price history") }
                 priceMessage?.let { Text(it, fontSize = 13.sp) }
             }
             "sync" -> {

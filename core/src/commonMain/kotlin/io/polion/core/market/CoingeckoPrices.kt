@@ -2,10 +2,12 @@ package io.polion.core.market
 
 import io.polion.core.model.AssetId
 import io.polion.core.model.ExactDecimal
+import io.polion.core.model.ExactInteger
 import io.polion.core.model.Price
 import io.polion.core.model.ProviderId
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -30,6 +32,49 @@ object CoingeckoPrices {
     }
 
     private val DECIMAL = Regex("(0|[1-9][0-9]*)(\\.[0-9]+)?")
+
+    /** Parse exact numeric timestamps and prices; reject malformed or ambiguous series as a whole. */
+    fun parseChart(payload: String): List<Pair<Long, ExactDecimal>> {
+        val prices =
+            Json
+                .parseToJsonElement(payload)
+                .jsonObject
+                .getValue("prices")
+                .jsonArray
+        require(prices.isNotEmpty() && prices.size <= 3000)
+        var previous = -1L
+        return prices.map { entry ->
+            val pair = entry.jsonArray
+            require(pair.size == 2)
+            val timestamp = pair[0].jsonPrimitive
+            val value = pair[1].jsonPrimitive
+            require(!timestamp.isString && !value.isString && timestamp.content.matches(Regex("[0-9]{1,16}")))
+            val at = timestamp.content.toLong()
+            require(at > previous)
+            previous = at
+            val price = parseJsonNumber(value.content)
+            require(price.coefficient.sign > 0)
+            at to price
+        }
+    }
+
+    private fun parseJsonNumber(text: String): ExactDecimal {
+        require(text.length <= 100)
+        val parts = text.lowercase().split('e')
+        require(parts.size <= 2 && parts[0].matches(Regex("(0|[1-9][0-9]*)(\\.[0-9]+)?")))
+        val exponent = if (parts.size == 2) parts[1].toInt() else 0
+        require(exponent in -100..100)
+        val mantissa = parts[0]
+        val digits = mantissa.replace(".", "")
+        val scale = (mantissa.substringAfter('.', "").length - exponent)
+        return if (scale >=
+            0
+        ) {
+            ExactDecimal(ExactInteger.parse(digits), scale)
+        } else {
+            ExactDecimal(ExactInteger.parse(digits + "0".repeat(-scale)), 0)
+        }
+    }
 }
 
 /** Host-supplied HTTP GET. Implementations own networking, timeouts, rate limits and API keys. */
@@ -52,6 +97,37 @@ class CoingeckoPriceClient(
     private val clock: () -> Long,
     private val baseUrl: String = "https://api.coingecko.com/api/v3",
 ) {
+    fun chart(
+        base: AssetId,
+        coinId: String,
+        quote: AssetId,
+        quoteCurrency: String,
+        days: Int,
+        requestId: String,
+        authorize: () -> Unit = {},
+    ): Int {
+        require(coinId.matches(COIN_ID) && quoteCurrency.matches(CURRENCY) && days in setOf(1, 7, 30, 90, 365))
+        val payload = transport.get("$baseUrl/coins/$coinId/market_chart?vs_currency=$quoteCurrency&days=$days")
+        val points =
+            try {
+                CoingeckoPrices.parseChart(payload)
+            } catch (_: Exception) {
+                throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+            }
+        val observedAt = clock()
+        if (points.any { (at, _) -> at > observedAt || at < observedAt - (days + 1L) * MILLIS_PER_DAY }) {
+            throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+        }
+        market.mapProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId, base)
+        market.recordPrices(
+            points.map { (at, price) ->
+                PriceObservation("$requestId:$at", Price(base, quote, price), ProviderId(CoingeckoPrices.PROVIDER_ID), at, observedAt)
+            },
+            authorize,
+        )
+        return points.size
+    }
+
     fun historical(
         base: AssetId,
         coinId: String,

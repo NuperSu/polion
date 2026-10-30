@@ -62,12 +62,20 @@ class DesktopCoingeckoTransportTest {
         )
     }
 
+    @Test fun rangeEndpointIsAllowedWithoutExposingKeysInTheUrl() {
+        val rangeUrl = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90"
+        val response = Response(200)
+        assertEquals("{}", DesktopCoingeckoTransport(openConnection = { response }).get(rangeUrl, "key"))
+        assertEquals("key", response.getRequestProperty("x-cg-demo-api-key"))
+    }
+
     @Test fun rejectsUnapprovedUrlsBeforeOpeningConnection() {
         listOf(
             "http://api.coingecko.com/api/v3/coins/bitcoin/history?date=29-02-2024&localization=false",
             "https://other.invalid/api/v3/coins/bitcoin/history?date=29-02-2024&localization=false",
             "https://api.coingecko.com/api/v3/coins/bitcoin/history?date=29-02-2024&localization=false&address=private",
             "https://api.coingecko.com/api/v3/coins/../history?date=29-02-2024&localization=false",
+            "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90&address=private",
         ).forEach { url -> assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().get(url) } }
     }
 }

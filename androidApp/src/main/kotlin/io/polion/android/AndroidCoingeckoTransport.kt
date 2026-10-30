@@ -10,7 +10,7 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URI
 
-/** Requests historical CoinGecko prices over HTTPS. Only the coin-history endpoint is reachable from this transport. */
+/** Requests approved CoinGecko historical price endpoints over HTTPS. */
 class AndroidCoingeckoTransport(
     private val baseUrl: String = "https://api.coingecko.com/api/v3",
     private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
@@ -22,6 +22,7 @@ class AndroidCoingeckoTransport(
 
     private companion object {
         val HISTORY_PATH = Regex("[a-z0-9][a-z0-9-]*/history\\?date=[0-9]{2}-[0-9]{2}-[0-9]{4}&localization=false")
+        val CHART_PATH = Regex("[a-z0-9][a-z0-9-]*/market_chart\\?vs_currency=[a-z]{3,4}&days=(1|7|30|90|365)")
     }
 
     private val paced = PacedCoingeckoTransport(CoingeckoTransport(::request), { System.nanoTime() / 1_000_000L })
@@ -46,7 +47,7 @@ class AndroidCoingeckoTransport(
 
     private fun request(url: String): String {
         val prefix = "${baseUrl.trimEnd('/')}/coins/"
-        require(url.startsWith(prefix) && url.removePrefix(prefix).matches(HISTORY_PATH)) { "Unsupported CoinGecko request" }
+        require(url.startsWith(prefix) && (url.removePrefix(prefix).matches(HISTORY_PATH) || url.removePrefix(prefix).matches(CHART_PATH))) { "Unsupported CoinGecko request" }
         val connection = openConnection(url)
         try {
             if (activeApiKey.isNotEmpty()) connection.setRequestProperty("x-cg-demo-api-key", activeApiKey)

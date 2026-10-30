@@ -171,8 +171,21 @@ class MarketRepository(
     fun recordPrice(
         observation: PriceObservation,
         authorize: () -> Unit = {},
+    ) = recordPrices(listOf(observation), authorize)
+
+    fun recordPrices(
+        observations: List<PriceObservation>,
+        authorize: () -> Unit = {},
     ) = db.transaction {
         authorize()
+        observations.forEach { observation ->
+            authorize()
+            recordPriceInTransaction(observation)
+        }
+        authorize()
+    }
+
+    private fun recordPriceInTransaction(observation: PriceObservation) {
         requireAsset(observation.price.baseAssetId)
         requireAsset(observation.price.quoteAssetId)
         val values =

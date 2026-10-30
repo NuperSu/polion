@@ -240,6 +240,10 @@ private class AndroidHost(
         }
     }
 
+    override fun fetchPriceHistory(asset: io.polion.core.model.AssetId, quote: io.polion.core.model.AssetId, days: Int, apiKey: String, onResult: (String) -> Unit) {
+        PriceHistoryWorker.fetchRange(activity.applicationContext, asset, quote, days, apiKey) { message -> main.post { onResult(message) } }
+    }
+
     override fun refresh(onResult: (String) -> Unit) = refresh(false, onResult)
 
     override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)

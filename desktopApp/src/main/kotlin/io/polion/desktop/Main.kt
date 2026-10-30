@@ -308,6 +308,25 @@ internal class DesktopHost(
         }
     }
 
+    override fun fetchPriceHistory(
+        asset: io.polion.core.model.AssetId,
+        quote: io.polion.core.model.AssetId,
+        days: Int,
+        apiKey: String,
+        onResult: (String) -> Unit,
+    ) {
+        runSync(SyncStatus(SyncPhase.SYNCING, "Fetching Bitcoin price history…"), onResult) { application ->
+            try {
+                val count = application.fetchPriceHistory({ url -> priceTransport.get(url, apiKey) }, asset, quote, days)
+                SyncStatus(SyncPhase.SUCCESS, "Saved $count Bitcoin price points from CoinGecko.")
+            } catch (failure: io.polion.core.market.CoingeckoProviderException) {
+                SyncStatus(SyncPhase.ERROR, failure.failure.message)
+            } catch (_: Exception) {
+                SyncStatus(SyncPhase.ERROR, "Could not fetch price history. Check consent, connection and storage.")
+            }
+        }
+    }
+
     override fun refresh(onResult: (String) -> Unit) = refresh(false, onResult)
 
     override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)

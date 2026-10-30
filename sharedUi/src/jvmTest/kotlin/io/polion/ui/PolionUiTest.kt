@@ -231,6 +231,17 @@ class PolionUiTest {
             onResult("Daily historical price saved from CoinGecko.")
         }
 
+        override fun fetchPriceHistory(
+            asset: AssetId,
+            quote: AssetId,
+            days: Int,
+            apiKey: String,
+            onResult: (String) -> Unit,
+        ) {
+            priceRequests++
+            onResult("Saved Bitcoin price history.")
+        }
+
         override fun refresh(onResult: (String) -> Unit) {
             refreshRequests++
             onResult("Not used")
@@ -858,7 +869,7 @@ class PolionUiTest {
     }
 
     @Test
-    fun historicalPriceRequiresExplicitConsentAndDate() {
+    fun historicalPriceRangeRequiresExplicitConsent() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
@@ -870,17 +881,9 @@ class PolionUiTest {
                     }
                     onNodeWithTag("fetch-historical-price").performScrollTo().assertIsNotEnabled()
                     onNodeWithTag("price-source-consent").performScrollTo().performClick()
-                    onNodeWithText(
-                        "Historical UTC date (YYYY-MM-DD)",
-                    ).performScrollTo().performTextInput(
-                        kotlin.time.Clock.System
-                            .now()
-                            .toString()
-                            .substringBefore('T'),
-                    )
                     onNodeWithTag("fetch-historical-price").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { host.priceRequests == 1 }
-                    onNodeWithText("Daily historical price saved from CoinGecko.").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("Saved Bitcoin price history.").performScrollTo().assertIsDisplayed()
                 }
                 assertTrue(app.priceSourceConsent())
                 assertEquals(1, host.priceRequests)

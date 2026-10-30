@@ -1225,6 +1225,33 @@ class PortfolioApplication(
 
     private fun priceRequestNonce() = "${kotlin.random.Random.nextLong()}:${kotlin.random.Random.nextLong()}"
 
+    fun fetchPriceHistory(
+        transport: CoingeckoTransport,
+        asset: AssetId,
+        quote: AssetId,
+        days: Int,
+        authorize: () -> Unit = {},
+    ): Int {
+        require(priceSourceConsent()) { "Price provider consent required" }
+        require(asset == BITCOIN_ASSET && quote.value in setOf("USD", "EUR", "GBP")) { "Unsupported market" }
+        require(days in setOf(1, 7, 30, 90, 365))
+        ensureDefaultAssets()
+        val generation = requireNotNull(setting("price_source_generation")) { "Renew price provider consent" }
+        return CoingeckoPriceClient(transport, market, now).chart(
+            asset,
+            "bitcoin",
+            quote,
+            quote.value.lowercase(),
+            days,
+            "coingecko:${quote.value}:chart:${priceRequestNonce()}",
+        ) {
+            authorize()
+            if (!priceSourceConsent() || setting("price_source_generation") != generation) {
+                throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+            }
+        }
+    }
+
     /** Explicit daily market observations do not classify acquisitions or establish their cost basis. */
     fun fetchHistoricalPrice(
         transport: CoingeckoTransport,

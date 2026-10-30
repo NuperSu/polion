@@ -53,6 +53,16 @@ interface PlatformActions {
         onResult: (String) -> Unit,
     )
 
+    fun fetchPriceHistory(
+        asset: AssetId,
+        quote: AssetId,
+        days: Int,
+        apiKey: String,
+        onResult: (String) -> Unit,
+    ) {
+        onResult("Price history is unavailable on this host.")
+    }
+
     fun refresh(onResult: (String) -> Unit)
 
     fun recoverBitcoinHistory(onResult: (String) -> Unit)
