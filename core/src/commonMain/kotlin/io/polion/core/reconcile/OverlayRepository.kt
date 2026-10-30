@@ -153,24 +153,32 @@ class OverlayRepository(
     fun replayClassificationsBatched(
         batches: Sequence<List<Activity>>,
         consume: (List<EffectiveActivity>) -> Unit,
-    ) = db.transaction {
-        val rules = readRules()
-        db.execute("CREATE TEMP TABLE overlay_replay_seen (id TEXT PRIMARY KEY)")
-        try {
-            batches.forEach { batch ->
-                require(batch.size <= 500) { "Classification batch exceeds 500 activities" }
-                batch.forEach { base ->
-                    require(db.query("SELECT 1 FROM overlay_replay_seen WHERE id=?", listOf(base.id.value)).isEmpty()) {
-                        "Duplicate activity identity"
+    ) = withClassificationBatches(batches, consume) { Unit }
+
+    internal fun <T> withClassificationBatches(
+        batches: Sequence<List<Activity>>,
+        consume: (List<EffectiveActivity>) -> Unit,
+        complete: () -> T,
+    ): T =
+        db.transaction {
+            val rules = readRules()
+            db.execute("CREATE TEMP TABLE overlay_replay_seen (id TEXT PRIMARY KEY)")
+            try {
+                batches.forEach { batch ->
+                    require(batch.size <= 500) { "Classification batch exceeds 500 activities" }
+                    batch.forEach { base ->
+                        require(db.query("SELECT 1 FROM overlay_replay_seen WHERE id=?", listOf(base.id.value)).isEmpty()) {
+                            "Duplicate activity identity"
+                        }
+                        db.execute("INSERT INTO overlay_replay_seen VALUES (?)", listOf(base.id.value))
                     }
-                    db.execute("INSERT INTO overlay_replay_seen VALUES (?)", listOf(base.id.value))
+                    consume(batch.map { base -> replayOne(base, rules) })
                 }
-                consume(batch.map { base -> replayOne(base, rules) })
+                complete()
+            } finally {
+                db.execute("DROP TABLE overlay_replay_seen")
             }
-        } finally {
-            db.execute("DROP TABLE overlay_replay_seen")
         }
-    }
 
     private fun replayOne(
         base: Activity,

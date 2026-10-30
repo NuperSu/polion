@@ -138,16 +138,14 @@ class ActivityRepository(
                 "SELECT DISTINCT id FROM ledger_activities WHERE id > ? ORDER BY id LIMIT ?",
                 listOf(afterId?.value ?: "", limit.toString()),
             )
-        return ids.map { row ->
-            val latest =
-                db
-                    .query(
-                        "SELECT * FROM ledger_activities WHERE id=? ORDER BY revision DESC LIMIT 1",
-                        listOf(row.single()),
-                    ).single()
-            decodeRow(latest)
-        }
+        return ids.map { row -> requireNotNull(currentById(ActivityId(requireNotNull(row.single())))) }
     }
+
+    fun currentById(id: ActivityId): Activity? =
+        db
+            .query("SELECT * FROM ledger_activities WHERE id=? ORDER BY revision DESC LIMIT 1", listOf(id.value))
+            .singleOrNull()
+            ?.let(::decodeRow)
 
     fun current(): List<Activity> {
         val all = mutableListOf<Activity>()
