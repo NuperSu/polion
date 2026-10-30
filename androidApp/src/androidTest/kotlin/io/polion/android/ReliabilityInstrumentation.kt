@@ -29,6 +29,35 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "streamedHoldingsRollback" to {
+                    fixture { file ->
+                        AndroidSqliteDatabase(file.path).use { db ->
+                            Store(db)
+                            val repo = io.polion.core.holdings.HoldingsRepository(db)
+                            val account = io.polion.core.model.AccountId("account")
+                            val asset = io.polion.core.model.AssetId("asset")
+                            val entries = (0 until 130).map { index ->
+                                val id = "fixture-$index"
+                                io.polion.core.ledger.Activity(
+                                    io.polion.core.model.ActivityId(id), index.toLong(), id,
+                                    io.polion.core.ledger.ActivityKind.DEPOSIT, io.polion.core.ledger.ActivityStatus.CONFIRMED,
+                                    listOf(io.polion.core.ledger.Movement(io.polion.core.model.EventId(id), account,
+                                        io.polion.core.model.AtomicAmount(asset, io.polion.core.model.ExactInteger.parse("100000000000000000000")),
+                                        io.polion.core.ledger.MovementRole.TRANSFER)), emptySet(), null, manual = true,
+                                )
+                            }
+                            repo.refreshStream(entries.asSequence())
+                            val before = repo.current(io.polion.core.holdings.BalanceCoverage.PARTIAL, 1)
+                            val interrupted = sequence { yield(entries.first().copy(status = io.polion.core.ledger.ActivityStatus.REVERSED)); error("interrupted") }
+                            check(runCatching { repo.refreshStream(interrupted) }.isFailure)
+                            check(before == repo.current(io.polion.core.holdings.BalanceCoverage.PARTIAL, 1))
+                            repo.refreshStream(entries.drop(1).asSequence())
+                            val incremental = repo.current(io.polion.core.holdings.BalanceCoverage.PARTIAL, 1)
+                            repo.refresh(entries.drop(1), forceReplay = true)
+                            check(incremental == repo.current(io.polion.core.holdings.BalanceCoverage.PARTIAL, 1))
+                        }
+                    }
+                },
                 "largeRawRevisionRepeatIngestion" to {
                     fixture { file ->
                         val payload = "\u20ac".repeat(1_100_000) + "\u0000\ud83d\ude80tail"

@@ -67,36 +67,63 @@ class HoldingsRepository(
     fun refresh(
         activities: List<Activity>,
         forceReplay: Boolean = false,
+    ) = refreshStream(activities.asSequence(), forceReplay)
+
+    /** Atomically reconcile a complete stream. Pages must contain globally reconciled activities. */
+    fun refreshStream(
+        activities: Sequence<Activity>,
+        forceReplay: Boolean = false,
     ) = db.transaction {
-        require(activities.map { it.id }.distinct().size == activities.size)
         if (forceReplay) {
             db.execute("DELETE FROM holdings_deltas")
             db.execute("DELETE FROM holdings_events")
             db.execute("DELETE FROM holdings_balances")
         }
-        val old = db.query("SELECT id,fingerprint FROM holdings_events").associate { it[0]!! to it[1]!! }
-        val current = activities.associateBy { it.id.value }
-        val changed = current.filter { (id, activity) -> old[id] != fingerprint(activity) }
-        (old.keys - current.keys + changed.keys).forEach { id ->
-            db.query("SELECT account,asset,units FROM holdings_deltas WHERE id=?", listOf(id)).forEach {
-                add(it[0]!!, it[1]!!, -ExactInteger.parse(it[2]!!))
-            }
-            db.execute("DELETE FROM holdings_deltas WHERE id=?", listOf(id))
-            db.execute("DELETE FROM holdings_events WHERE id=?", listOf(id))
-        }
-        changed.forEach { (id, activity) ->
-            db.execute("INSERT INTO holdings_events VALUES (?,?)", listOf(id, fingerprint(activity)))
-            if (activity.status == ActivityStatus.CONFIRMED) {
-                activity.movements.groupBy { BalanceKey(it.accountId, it.amount.assetId) }.forEach { (key, movements) ->
-                    val units = movements.fold(ExactInteger.ZERO) { sum, m -> sum + m.amount.atomicUnits }
-                    db.execute(
-                        "INSERT INTO holdings_deltas VALUES (?,?,?,?)",
-                        listOf(id, key.account.value, key.asset.value, units.toString()),
-                    )
-                    add(key.account.value, key.asset.value, units)
+        db.execute("CREATE TEMP TABLE holdings_refresh_seen (id TEXT PRIMARY KEY)")
+        try {
+            activities.forEach { activity ->
+                val id = activity.id.value
+                require(db.query("SELECT 1 FROM holdings_refresh_seen WHERE id=?", listOf(id)).isEmpty()) { "Duplicate activity identity" }
+                db.execute("INSERT INTO holdings_refresh_seen VALUES (?)", listOf(id))
+                val nextFingerprint = fingerprint(activity)
+                val previous = db.query("SELECT fingerprint FROM holdings_events WHERE id=?", listOf(id)).singleOrNull()?.single()
+                if (previous != nextFingerprint) {
+                    if (previous != null) removeEvent(id)
+                    db.execute("INSERT INTO holdings_events VALUES (?,?)", listOf(id, nextFingerprint))
+                    if (activity.status == ActivityStatus.CONFIRMED) {
+                        activity.movements.groupBy { BalanceKey(it.accountId, it.amount.assetId) }.forEach { (key, movements) ->
+                            val units = movements.fold(ExactInteger.ZERO) { sum, m -> sum + m.amount.atomicUnits }
+                            db.execute(
+                                "INSERT INTO holdings_deltas VALUES (?,?,?,?)",
+                                listOf(id, key.account.value, key.asset.value, units.toString()),
+                            )
+                            add(key.account.value, key.asset.value, units)
+                        }
+                    }
                 }
             }
+            var after = ""
+            while (true) {
+                val removed =
+                    db.query(
+                        "SELECT id FROM holdings_events WHERE id>? AND NOT EXISTS (SELECT 1 FROM holdings_refresh_seen s WHERE s.id=holdings_events.id) ORDER BY id LIMIT 128",
+                        listOf(after),
+                    )
+                if (removed.isEmpty()) break
+                removed.forEach { removeEvent(requireNotNull(it.single())) }
+                after = requireNotNull(removed.last().single())
+            }
+        } finally {
+            db.execute("DROP TABLE holdings_refresh_seen")
         }
+    }
+
+    private fun removeEvent(id: String) {
+        db.query("SELECT account,asset,units FROM holdings_deltas WHERE id=?", listOf(id)).forEach {
+            add(it[0]!!, it[1]!!, -ExactInteger.parse(it[2]!!))
+        }
+        db.execute("DELETE FROM holdings_deltas WHERE id=?", listOf(id))
+        db.execute("DELETE FROM holdings_events WHERE id=?", listOf(id))
     }
 
     fun current(

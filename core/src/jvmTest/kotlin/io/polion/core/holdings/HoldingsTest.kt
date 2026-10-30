@@ -25,6 +25,7 @@ import io.polion.core.storage.Store
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class HoldingsTest {
@@ -110,6 +111,42 @@ class HoldingsTest {
             }
         } finally {
             Files.deleteIfExists(path)
+        }
+    }
+
+    @Test fun completeStreamReconcilesAcrossBatchesAndRollsBackOnFailure() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repo = HoldingsRepository(db)
+            val initial = (0 until 300).map { event("item-$it", it.toLong(), "a" to "1000000000000000000000000000") }
+            repo.refreshStream(initial.asSequence())
+            val before = repo.current(BalanceCoverage.PARTIAL, 1000)
+            val beforeEvents = db.query("SELECT id, fingerprint FROM holdings_events ORDER BY id")
+            val failed =
+                sequence {
+                    yield(initial.first().copy(status = ActivityStatus.REVERSED))
+                    error("interrupted stream")
+                }
+            assertFailsWith<IllegalStateException> { repo.refreshStream(failed) }
+            assertEquals(before, repo.current(BalanceCoverage.PARTIAL, 1000))
+            assertEquals(beforeEvents, db.query("SELECT id, fingerprint FROM holdings_events ORDER BY id"))
+            assertFailsWith<IllegalArgumentException> { repo.refreshStream((initial + initial.first()).asSequence()) }
+            assertEquals(before, repo.current(BalanceCoverage.PARTIAL, 1000))
+            val changed =
+                initial.drop(1).mapIndexed { index, item ->
+                    if (index ==
+                        150
+                    ) {
+                        item.copy(status = ActivityStatus.REVERSED)
+                    } else {
+                        item
+                    }
+                }
+            repo.refreshStream(changed.asSequence())
+            val incremental = repo.current(BalanceCoverage.PARTIAL, 1000)
+            repo.refresh(changed, forceReplay = true)
+            assertEquals(incremental, repo.current(BalanceCoverage.PARTIAL, 1000))
+            assertEquals("298000000000000000000000000000", incremental.quantities.getValue(BalanceKey(AccountId("a"), asset)).toString())
         }
     }
 }

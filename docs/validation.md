@@ -4,6 +4,8 @@
 
 The generated 100,000-confirmed-transaction fixture completes two Bitcoin refreshes under a 64 MiB JVM heap. Loading an unfiltered portfolio snapshot afterward exhausts that heap, before the network-filtered snapshot can run. A 10,000-transaction run with the network filter returned all 10,049 expected activities under the same heap limit. The full snapshot and network-filtered 100,000-transaction acceptance gate remains open; pagination of the displayed list does not by itself bound the ledger projection.
 
+The same 100,000-transaction fixture replayed its complete activity stream into holdings under 64 MiB and produced the exact 100,000-unit balance. This fixture has no user corrections or duplicate decisions. The subsequent full snapshot still exhausted the heap. Android's disposable native SQLite harness passed 11 checks, including streamed holdings rollback and replay.
+
 ## Disk-backed Bitcoin graph integration — 2026-10-29
 
 The integrated run passed formatting, Android lint and both APK builds, with **184 core JVM, 29 Android host, 18 shared UI and 7 desktop tests**, zero failures/errors/skips: `BUILD SUCCESSFUL in 25s`, 173 tasks. Tests cover staged graph and UTXO comparison parity, delta persistence, unchanged refresh row growth, old archives, reorgs, recovery, scope safety and bounded review.
