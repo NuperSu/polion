@@ -10,7 +10,7 @@ import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
 import io.polion.core.storage.SqliteDatabase
 
-/** Transaction-scoped classification scratch space. The callback must not mutate the source ledger. */
+/** Transaction-scoped scratch space. The callback must not mutate the source ledger. */
 internal class ClassifiedActivityProjection(
     private val db: SqliteDatabase,
 ) {
@@ -25,6 +25,8 @@ internal class ClassifiedActivityProjection(
         var headerCreated = false
         var amountsCreated = false
         var unresolvedCreated = false
+        var removedCreated = false
+        var conflictsCreated = false
         try {
             db.execute(
                 "CREATE TEMP TABLE classified_projection (id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT, note TEXT, origin TEXT NOT NULL, rule_id TEXT, rule_revision INTEGER, overlay_revision INTEGER)",
@@ -36,10 +38,23 @@ internal class ClassifiedActivityProjection(
             amountsCreated = true
             db.execute("CREATE TEMP TABLE classified_unresolved (id TEXT NOT NULL, event_id TEXT NOT NULL, PRIMARY KEY(id, event_id))")
             unresolvedCreated = true
+            db.execute(
+                "CREATE TEMP TABLE classified_removed (seq INTEGER PRIMARY KEY, id TEXT NOT NULL, event_id TEXT NOT NULL, canonical_id TEXT NOT NULL, canonical_event TEXT NOT NULL, UNIQUE(id,event_id))",
+            )
+            removedCreated = true
+            db.execute(
+                "CREATE TEMP TABLE classified_duplicate_conflicts (seq INTEGER PRIMARY KEY, first_id TEXT NOT NULL, second_id TEXT NOT NULL, reason TEXT NOT NULL)",
+            )
+            conflictsCreated = true
             val overlays = OverlayRepository(db)
-            return overlays.withClassificationBatches(batches, { batch -> batch.forEach(::insert) }) { block(this) }
+            return overlays.withClassificationBatches(batches, { batch -> batch.forEach(::insert) }) {
+                resolveDuplicates()
+                block(this)
+            }
         } finally {
             try {
+                if (conflictsCreated) db.execute("DROP TABLE temp.classified_duplicate_conflicts")
+                if (removedCreated) db.execute("DROP TABLE temp.classified_removed")
                 if (unresolvedCreated) db.execute("DROP TABLE temp.classified_unresolved")
                 if (amountsCreated) db.execute("DROP TABLE temp.classified_amounts")
                 if (headerCreated) db.execute("DROP TABLE temp.classified_projection")
@@ -47,6 +62,128 @@ internal class ClassifiedActivityProjection(
                 active = false
             }
         }
+    }
+
+    private fun resolveDuplicates() {
+        var first = ""
+        var second = ""
+        var removedSequence = 0L
+        var conflictSequence = 0L
+        while (true) {
+            val rows =
+                db.query(
+                    "SELECT first_id,second_id,canonical_id FROM duplicate_decisions d WHERE state='ACCEPTED' " +
+                        "AND revision=(SELECT MAX(revision) FROM duplicate_decisions " +
+                        "WHERE first_id=d.first_id AND second_id=d.second_id) " +
+                        "AND (first_id>? OR (first_id=? AND second_id>?)) ORDER BY first_id,second_id LIMIT 128",
+                    listOf(first, first, second),
+                )
+            if (rows.isEmpty()) break
+            rows.forEach { row ->
+                val firstId = ActivityId(requireNotNull(row[0]))
+                val secondId = ActivityId(requireNotNull(row[1]))
+                val canonical = ActivityId(requireNotNull(row[2]))
+                val duplicate = if (canonical == firstId) secondId else firstId
+                when (val result = resolveDuplicate(get(canonical), get(duplicate), removedIds(canonical), removedIds(duplicate))) {
+                    is DuplicateResolution.Conflict -> {
+                        conflictSequence++
+                        db.execute(
+                            "INSERT INTO classified_duplicate_conflicts VALUES (?,?,?,?)",
+                            listOf(conflictSequence.toString(), firstId.value, secondId.value, result.reason),
+                        )
+                    }
+                    is DuplicateResolution.Matches ->
+                        result.movements.forEach { movement ->
+                            removedSequence++
+                            db.execute(
+                                "INSERT INTO classified_removed VALUES (?,?,?,?,?)",
+                                listOf(
+                                    removedSequence.toString(),
+                                    movement.duplicateActivity.value,
+                                    movement.duplicateEvent.value,
+                                    movement.canonicalActivity.value,
+                                    movement.canonicalEvent.value,
+                                ),
+                            )
+                        }
+                }
+            }
+            first = requireNotNull(rows.last()[0])
+            second = requireNotNull(rows.last()[1])
+        }
+    }
+
+    private fun removedIds(id: ActivityId): Set<EventId> =
+        db
+            .query(
+                "SELECT event_id FROM classified_removed WHERE id=?",
+                listOf(id.value),
+            ).map { EventId(requireNotNull(it.single())) }
+            .toSet()
+
+    /** The post-duplicate view. Transfer links still require a global resolution pass. */
+    fun resolvedGet(id: ActivityId): EffectiveActivity? {
+        val item = get(id) ?: return null
+        return withoutRemoved(item)
+    }
+
+    private fun withoutRemoved(item: EffectiveActivity): EffectiveActivity? {
+        val removed = removedIds(item.activity.id)
+        val movements = item.activity.movements.filter { it.id !in removed }
+        return if (movements.isEmpty()) null else item.copy(activity = item.activity.copy(movements = movements))
+    }
+
+    fun resolvedPage(
+        after: ActivityId? = null,
+        limit: Int = 128,
+    ): List<EffectiveActivity> {
+        require(limit in 1..500)
+        val result = mutableListOf<EffectiveActivity>()
+        var cursor = after
+        while (result.size < limit) {
+            val batch = page(cursor, limit - result.size)
+            if (batch.isEmpty()) break
+            batch.forEach { item -> withoutRemoved(item)?.let(result::add) }
+            cursor = batch.last().activity.id
+        }
+        return result
+    }
+
+    fun suppressedPage(
+        after: Long = 0,
+        limit: Int = 128,
+    ): List<Pair<Long, SuppressedMovement>> {
+        check(active)
+        require(after >= 0 && limit in 1..500)
+        return db
+            .query(
+                "SELECT seq,canonical_id,canonical_event,id,event_id FROM classified_removed WHERE seq>? ORDER BY seq LIMIT ?",
+                listOf(after.toString(), limit.toString()),
+            ).map {
+                requireNotNull(it[0]).toLong() to
+                    SuppressedMovement(
+                        ActivityId(requireNotNull(it[1])),
+                        EventId(requireNotNull(it[2])),
+                        ActivityId(requireNotNull(it[3])),
+                        EventId(requireNotNull(it[4])),
+                    )
+            }
+    }
+
+    fun duplicateConflictPage(
+        after: Long = 0,
+        limit: Int = 128,
+    ): List<Pair<Long, DuplicateConflict>> {
+        check(active)
+        require(after >= 0 && limit in 1..500)
+        return db
+            .query(
+                "SELECT seq,first_id,second_id,reason FROM classified_duplicate_conflicts WHERE seq>? ORDER BY seq LIMIT ?",
+                listOf(after.toString(), limit.toString()),
+            ).map {
+                requireNotNull(it[0]).toLong() to
+                    DuplicateConflict(ActivityId(requireNotNull(it[1])), ActivityId(requireNotNull(it[2])), requireNotNull(it[3]))
+            }
     }
 
     private fun insert(item: EffectiveActivity) {

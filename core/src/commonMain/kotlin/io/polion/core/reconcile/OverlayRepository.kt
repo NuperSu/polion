@@ -278,44 +278,16 @@ class OverlayRepository(
                 val duplicateId = if (decision.canonical == decision.first) decision.second else decision.first
                 val duplicate = byId[duplicateId]
 
-                fun conflict(reason: String) {
-                    conflicts.add(DuplicateConflict(decision.first, decision.second, reason))
-                }
-                if (canonical == null || duplicate == null) {
-                    conflict("activity missing")
-                    continue
-                }
-                if (canonical.activity.status != duplicate.activity.status) {
-                    conflict("activity statuses differ")
-                    continue
-                }
-                if (canonical.unresolvedMovementIds.isNotEmpty() || duplicate.unresolvedMovementIds.isNotEmpty()) {
-                    conflict("unresolved movement correction")
-                    continue
-                }
-                val canonicalMovements = canonical.activity.movements.filter { it.id !in removed[canonical.activity.id].orEmpty() }
-                val duplicateMovements = duplicate.activity.movements.filter { it.id !in removed[duplicate.activity.id].orEmpty() }
-                val matches =
-                    duplicateMovements.mapNotNull { candidate ->
-                        val possible =
-                            canonicalMovements.filter {
-                                it.accountId == candidate.accountId && it.amount == candidate.amount && it.role == candidate.role
-                            }
-                        if (possible.size > 1) return@mapNotNull candidate.id to null
-                        possible.singleOrNull()?.let { candidate.id to it.id }
-                    }
-                if (matches.isEmpty()) {
-                    conflict("no matching movements")
-                    continue
-                }
-                if (matches.any { it.second == null } || matches.mapNotNull { it.second }.distinct().size != matches.size) {
-                    conflict("ambiguous movement matches")
-                    continue
-                }
-                val deleted = removed.getOrPut(duplicate.activity.id) { mutableSetOf() }
-                matches.forEach { (duplicateEvent, canonicalEvent) ->
-                    deleted.add(duplicateEvent)
-                    suppressed.add(SuppressedMovement(canonical.activity.id, canonicalEvent!!, duplicate.activity.id, duplicateEvent))
+                when (
+                    val resolution =
+                        resolveDuplicate(canonical, duplicate, removed[decision.canonical].orEmpty(), removed[duplicateId].orEmpty())
+                ) {
+                    is DuplicateResolution.Conflict -> conflicts.add(DuplicateConflict(decision.first, decision.second, resolution.reason))
+                    is DuplicateResolution.Matches ->
+                        resolution.movements.forEach { movement ->
+                            removed.getOrPut(movement.duplicateActivity) { mutableSetOf() }.add(movement.duplicateEvent)
+                            suppressed.add(movement)
+                        }
                 }
             }
             val projected =

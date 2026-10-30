@@ -29,6 +29,9 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "boundedDuplicateProjection" to {
+                    fixture { file -> AndroidSqliteDatabase(file.path).use(::verifyBoundedDuplicateNative) }
+                },
                 "batchedClassificationRollback" to {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
