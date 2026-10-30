@@ -2,6 +2,8 @@
 
 A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. Its shared interface provides portfolio, account, public Bitcoin address, activity, reporting and settings workflows. The shared core provides exact amounts, ownership scopes, SQLite persistence, raw provenance, a versioned activity ledger, Esplora history, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation and encrypted portable backup. Public descriptors and xpub wallets support bounded address discovery; see [supported wallet imports](docs/bitcoin-wallets.md). Full Bitcoin financial acceptance remains in progress. Polion does not sign transactions or accept private keys.
 
+See the [product roadmap status](docs/roadmap-status.md) for the current direction and open gates.
+
 ## Build and run
 
 Use JDK 21 and an Android SDK with platform 37 (`platforms;android-37.0`) and build tools 36.0.0. Set `ANDROID_HOME` to the SDK directory or set `sdk.dir` in untracked `local.properties`.
