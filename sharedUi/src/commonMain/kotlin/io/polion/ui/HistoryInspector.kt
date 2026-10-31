@@ -18,13 +18,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.HistoryPoint
+import io.polion.core.market.PriceStatus
 import io.polion.core.model.AssetId
 import io.polion.core.model.ExactDecimal
 import kotlin.time.Instant
 
-/** The displayed total is available only when every holding at that point is priced. */
+/** Historical chart totals require a fresh price for every holding at the sampled time. */
 internal fun historyTotal(point: HistoryPoint): ExactDecimal? {
-    if (point.valuations.isEmpty() || point.valuations.any { it.value == null }) return null
+    if (point.valuations.isEmpty() || point.valuations.any { it.value == null || it.priceStatus != PriceStatus.FRESH }) return null
     return point.valuations.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + requireNotNull(valuation.value) }
 }
 
@@ -61,8 +62,16 @@ internal fun HistoryInspector(
                 .take(16)
                 .replace('T', ' ')
         val value = historyTotal(point)
+        val unavailable =
+            if (point.valuations.any { it.value == null || it.priceStatus == PriceStatus.MISSING }) {
+                "Value unavailable · missing price"
+            } else if (point.valuations.any { it.priceStatus == PriceStatus.STALE }) {
+                "Value unavailable · stale price"
+            } else {
+                "Value unavailable"
+            }
         Text(
-            if (value == null) "$timestamp UTC · Value unavailable" else "$timestamp UTC · $value ${currency.value}",
+            if (value == null) "$timestamp UTC · $unavailable" else "$timestamp UTC · $value ${currency.value}",
             color = tint,
             fontSize = 12.sp,
             modifier = Modifier.testTag("history-point"),

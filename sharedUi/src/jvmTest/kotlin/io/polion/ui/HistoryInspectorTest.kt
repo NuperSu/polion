@@ -23,27 +23,33 @@ class HistoryInspectorTest {
     fun inspectDatedPointsWithoutTreatingMissingPricesAsZero() {
         val asset = AssetId("BTC")
 
-        fun valuation(value: String?) =
-            AssetValuation(
-                asset,
-                AtomicAmount(asset, ExactInteger.parse("1")),
-                null,
-                if (value == null) PriceStatus.MISSING else PriceStatus.FRESH,
-                value?.let(ExactDecimal::parse),
-                null,
-            )
+        fun valuation(
+            value: String?,
+            status: PriceStatus = if (value == null) PriceStatus.MISSING else PriceStatus.FRESH,
+        ) = AssetValuation(
+            asset,
+            AtomicAmount(asset, ExactInteger.parse("1")),
+            null,
+            status,
+            value?.let(ExactDecimal::parse),
+            null,
+        )
         val first = HistoryPoint(0L, listOf(valuation("12.345")))
         val second = HistoryPoint(3_600_000L, listOf(valuation(null)))
+        val stale = HistoryPoint(7_200_000L, listOf(valuation("14", PriceStatus.STALE)))
         assertEquals(ExactDecimal.parse("12.345"), historyTotal(first))
         assertNull(historyTotal(second))
+        assertNull(historyTotal(stale))
         assertNull(historyTotal(HistoryPoint(0L, emptyList())))
         runDesktopComposeUiTest(width = 360, height = 300) {
-            setContent { PolionTheme(AppearanceTheme.DARK) { HistoryInspector(listOf(first, second), AssetId("USD")) } }
-            onNodeWithText("1970-01-01 01:00 UTC · Value unavailable").assertIsDisplayed()
+            setContent { PolionTheme(AppearanceTheme.DARK) { HistoryInspector(listOf(first, second, stale), AssetId("USD")) } }
+            onNodeWithText("1970-01-01 02:00 UTC · Value unavailable · stale price").assertIsDisplayed()
+            onNodeWithTag("history-previous").performClick()
+            onNodeWithText("1970-01-01 01:00 UTC · Value unavailable · missing price").assertIsDisplayed()
             onNodeWithTag("history-previous").performClick()
             onNodeWithText("1970-01-01 00:00 UTC · 12.345 USD").assertIsDisplayed()
             onNodeWithTag("history-next").performClick()
-            onNodeWithText("1970-01-01 01:00 UTC · Value unavailable").assertIsDisplayed()
+            onNodeWithText("1970-01-01 01:00 UTC · Value unavailable · missing price").assertIsDisplayed()
         }
     }
 }

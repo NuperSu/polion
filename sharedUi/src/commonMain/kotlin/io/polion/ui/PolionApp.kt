@@ -1134,17 +1134,17 @@ private fun ValueChart(
     // Conversion to Float is exclusively for drawing coordinates; authoritative values remain exact.
     val values =
         points.map { point ->
-            point.valuations
-                .takeIf { it.isNotEmpty() && it.all { v -> v.value != null } }
-                ?.fold(ExactDecimal.parse("0")) { sum, v ->
-                    sum +
-                        v.value!!
-                }?.toString()
+            historyTotal(point)
+                ?.toString()
                 ?.toDoubleOrNull()
         }
     if (values.none { it != null }) {
         Box(modifier, contentAlignment = Alignment.Center) {
-            Text("Add historical prices to see your value over time", color = if (dark) Color(0xFFAAC6B7) else Muted, fontSize = 12.sp)
+            Text(
+                "Fresh historical prices are needed to show value over time",
+                color = if (dark) Color(0xFFAAC6B7) else Muted,
+                fontSize = 12.sp,
+            )
         }
     } else {
         val chartStroke = if (dark) Color(0xFFA9D6B6) else Teal
