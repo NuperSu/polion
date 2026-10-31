@@ -47,7 +47,11 @@ class AndroidCoingeckoTransport(
 
     private fun request(url: String): String {
         val prefix = "${baseUrl.trimEnd('/')}/coins/"
-        require(url.startsWith(prefix) && (url.removePrefix(prefix).matches(HISTORY_PATH) || url.removePrefix(prefix).matches(CHART_PATH))) { "Unsupported CoinGecko request" }
+        require(
+            url.startsWith(prefix) && (url.removePrefix(prefix).matches(HISTORY_PATH) || url.removePrefix(prefix).matches(CHART_PATH)),
+        ) {
+            "Unsupported CoinGecko request"
+        }
         val connection = openConnection(url)
         try {
             if (activeApiKey.isNotEmpty()) connection.setRequestProperty("x-cg-demo-api-key", activeApiKey)

@@ -22,22 +22,37 @@ internal object PriceHistoryWorker {
         generation.incrementAndGet()
     }
 
-    fun fetchRange(context: Context, asset: AssetId, quote: AssetId, days: Int, apiKey: String, onResult: (String) -> Unit) {
+    fun fetchRange(
+        context: Context,
+        asset: AssetId,
+        quote: AssetId,
+        days: Int,
+        apiKey: String,
+        onResult: (String) -> Unit,
+    ) {
         val requestGeneration = generation.get()
         executor.execute {
-            val message = try {
-                AndroidSqliteDatabase(context.getDatabasePath("portfolio.sqlite").path).use { db ->
-                    val count = PortfolioApplication(db, System::currentTimeMillis).fetchPriceHistory(
-                        { url -> checkGeneration(requestGeneration); transport.get(url, apiKey) }, asset, quote, days,
-                        authorize = { checkGeneration(requestGeneration) },
-                    )
-                    "Saved $count Bitcoin price points from CoinGecko."
+            val message =
+                try {
+                    AndroidSqliteDatabase(context.getDatabasePath("portfolio.sqlite").path).use { db ->
+                        val count =
+                            PortfolioApplication(db, System::currentTimeMillis).fetchPriceHistory(
+                                { url ->
+                                    checkGeneration(requestGeneration)
+                                    transport.get(url, apiKey)
+                                },
+                                asset,
+                                quote,
+                                days,
+                                authorize = { checkGeneration(requestGeneration) },
+                            )
+                        "Saved $count Bitcoin price points from CoinGecko."
+                    }
+                } catch (failure: CoingeckoProviderException) {
+                    failure.failure.message
+                } catch (_: Exception) {
+                    "Could not fetch price history. Check consent, connection and storage."
                 }
-            } catch (failure: CoingeckoProviderException) {
-                failure.failure.message
-            } catch (_: Exception) {
-                "Could not fetch price history. Check consent, connection and storage."
-            }
             RefreshWorker.dataRevision.update { it + 1 }
             onResult(message)
         }

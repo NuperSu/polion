@@ -240,8 +240,20 @@ private class AndroidHost(
         }
     }
 
-    override fun fetchPriceHistory(asset: io.polion.core.model.AssetId, quote: io.polion.core.model.AssetId, days: Int, apiKey: String, onResult: (String) -> Unit) {
-        PriceHistoryWorker.fetchRange(activity.applicationContext, asset, quote, days, apiKey) { message -> main.post { onResult(message) } }
+    override fun fetchPriceHistory(
+        asset: io.polion.core.model.AssetId,
+        quote: io.polion.core.model.AssetId,
+        days: Int,
+        apiKey: String,
+        onResult: (String) -> Unit,
+    ) {
+        PriceHistoryWorker.fetchRange(
+            activity.applicationContext,
+            asset,
+            quote,
+            days,
+            apiKey,
+        ) { message -> main.post { onResult(message) } }
     }
 
     override fun refresh(onResult: (String) -> Unit) = refresh(false, onResult)
@@ -296,9 +308,15 @@ private class AndroidHost(
     override fun setAutomaticPriceRefresh(enabled: Boolean) {
         val manager = androidx.work.WorkManager.getInstance(activity)
         if (enabled) {
-            val work = androidx.work.PeriodicWorkRequestBuilder<AutomaticPriceWorker>(1, java.util.concurrent.TimeUnit.HOURS)
-                .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
-                .build()
+            val work =
+                androidx.work
+                    .PeriodicWorkRequestBuilder<AutomaticPriceWorker>(1, java.util.concurrent.TimeUnit.HOURS)
+                    .setConstraints(
+                        androidx.work.Constraints
+                            .Builder()
+                            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                            .build(),
+                    ).build()
             manager.enqueueUniquePeriodicWork("polion-price-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
         } else {
             manager.cancelUniqueWork("polion-price-refresh")
