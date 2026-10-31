@@ -415,7 +415,7 @@ internal fun WorkflowDialog(
                 HorizontalDivider()
                 Text("Automatic Bitcoin prices", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Kraken receives the Bitcoin pair in your default currency and your IP address; wallet addresses are not sent. Closed hourly prices refresh automatically while scheduling is available. No API key is needed.",
+                    "Kraken receives the Bitcoin pair in your default currency and your IP address; wallet addresses are not sent. Closed hourly and daily prices refresh automatically while scheduling is available. No API key is needed.",
                     fontSize = 13.sp,
                 )
                 Row {

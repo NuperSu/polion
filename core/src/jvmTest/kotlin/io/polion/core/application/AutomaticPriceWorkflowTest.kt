@@ -16,6 +16,60 @@ class AutomaticPriceWorkflowTest {
         price: String,
     ) = "[${start / 1000},\"1\",\"2\",\"1\",\"$price\",\"1\",\"1\",1]"
 
+    @Test fun repeatedHourlyFetchDoesNotDuplicateButPreservesRevisionsAndReversions() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            var clock = now
+            var price = "40000"
+            val current = now / hour * hour
+            val app = PortfolioApplication(db) { clock }
+            app.setAutomaticPriceConsent(true)
+            val transport: (String) -> String = {
+                """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, price)},${candle(current, "1")}],"last":0}}"""
+            }
+            app.refreshAutomaticPrices(transport)
+            clock++
+            app.refreshAutomaticPrices(transport)
+            assertEquals("1", db.query("SELECT COUNT(*) FROM market_prices").single().single())
+            price = "41000"
+            clock++
+            app.refreshAutomaticPrices(transport)
+            price = "40000"
+            clock++
+            app.refreshAutomaticPrices(transport)
+            assertEquals(
+                listOf(listOf("40000"), listOf("41000"), listOf("40000")),
+                db.query("SELECT value FROM market_prices ORDER BY observed_at"),
+            )
+        }
+    }
+
+    @Test fun dailyHistoryIsFetchedOncePerUtcDayAndKeepsClosedPrices() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            var clock = now
+            val day = 86_400_000L
+            val app = PortfolioApplication(db) { clock }
+            app.setAutomaticPriceConsent(true)
+            var requests = 0
+            val transport: (String) -> String = { url ->
+                requests++
+                assertEquals("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440", url)
+                val current = clock / day * day
+                """{"error":[],"result":{"XXBTZUSD":[${candle(
+                    current - 2 * day,
+                    "39000",
+                )},${candle(current - day, "40000")},${candle(current, "99999")}],"last":0}}"""
+            }
+            assertEquals(2, app.refreshAutomaticDailyPricesIfDue(transport))
+            assertEquals(0, app.refreshAutomaticDailyPricesIfDue(transport))
+            assertEquals(1, requests)
+            val values = db.query("SELECT value FROM market_prices ORDER BY valid_at")
+            assertEquals(listOf(listOf("39000"), listOf("40000")), values)
+            clock += day
+            assertEquals(2, app.refreshAutomaticDailyPricesIfDue(transport))
+            assertEquals(2, requests)
+        }
+    }
+
     @Test fun fetchRequiresConsentStoresClosedHoursAndRollsBackOnCancellation() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }

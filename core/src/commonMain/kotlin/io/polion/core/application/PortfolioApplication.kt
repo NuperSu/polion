@@ -1232,7 +1232,7 @@ class PortfolioApplication(
                             now(),
                         )}"
                     } else {
-                        "Last refresh failed; saved prices remain available"
+                        "Some price requests failed; saved prices remain available"
                     },
                 )
             }
@@ -1259,6 +1259,44 @@ class PortfolioApplication(
                 throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
             }
         }
+    }
+
+    /** Fetch daily history at most once per UTC day, independently of hourly refreshes. */
+    fun refreshAutomaticDailyPricesIfDue(
+        transport: (String) -> String,
+        authorize: () -> Unit = {},
+    ): Int {
+        require(automaticPriceConsent()) { "Price provider consent required" }
+        ensureDefaultAssets()
+        val quote = currency()
+        val generation = requireNotNull(setting("automatic_price_generation"))
+        val observedAt = now()
+        val day = observedAt / 86_400_000L
+        val key = "automatic_price_daily:${quote.value}"
+        if (setting(key)?.toLongOrNull() == day) return 0
+        val count =
+            KrakenPrices.fetch(
+                transport,
+                market,
+                BITCOIN_ASSET,
+                quote,
+                observedAt,
+                "kraken:${quote.value}:daily:${priceRequestNonce()}",
+                1440,
+            ) {
+                authorize()
+                if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || currency() != quote) {
+                    throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+                }
+            }
+        db.transaction {
+            authorize()
+            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || currency() != quote) {
+                throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+            }
+            putSetting(key, day.toString())
+        }
+        return count
     }
 
     fun setPriceSourceConsent(accepted: Boolean) =

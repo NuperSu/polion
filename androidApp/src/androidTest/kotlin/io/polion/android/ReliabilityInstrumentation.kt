@@ -444,11 +444,14 @@ class ReliabilityInstrumentation : Instrumentation() {
                                     app.setAutomaticPriceConsent(true)
                                     val count = app.refreshAutomaticPrices(KrakenPriceTransport()::get)
                                     check(count in 1..720)
+                                    val dailyCount = app.refreshAutomaticDailyPricesIfDue(KrakenPriceTransport()::get)
+                                    check(dailyCount in 1..720)
+                                    check(app.refreshAutomaticDailyPricesIfDue({ error("Daily fetch should be skipped") }) == 0)
                                     val rows =
                                         db.query(
                                             "SELECT valid_at, value FROM market_prices WHERE provider='kraken' ORDER BY valid_at",
                                         )
-                                    check(rows.size == count)
+                                    check(rows.size in count..(count + dailyCount))
                                     check(rows.last()[0]!!.toLong() <= System.currentTimeMillis())
                                 }
                             }

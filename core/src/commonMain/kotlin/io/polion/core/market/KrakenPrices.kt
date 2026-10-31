@@ -9,10 +9,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** Closed hourly BTC exchange candles. The currently forming candle is never recorded as a historical close. */
+/** Closed BTC exchange candles. The currently forming candle is never recorded as a historical close. */
 object KrakenPrices {
     const val PROVIDER_ID = "kraken"
-    private const val HOUR = 3_600_000L
 
     fun pair(quote: AssetId): Pair<String, String> =
         when (quote.value) {
@@ -26,7 +25,10 @@ object KrakenPrices {
         payload: String,
         resultPair: String,
         now: Long,
+        intervalMinutes: Int = 60,
     ): List<Pair<Long, ExactDecimal>> {
+        require(intervalMinutes == 60 || intervalMinutes == 1440)
+        val interval = intervalMinutes.toLong() * 60_000L
         val root = Json.parseToJsonElement(payload).jsonObject
         require(root.getValue("error").jsonArray.isEmpty())
         val result = root.getValue("result").jsonObject
@@ -41,11 +43,11 @@ object KrakenPrices {
                 val close = cells[4].jsonPrimitive
                 require(!seconds.isString && seconds.content.matches(Regex("[0-9]{1,12}")) && close.isString)
                 val start = seconds.content.toLong() * 1000
-                require(start % HOUR == 0L && start > previous && start <= now - HOUR)
+                require(start % interval == 0L && start > previous && start <= now - interval)
                 previous = start
                 val price = ExactDecimal.parse(close.content)
                 require(price.coefficient.sign > 0 && close.content.length <= 80)
-                start + HOUR to price
+                start + interval to price
             }
         val current =
             rows
@@ -55,7 +57,7 @@ object KrakenPrices {
                 .jsonPrimitive
         require(!current.isString && current.content.matches(Regex("[0-9]{1,12}")))
         val currentStart = current.content.toLong() * 1000
-        require(currentStart % HOUR == 0L && currentStart > previous && currentStart <= now && now - currentStart < HOUR)
+        require(currentStart % interval == 0L && currentStart > previous && currentStart <= now && now - currentStart < interval)
         require(points.isNotEmpty())
         return points
     }
@@ -67,18 +69,20 @@ object KrakenPrices {
         quote: AssetId,
         now: Long,
         requestId: String,
+        intervalMinutes: Int = 60,
         authorize: () -> Unit,
     ): Int {
         val (requestPair, resultPair) = pair(quote)
-        val payload = transport("https://api.kraken.com/0/public/OHLC?pair=$requestPair&interval=60")
+        require(intervalMinutes == 60 || intervalMinutes == 1440)
+        val payload = transport("https://api.kraken.com/0/public/OHLC?pair=$requestPair&interval=$intervalMinutes")
         val points =
             try {
-                parse(payload, resultPair, now)
+                parse(payload, resultPair, now, intervalMinutes)
             } catch (_: Exception) {
                 throw IllegalArgumentException("Invalid Kraken price response")
             }
         market.mapProvider(ProviderId(PROVIDER_ID), requestPair, base)
-        market.recordPrices(
+        market.recordChangedProviderPrices(
             points.map { (at, value) ->
                 PriceObservation("$requestId:$at", Price(base, quote, value), ProviderId(PROVIDER_ID), at, now)
             },

@@ -414,6 +414,7 @@ internal class DesktopHost(
                             if (application.automaticPriceConsent()) {
                                 try {
                                     application.refreshAutomaticPrices(KrakenPriceTransport()::get) { check(!closing.get()) }
+                                    application.refreshAutomaticDailyPricesIfDue(KrakenPriceTransport()::get) { check(!closing.get()) }
                                     application.recordAutomaticPriceStatus(true)
                                 } catch (failure: Exception) {
                                     if (!closing.get()) application.recordAutomaticPriceStatus(false)

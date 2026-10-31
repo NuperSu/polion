@@ -32,12 +32,13 @@ class KrakenPriceTransportTest {
                 response
             }
         assertEquals("{}", transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"))
+        assertEquals("{}", transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440"))
         assertTrue(response.closed)
         assertFailsWith<IllegalArgumentException> {
             transport.get(
                 "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60&address=private",
             )
         }
-        assertEquals(1, requests)
+        assertEquals(2, requests)
     }
 }

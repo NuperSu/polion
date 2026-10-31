@@ -185,6 +185,33 @@ class MarketRepository(
         authorize()
     }
 
+    /** Avoid repeated unchanged provider points while preserving later revisions and reversions. */
+    fun recordChangedProviderPrices(
+        observations: List<PriceObservation>,
+        authorize: () -> Unit = {},
+    ) = db.transaction {
+        authorize()
+        observations.forEach { observation ->
+            authorize()
+            val provider = requireNotNull(observation.providerId) { "Provider observation required" }
+            val latest =
+                db
+                    .query(
+                        "SELECT value FROM market_prices WHERE base_asset=? AND quote_asset=? AND provider=? AND valid_at=? " +
+                        "ORDER BY observed_at DESC, id ASC LIMIT 1",
+                        listOf(
+                            observation.price.baseAssetId.value,
+                            observation.price.quoteAssetId.value,
+                            provider.value,
+                            observation.validAtMillis.toString(),
+                        ),
+                    ).singleOrNull()
+                    ?.single()
+            if (latest != observation.price.value.toString()) recordPriceInTransaction(observation)
+        }
+        authorize()
+    }
+
     private fun recordPriceInTransaction(observation: PriceObservation) {
         requireAsset(observation.price.baseAssetId)
         requireAsset(observation.price.quoteAssetId)

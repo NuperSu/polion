@@ -7,7 +7,7 @@ internal class KrakenPriceTransport(
     private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
 ) {
     fun get(url: String): String {
-        require(url.matches(Regex("https://api\\.kraken\\.com/0/public/OHLC\\?pair=XBT(USD|EUR|GBP)&interval=60")))
+        require(url.matches(Regex("https://api\\.kraken\\.com/0/public/OHLC\\?pair=XBT(USD|EUR|GBP)&interval=(60|1440)")))
         val connection = openConnection(url)
         try {
             connection.connectTimeout = 10_000

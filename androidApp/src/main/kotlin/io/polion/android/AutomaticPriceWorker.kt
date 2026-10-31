@@ -18,6 +18,7 @@ class AutomaticPriceWorker(
                 if (!app.automaticPriceConsent()) return Result.success()
                 try {
                     app.refreshAutomaticPrices(KrakenPriceTransport()::get) { check(!isStopped) }
+                    app.refreshAutomaticDailyPricesIfDue(KrakenPriceTransport()::get) { check(!isStopped) }
                     app.recordAutomaticPriceStatus(true)
                 } catch (failure: Exception) {
                     if (!isStopped) app.recordAutomaticPriceStatus(false)
