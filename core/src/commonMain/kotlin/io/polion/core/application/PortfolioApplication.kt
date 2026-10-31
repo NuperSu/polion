@@ -1445,6 +1445,7 @@ class PortfolioApplication(
         PricePolicy(
             listOf(ProviderId(KrakenPrices.PROVIDER_ID), ProviderId(CoingeckoPrices.PROVIDER_ID)),
             if (current) 7_200_000L else 86_400_000L,
+            preferLatest = true,
         )
 
     fun sourceConsent(): Boolean = setting("source_consent") == "true"

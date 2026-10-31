@@ -312,6 +312,7 @@ class MarketRepository(
             observations.minWithOrNull(
                 compareBy<PriceObservation> { if (it.manual) 0 else 1 }
                     .thenBy { if (!it.manual && policy.preferFresh && isStale(it)) 1 else 0 }
+                    .thenByDescending { if (!it.manual && policy.preferLatest) it.validAtMillis else Long.MIN_VALUE }
                     .thenBy { if (it.manual) -1 else policy.providerPriority.indexOf(it.providerId) }
                     .thenByDescending { it.validAtMillis }
                     .thenByDescending { it.observedAtMillis }

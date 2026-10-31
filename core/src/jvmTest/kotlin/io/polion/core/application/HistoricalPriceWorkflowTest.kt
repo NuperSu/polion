@@ -34,6 +34,57 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HistoricalPriceWorkflowTest {
+    @Test fun applicationUsesMostRecentProviderPriceForCurrentAndHistory() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val clock = 1_710_000_000_000L
+            val app = PortfolioApplication(db) { clock }
+            app.seedDemo()
+            app.useProviderPrices(btc, usd)
+            val market =
+                io.polion.core.market
+                    .MarketRepository(db)
+            market.recordPrice(
+                PriceObservation(
+                    "kraken-old",
+                    Price(btc, usd, ExactDecimal.parse("40000")),
+                    io.polion.core.model
+                        .ProviderId("kraken"),
+                    clock - 3_600_000,
+                    clock,
+                ),
+            )
+            market.recordPrice(
+                PriceObservation(
+                    "gecko-new",
+                    Price(btc, usd, ExactDecimal.parse("41000")),
+                    io.polion.core.model
+                        .ProviderId("coingecko"),
+                    clock - 1_800_000,
+                    clock,
+                ),
+            )
+            assertEquals(
+                "gecko-new",
+                app
+                    .snapshot()
+                    .valuations
+                    .single()
+                    .price
+                    ?.id,
+            )
+            assertEquals(
+                "gecko-new",
+                app
+                    .historySeries(listOf(clock))
+                    .single()
+                    .valuations
+                    .single()
+                    .price
+                    ?.id,
+            )
+        }
+    }
+
     @Test fun currentValuationRequiresRecentQuoteWhileHistoricalDailyPricesRemainUsable() {
         JvmSqliteDatabase(":memory:").use { db ->
             var clock = 1_710_000_000_000L

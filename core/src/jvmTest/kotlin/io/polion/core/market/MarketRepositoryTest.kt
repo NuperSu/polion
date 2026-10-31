@@ -126,6 +126,7 @@ class MarketRepositoryTest {
                 assertEquals(low, repository.lookup(token1, usd, 100, 94, policy).observation)
                 val selected = repository.lookup(token1, usd, 100, 100, policy)
                 assertEquals(high, selected.observation)
+                assertEquals(low, repository.lookup(token1, usd, 100, 100, policy.copy(preferLatest = true)).observation)
                 assertEquals(PriceStatus.FRESH, selected.status)
                 assertEquals(
                     "8.246913578024691357802468000000000000000000",
@@ -140,6 +141,7 @@ class MarketRepositoryTest {
                 repository.recordPrice(manual)
                 assertEquals(high, repository.lookup(token1, usd, 100, 100, policy).observation)
                 assertEquals(manual, repository.lookup(token1, usd, 100, 101, policy).observation)
+                assertEquals(manual, repository.lookup(token1, usd, 100, 101, policy.copy(preferLatest = true)).observation)
                 repository.withdrawManualPrice("manual", 125, 130)
                 repository.withdrawManualPrice("manual", 125, 130)
                 assertEquals(manual, repository.lookup(token1, usd, 127, 129, policy).observation)

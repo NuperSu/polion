@@ -65,6 +65,7 @@ data class PricePolicy(
     val providerPriority: List<ProviderId>,
     val maxAgeMillis: Long,
     val preferFresh: Boolean = true,
+    val preferLatest: Boolean = false,
 ) {
     init {
         require(providerPriority.distinct().size == providerPriority.size)
