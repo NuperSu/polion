@@ -127,6 +127,7 @@ internal fun WorkflowDialog(
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
     var priceConsent by rememberSaveable { mutableStateOf(false) }
     var automaticPriceConsent by remember { mutableStateOf(false) }
+    var automaticPortfolioPrices by remember { mutableStateOf(false) }
     var automaticPriceStatus by remember { mutableStateOf<String?>(null) }
     var priceApiKey by remember { mutableStateOf("") }
     var priceDays by rememberSaveable { mutableIntStateOf(90) }
@@ -151,6 +152,7 @@ internal fun WorkflowDialog(
         if (type == "price") {
             priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
             automaticPriceConsent = withContext(host.dispatcher) { app.automaticPriceConsent() }
+            automaticPortfolioPrices = withContext(host.dispatcher) { app.automaticPortfolioPriceConsent() }
         }
         if (type == "reconcile") {
             withContext(host.dispatcher) {
@@ -415,12 +417,13 @@ internal fun WorkflowDialog(
                 HorizontalDivider()
                 Text("Automatic Bitcoin prices", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Kraken receives the Bitcoin pair in your default currency and your IP address; wallet addresses are not sent. Closed hourly and daily prices refresh automatically while scheduling is available. No API key is needed.",
+                    "Kraken receives Bitcoin pairs for your USD, EUR and GBP portfolio currencies and your IP address; wallet addresses are not sent. Closed hourly and daily prices refresh automatically while scheduling is available. No API key is needed.",
                     fontSize = 13.sp,
                 )
                 Row {
                     Checkbox(automaticPriceConsent, { accepted ->
                         automaticPriceConsent = accepted
+                        if (accepted) automaticPortfolioPrices = true
                         scope.launch {
                             withContext(host.dispatcher) { app.setAutomaticPriceConsent(accepted) }
                             host.setAutomaticPriceRefresh(accepted)
@@ -429,6 +432,16 @@ internal fun WorkflowDialog(
                     Text("Allow automatic Kraken prices", modifier = Modifier.padding(top = 12.dp))
                 }
                 if (automaticPriceConsent) {
+                    Row {
+                        Checkbox(automaticPortfolioPrices, { accepted ->
+                            automaticPortfolioPrices = accepted
+                            scope.launch {
+                                withContext(host.dispatcher) { app.setAutomaticPortfolioPriceConsent(accepted) }
+                                host.setAutomaticPriceRefresh(true)
+                            }
+                        })
+                        Text("Include other portfolio currencies", modifier = Modifier.padding(top = 12.dp))
+                    }
                     Text(
                         automaticPriceStatus ?: "Waiting for the first price refresh.",
                         color = Muted,

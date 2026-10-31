@@ -1225,6 +1225,10 @@ class PortfolioApplication(
 
     fun automaticPriceConsent(): Boolean = setting("automatic_price_consent") == "true"
 
+    fun automaticPriceGeneration(): String? = setting("automatic_price_generation")
+
+    fun automaticPortfolioPriceConsent(): Boolean = setting("automatic_price_scope") == "all"
+
     fun automaticPriceStatus(): String? = setting("automatic_price_status")
 
     fun recordAutomaticPriceStatus(success: Boolean) =
@@ -1247,20 +1251,81 @@ class PortfolioApplication(
         db.transaction {
             putSetting("automatic_price_generation", priceRequestNonce())
             putSetting("automatic_price_consent", accepted.toString())
+            if (accepted) putSetting("automatic_price_scope", "all")
         }
 
-    fun refreshAutomaticPrices(
+    fun setAutomaticPortfolioPriceConsent(accepted: Boolean) =
+        db.transaction {
+            require(automaticPriceConsent()) { "Price provider consent required" }
+            putSetting("automatic_price_generation", priceRequestNonce())
+            putSetting("automatic_price_scope", if (accepted) "all" else "default")
+        }
+
+    /** Default and saved portfolio currencies supported by the automatic Bitcoin provider. */
+    fun automaticPriceCurrencies(): List<AssetId> =
+        (
+            listOf(currency()) +
+                if (automaticPortfolioPriceConsent()) {
+                    db.query("SELECT DISTINCT currency FROM portfolios").map { AssetId(requireNotNull(it.single())) }
+                } else {
+                    emptyList()
+                }
+        ).filter { it.value in setOf("USD", "EUR", "GBP") }
+            .distinct()
+
+    fun refreshAutomaticPriceSet(
         transport: (String) -> String,
         authorize: () -> Unit = {},
     ): Int {
         require(automaticPriceConsent()) { "Price provider consent required" }
+        val generation = requireNotNull(setting("automatic_price_generation"))
+
+        fun checkAuthorization() {
+            authorize()
+            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation) {
+                throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
+            }
+        }
+        var count = 0
+        var failures = 0
+        val currencies = automaticPriceCurrencies()
+        require(currencies.isNotEmpty()) { "No supported portfolio currency" }
+        for (quote in currencies) {
+            for (daily in listOf(false, true)) {
+                checkAuthorization()
+                try {
+                    count +=
+                        if (daily) {
+                            refreshAutomaticDailyPricesIfDue(transport, quote, ::checkAuthorization)
+                        } else {
+                            refreshAutomaticPrices(transport, quote, ::checkAuthorization)
+                        }
+                } catch (cancelled: kotlin.coroutines.cancellation.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    checkAuthorization()
+                    if (failure is CoingeckoProviderException && failure.failure == CoingeckoProviderFailure.CANCELLED) throw failure
+                    failures++
+                }
+            }
+        }
+        check(failures == 0) { "Some price requests failed" }
+        return count
+    }
+
+    fun refreshAutomaticPrices(
+        transport: (String) -> String,
+        quote: AssetId = currency(),
+        authorize: () -> Unit = {},
+    ): Int {
+        require(automaticPriceConsent()) { "Price provider consent required" }
         ensureDefaultAssets()
-        val quote = currency()
+        require(quote in automaticPriceCurrencies()) { "Unsupported portfolio currency" }
         val generation = requireNotNull(setting("automatic_price_generation"))
         val observedAt = now()
         return KrakenPrices.fetch(transport, market, BITCOIN_ASSET, quote, observedAt, "kraken:${quote.value}:${priceRequestNonce()}") {
             authorize()
-            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || currency() != quote) {
+            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || quote !in automaticPriceCurrencies()) {
                 throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
             }
         }
@@ -1269,11 +1334,12 @@ class PortfolioApplication(
     /** Fetch daily history at most once per UTC day, independently of hourly refreshes. */
     fun refreshAutomaticDailyPricesIfDue(
         transport: (String) -> String,
+        quote: AssetId = currency(),
         authorize: () -> Unit = {},
     ): Int {
         require(automaticPriceConsent()) { "Price provider consent required" }
         ensureDefaultAssets()
-        val quote = currency()
+        require(quote in automaticPriceCurrencies()) { "Unsupported portfolio currency" }
         val generation = requireNotNull(setting("automatic_price_generation"))
         val observedAt = now()
         val day = observedAt / 86_400_000L
@@ -1290,13 +1356,16 @@ class PortfolioApplication(
                 1440,
             ) {
                 authorize()
-                if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || currency() != quote) {
+                if (!automaticPriceConsent() ||
+                    setting("automatic_price_generation") != generation ||
+                    quote !in automaticPriceCurrencies()
+                ) {
                     throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
                 }
             }
         db.transaction {
             authorize()
-            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || currency() != quote) {
+            if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || quote !in automaticPriceCurrencies()) {
                 throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
             }
             putSetting(key, day.toString())

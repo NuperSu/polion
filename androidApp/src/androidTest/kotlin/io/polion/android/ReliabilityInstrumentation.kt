@@ -466,9 +466,10 @@ class ReliabilityInstrumentation : Instrumentation() {
                                 AndroidSqliteDatabase(file.path).use { db ->
                                     val app = PortfolioApplication(db, System::currentTimeMillis)
                                     app.setAutomaticPriceConsent(true)
-                                    val count = app.refreshAutomaticPrices(KrakenPriceTransport()::get)
+                                    val transport = KrakenPriceTransport()
+                                    val count = app.refreshAutomaticPrices(transport::get)
                                     check(count in 1..720)
-                                    val dailyCount = app.refreshAutomaticDailyPricesIfDue(KrakenPriceTransport()::get)
+                                    val dailyCount = app.refreshAutomaticDailyPricesIfDue(transport::get)
                                     check(dailyCount in 1..720)
                                     check(app.refreshAutomaticDailyPricesIfDue({ error("Daily fetch should be skipped") }) == 0)
                                     val rows =

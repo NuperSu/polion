@@ -17,8 +17,12 @@ class AutomaticPriceWorker(
                 val app = PortfolioApplication(db, System::currentTimeMillis)
                 if (!app.automaticPriceConsent()) return Result.success()
                 try {
-                    app.refreshAutomaticPrices(KrakenPriceTransport()::get) { check(!isStopped) }
-                    app.refreshAutomaticDailyPricesIfDue(KrakenPriceTransport()::get) { check(!isStopped) }
+                    val generation = app.automaticPriceGeneration()
+                    val transport =
+                        KrakenPriceTransport(beforeRequest = {
+                            check(!isStopped && app.automaticPriceConsent() && app.automaticPriceGeneration() == generation)
+                        })
+                    app.refreshAutomaticPriceSet(transport::get) { check(!isStopped) }
                     app.recordAutomaticPriceStatus(true)
                 } catch (failure: Exception) {
                     if (!isStopped) app.recordAutomaticPriceStatus(false)

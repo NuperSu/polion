@@ -8,6 +8,41 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class KrakenPriceTransportTest {
+    @Test fun cancellationDuringPacingPreventsNextRequest() {
+        var now = 0L
+        var active = true
+        var requests = 0
+        val response =
+            object : HttpURLConnection(URI("https://api.kraken.com").toURL()) {
+                override fun connect() = Unit
+
+                override fun disconnect() = Unit
+
+                override fun usingProxy() = false
+
+                override fun getResponseCode() = 200
+
+                override fun getInputStream() = "{}".byteInputStream()
+            }
+        val transport =
+            KrakenPriceTransport(
+                openConnection = {
+                    requests++
+                    response
+                },
+                clock = { now },
+                sleep = { delay ->
+                    now += delay
+                    active = false
+                },
+                beforeRequest = { check(active) },
+            )
+        val url = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"
+        transport.get(url)
+        assertFailsWith<IllegalStateException> { transport.get(url) }
+        assertEquals(1, requests)
+    }
+
     @Test fun approvedRequestWorksAndOtherUrlsNeverReachNetwork() {
         val response =
             object : HttpURLConnection(URI("https://api.kraken.com").toURL()) {
@@ -26,13 +61,23 @@ class KrakenPriceTransportTest {
                 override fun getInputStream() = "{}".byteInputStream()
             }
         var requests = 0
+        var now = 0L
+        val waits = mutableListOf<Long>()
         val transport =
-            KrakenPriceTransport {
-                requests++
-                response
-            }
+            KrakenPriceTransport(
+                openConnection = {
+                    requests++
+                    response
+                },
+                clock = { now },
+                sleep = { delay ->
+                    waits.add(delay)
+                    now += delay
+                },
+            )
         assertEquals("{}", transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"))
         assertEquals("{}", transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440"))
+        assertEquals(listOf(1_100L), waits)
         assertTrue(response.closed)
         assertFailsWith<IllegalArgumentException> {
             transport.get(

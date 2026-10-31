@@ -2,12 +2,72 @@ package io.polion.core.application
 
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
+import io.polion.core.model.PortfolioId
+import io.polion.core.ownership.Portfolio
 import io.polion.core.storage.JvmSqliteDatabase
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class AutomaticPriceWorkflowTest {
+    @Test fun revokedConsentStopsRemainingCurrencyRequests() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { now }
+            app.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
+            app.setAutomaticPriceConsent(true)
+            var requests = 0
+            val current = now / hour * hour
+            assertFailsWith<CoingeckoProviderException> {
+                app.refreshAutomaticPriceSet({
+                    requests++
+                    app.setAutomaticPriceConsent(false)
+                    """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, "40000")},${candle(current, "41000")}],"last":0}}"""
+                })
+            }
+            assertEquals(1, requests)
+            assertEquals("0", db.query("SELECT COUNT(*) FROM market_prices").single().single())
+        }
+    }
+
+    @Test fun refreshCoversPortfolioCurrenciesAndContinuesAfterOneMarketFails() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { now }
+            app.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
+            app.setAutomaticPriceConsent(true)
+            db.execute("DELETE FROM application_settings WHERE key='automatic_price_scope'")
+            assertEquals(
+                listOf(
+                    io.polion.core.model
+                        .AssetId("USD"),
+                ),
+                app.automaticPriceCurrencies(),
+            )
+            app.setAutomaticPortfolioPriceConsent(true)
+            assertEquals(
+                setOf(
+                    io.polion.core.model
+                        .AssetId("USD"),
+                    io.polion.core.model
+                        .AssetId("EUR"),
+                ),
+                app.automaticPriceCurrencies().toSet(),
+            )
+            val urls = mutableListOf<String>()
+            val transport: (String) -> String = { url ->
+                urls += url
+                if (url.contains("XBTUSD") && url.endsWith("interval=60")) error("fixture failure")
+                val interval = if (url.endsWith("interval=1440")) 86_400_000L else hour
+                val current = now / interval * interval
+                val pair = if (url.contains("XBTEUR")) "XXBTZEUR" else "XXBTZUSD"
+                """{"error":[],"result":{"$pair":[${candle(current - interval, "40000")},${candle(current, "41000")}],"last":0}}"""
+            }
+            assertFailsWith<IllegalStateException> { app.refreshAutomaticPriceSet(transport) }
+            assertEquals(4, urls.size)
+            assertEquals(setOf("USD", "EUR"), db.query("SELECT DISTINCT quote_asset FROM market_prices").map { it.single() }.toSet())
+            assertEquals("1", db.query("SELECT COUNT(*) FROM market_prices WHERE quote_asset='USD'").single().single())
+        }
+    }
+
     private val hour = 3_600_000L
     private val now = 1_700_002_800_000L / hour * hour + 100_000
 
