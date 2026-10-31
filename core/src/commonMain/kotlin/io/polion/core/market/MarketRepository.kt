@@ -198,7 +198,7 @@ class MarketRepository(
                 db
                     .query(
                         "SELECT value FROM market_prices WHERE base_asset=? AND quote_asset=? AND provider=? AND valid_at=? " +
-                        "ORDER BY observed_at DESC, id ASC LIMIT 1",
+                            "ORDER BY observed_at DESC, id ASC LIMIT 1",
                         listOf(
                             observation.price.baseAssetId.value,
                             observation.price.quoteAssetId.value,

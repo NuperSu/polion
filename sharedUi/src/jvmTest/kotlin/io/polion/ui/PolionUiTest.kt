@@ -58,6 +58,25 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
     @Test
+    fun portfolioTotalWarnsWhenCurrentPriceIsStale() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                var clock = System.currentTimeMillis()
+                val app = PortfolioApplication(db) { clock }
+                app.seedDemo()
+                clock += 3 * 3_600_000L
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-OVERVIEW").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("1 asset uses stale prices"))
+                    onNodeWithText("1 asset uses stale prices").assertIsDisplayed()
+                }
+            }
+        }
+    }
+
+    @Test
     fun automaticPricesRequireConsentAndScheduleRefresh() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

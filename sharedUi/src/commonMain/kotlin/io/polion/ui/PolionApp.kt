@@ -1078,6 +1078,14 @@ private fun BalanceHero(
                 modifier = Modifier.weight(1f),
             )
         }
+        val staleCount = known.count { it.priceStatus == PriceStatus.STALE }
+        if (staleCount > 0) {
+            Text(
+                "$staleCount asset${if (staleCount == 1) " uses" else "s use"} stale prices",
+                color = Color(0xFFE9D3A6),
+                fontSize = 12.sp,
+            )
+        }
         ValueChart(points, Modifier.fillMaxWidth().height(if (compact) 112.dp else 150.dp), dark = true)
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf(1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", 365 to "1Y", 0 to "ALL").forEach { (days, label) ->

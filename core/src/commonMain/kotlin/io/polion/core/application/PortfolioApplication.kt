@@ -304,7 +304,7 @@ class PortfolioApplication(
         return PortfolioSnapshot(
             catalog,
             balance,
-            valuations(balance, currency, at),
+            valuations(balance, currency, at, pricePolicy(current = true)),
             filtered.drop(filter.offset).take(filter.limit),
             filtered.size,
             currency,
@@ -440,7 +440,12 @@ class PortfolioApplication(
             val balance = holdings.historical(entries, at, BalanceCoverage.UNKNOWN)
             HistoryPoint(
                 at,
-                valuations(balance.copy(quantities = balance.quantities.filterKeys { it.account in selected }), quote, knownAt),
+                valuations(
+                    balance.copy(quantities = balance.quantities.filterKeys { it.account in selected }),
+                    quote,
+                    knownAt,
+                    pricePolicy(current = at >= knownAt - 86_400_000L),
+                ),
             )
         }
     }
@@ -1367,8 +1372,11 @@ class PortfolioApplication(
     }
 
     /** Saved provider quotes remain selectable offline, independently of permission for new requests. */
-    private fun pricePolicy() =
-        PricePolicy(listOf(ProviderId(KrakenPrices.PROVIDER_ID), ProviderId(CoingeckoPrices.PROVIDER_ID)), 86_400_000L)
+    private fun pricePolicy(current: Boolean = false) =
+        PricePolicy(
+            listOf(ProviderId(KrakenPrices.PROVIDER_ID), ProviderId(CoingeckoPrices.PROVIDER_ID)),
+            if (current) 7_200_000L else 86_400_000L,
+        )
 
     fun sourceConsent(): Boolean = setting("source_consent") == "true"
 
@@ -1470,7 +1478,7 @@ class PortfolioApplication(
             if (asset == quote) {
                 Rational.units(ExactInteger.parse("1"))
             } else {
-                val result = market.lookup(asset, quote, atMillis, atMillis, pricePolicy())
+                val result = market.lookup(asset, quote, atMillis, atMillis, pricePolicy(current = true))
                 val observation = result.observation?.takeIf { result.status == PriceStatus.FRESH } ?: return null
                 Rational.fromDecimal(observation.price.value)
             }
@@ -1481,6 +1489,7 @@ class PortfolioApplication(
         balance: BalanceView,
         currency: AssetId,
         knownAt: Long,
+        policy: PricePolicy = pricePolicy(),
     ): List<AssetValuation> =
         balance.quantities.entries
             .groupBy { it.key.asset }
@@ -1494,7 +1503,7 @@ class PortfolioApplication(
                     ) {
                         null
                     } else {
-                        market.lookup(asset, currency, balance.atMillis, knownAt, pricePolicy())
+                        market.lookup(asset, currency, balance.atMillis, knownAt, policy)
                     }
                 val value =
                     if (asset ==

@@ -34,6 +34,47 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HistoricalPriceWorkflowTest {
+    @Test fun currentValuationRequiresRecentQuoteWhileHistoricalDailyPricesRemainUsable() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            var clock = 1_710_000_000_000L
+            val app = PortfolioApplication(db) { clock }
+            app.seedDemo()
+            assertEquals(
+                PriceStatus.FRESH,
+                app
+                    .snapshot()
+                    .valuations
+                    .single()
+                    .priceStatus,
+            )
+            clock += 2 * 3_600_000L + 1
+            assertEquals(
+                PriceStatus.STALE,
+                app
+                    .snapshot()
+                    .valuations
+                    .single()
+                    .priceStatus,
+            )
+            assertEquals(PriceStatus.FRESH, app.history(clock).single().priceStatus)
+            assertEquals(
+                PriceStatus.STALE,
+                app
+                    .historySeries(listOf(clock))
+                    .single()
+                    .valuations
+                    .single()
+                    .priceStatus,
+            )
+            assertTrue(
+                app
+                    .accountingReport()
+                    .report.valuations
+                    .all { it.value == null },
+            )
+        }
+    }
+
     @Test fun rangeImportStoresIntradayPricesExactlyAndRejectsInvalidOrCancelledBatches() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
@@ -116,9 +157,10 @@ class HistoricalPriceWorkflowTest {
 
     @Test fun savedProviderQuoteValuesHoldingsAndOpenLotsOfflineAndManualOverridesWin() {
         val file = Files.createTempFile("polion-historical-price", ".sqlite")
+        val recentNow = day + 3_600_000L
         try {
             JvmSqliteDatabase(file.toString()).use { db ->
-                val app = PortfolioApplication(db) { now }
+                val app = PortfolioApplication(db) { recentNow }
                 val owner = OwnerId("owner")
                 val account = AccountId("account")
                 val event = EventId("buy")
@@ -163,7 +205,7 @@ class HistoricalPriceWorkflowTest {
                 app.setPriceSourceConsent(false)
             }
             JvmSqliteDatabase(file.toString()).use { db ->
-                val app = PortfolioApplication(db) { now }
+                val app = PortfolioApplication(db) { recentNow }
                 assertFalse(app.priceSourceConsent())
                 assertEquals(
                     ExactDecimal.parse("42000.12345678900000000"),
@@ -181,7 +223,7 @@ class HistoricalPriceWorkflowTest {
                         .price!!
                         .providerId != null,
                 )
-                app.recordManualPrice(PriceObservation("manual", Price(btc, usd, ExactDecimal.parse("43000")), null, day, now, true))
+                app.recordManualPrice(PriceObservation("manual", Price(btc, usd, ExactDecimal.parse("43000")), null, day, recentNow, true))
                 assertEquals(
                     ExactDecimal.parse("43000.00000000"),
                     app
