@@ -14,4 +14,6 @@ The price dialog offers opt-in automatic Kraken Bitcoin prices for USD, EUR and 
 
 Current portfolio values and recent chart points use a two-hour freshness window; older chart points allow a daily observation for up to 24 hours. Current totals can include stale saved quotes and explicitly warn when they do. Accounting valuation requires a fresh current quote.
 
+Backup restore invalidates in-flight automatic price requests and waits for their database connection to close before replacing the database. The scheduler is reconciled with restored consent; opening Android also reconciles saved consent with WorkManager. A scheduling failure does not prevent access to saved portfolio data.
+
 The same dialog offers manual observations and CoinGecko range imports with separate privacy consent and a session-only Demo API key. The 90-day range supplies hourly points; the 365-day range supplies daily points. Android uses a dedicated network worker and connection; desktop uses its network queue. Successful fetches reload shared projections. Failures keep existing prices.

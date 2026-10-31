@@ -121,6 +121,9 @@ private class AndroidHost(
                 Files.createDirectories(file.parent)
                 db = AndroidSqliteDatabase(file.toString())
                 val opened = PortfolioApplication(db, System::currentTimeMillis)
+                if (runCatching { setAutomaticPriceRefresh(opened.automaticPriceConsent()) }.isFailure) {
+                    runCatching { opened.recordAutomaticPriceSchedulingFailure() }
+                }
                 main.post { if (!closed) app.value = opened }
             } catch (_: Exception) {
                 if (::db.isInitialized) runCatching { db.close() }
@@ -151,6 +154,8 @@ private class AndroidHost(
             var result = "Could not restore backup"
             var swapped = false
             var reopened = false
+            var pricePaused = false
+            var replacementReady = false
             try {
                 staging = Files.createTempFile(file.parent, "restore-", ".sqlite")
                 AndroidSqliteDatabase(
@@ -159,25 +164,31 @@ private class AndroidHost(
                 java.nio.channels.FileChannel
                     .open(staging, java.nio.file.StandardOpenOption.WRITE)
                     .use { it.force(true) }
+                AutomaticPriceGate.paused = true
+                pricePaused = true
+                requireNotNull(app.value).invalidateAutomaticPriceRequests()
                 PriceHistoryWorker.invalidate()
                 // This short transaction waits for earlier price commits and invalidates their consent generation.
                 requireNotNull(app.value).let { it.setPriceSourceConsent(it.priceSourceConsent()) }
-                db.close()
-                try {
-                    Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                    swapped = true
-                } finally {
-                    db = AndroidSqliteDatabase(file.toString())
-                    reopened = true
+                synchronized(AutomaticPriceGate.lock) {
+                    db.close()
+                    try {
+                        Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                        swapped = true
+                    } finally {
+                        db = AndroidSqliteDatabase(file.toString())
+                        reopened = true
+                    }
+                    val replacement = PortfolioApplication(db, System::currentTimeMillis)
+                    val updated = java.util.concurrent.CountDownLatch(1)
+                    main.post {
+                        app.value = replacement
+                        dataRevision.update { it + 1 }
+                        updated.countDown()
+                    }
+                    updated.await()
+                    replacementReady = true
                 }
-                val replacement = PortfolioApplication(db, System::currentTimeMillis)
-                val updated = java.util.concurrent.CountDownLatch(1)
-                main.post {
-                    app.value = replacement
-                    dataRevision.update { it + 1 }
-                    updated.countDown()
-                }
-                updated.await()
                 result = "Backup restored"
             } catch (_: Exception) {
                 if (swapped) result = "Backup restored; reopen the app to load it"
@@ -194,6 +205,14 @@ private class AndroidHost(
                     }
                 }
             } finally {
+                if (pricePaused) {
+                    AutomaticPriceGate.paused = false
+                    if (swapped && replacementReady &&
+                        runCatching { app.value?.let { setAutomaticPriceRefresh(it.automaticPriceConsent()) } }.isFailure
+                    ) {
+                        result = "Backup restored; automatic price scheduling could not be updated"
+                    }
+                }
                 staging?.let { runCatching { Files.deleteIfExists(it) } }
             }
             val message = result

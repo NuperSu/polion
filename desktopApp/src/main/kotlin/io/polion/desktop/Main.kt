@@ -79,12 +79,19 @@ internal fun discoverWalletStatus(
 internal class DesktopHost(
     private val directory: Path,
     demo: Boolean,
+    private val automaticPriceTransport: (
+        () -> Unit,
+    ) -> (String) -> String = { before -> KrakenPriceTransport(beforeRequest = before)::get },
 ) : PlatformActions {
     private val executor = Executors.newSingleThreadScheduledExecutor()
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     private val unlockExecutor = Executors.newSingleThreadExecutor()
     private val priceExecutor = Executors.newSingleThreadScheduledExecutor()
     private var automaticPriceTask: java.util.concurrent.ScheduledFuture<*>? = null
+    private val priceGate = Any()
+
+    @Volatile private var priceRestorePaused = false
+    internal val priceReplacementInProgress: Boolean get() = priceRestorePaused
     private val syncQueue = BitcoinSyncQueue()
     private val priceTransport = DesktopCoingeckoTransport()
     override val dataRevision = MutableStateFlow(0L)
@@ -122,7 +129,9 @@ internal class DesktopHost(
             }
         if (demo) app.value.seedDemo()
         if (Files.exists(refreshPreference)) setBackgroundRefresh(true)
-        if (app.value.automaticPriceConsent()) setAutomaticPriceRefresh(true)
+        if (app.value.automaticPriceConsent() && runCatching { setAutomaticPriceRefresh(true) }.isFailure) {
+            runCatching { app.value.recordAutomaticPriceSchedulingFailure() }
+        }
     }
 
     override fun saveFile(
@@ -157,25 +166,33 @@ internal class DesktopHost(
                     var result = "Could not restore backup"
                     var swapped = false
                     var reopened = false
+                    var pricePaused = false
+                    var replacementReady = false
                     try {
                         staging = Files.createTempFile(directory, "restore-", ".sqlite")
                         JvmSqliteDatabase(staging.toString()).use { app.value.restoreToStaging(it, bytes, password.toCharArray()) }
                         java.nio.channels.FileChannel
                             .open(staging, java.nio.file.StandardOpenOption.WRITE)
                             .use { it.force(true) }
-                        closeSyncConnection()
-                        db.close()
-                        try {
-                            Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                            swapped = true
-                        } finally {
-                            db = JvmSqliteDatabase(file.toString())
-                            reopened = true
-                        }
-                        val replacement = PortfolioApplication(db, System::currentTimeMillis)
-                        SwingUtilities.invokeAndWait {
-                            app.value = replacement
-                            dataRevision.update { it + 1 }
+                        priceRestorePaused = true
+                        pricePaused = true
+                        app.value.invalidateAutomaticPriceRequests()
+                        synchronized(priceGate) {
+                            closeSyncConnection()
+                            db.close()
+                            try {
+                                Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                                swapped = true
+                            } finally {
+                                db = JvmSqliteDatabase(file.toString())
+                                reopened = true
+                            }
+                            val replacement = PortfolioApplication(db, System::currentTimeMillis)
+                            SwingUtilities.invokeAndWait {
+                                app.value = replacement
+                                dataRevision.update { it + 1 }
+                            }
+                            replacementReady = true
                         }
                         result = "Backup restored"
                     } catch (_: Exception) {
@@ -190,6 +207,15 @@ internal class DesktopHost(
                             }
                         }
                     } finally {
+                        if (pricePaused) {
+                            priceRestorePaused = false
+                            if (swapped &&
+                                replacementReady &&
+                                runCatching { setAutomaticPriceRefresh(app.value.automaticPriceConsent()) }.isFailure
+                            ) {
+                                result = "Backup restored; automatic price scheduling could not be updated"
+                            }
+                        }
                         staging?.let { runCatching { Files.deleteIfExists(it) } }
                     }
                     message = result
@@ -408,32 +434,37 @@ internal class DesktopHost(
         automaticPriceTask =
             if (enabled && !closing.get()) {
                 priceExecutor.scheduleWithFixedDelay({
-                    try {
-                        JvmSqliteDatabase(file.toString()).use { connection ->
-                            val application = PortfolioApplication(connection, System::currentTimeMillis)
-                            if (application.automaticPriceConsent()) {
-                                try {
-                                    val generation = application.automaticPriceGeneration()
-                                    val transport =
-                                        KrakenPriceTransport(beforeRequest = {
-                                            check(
-                                                !closing.get() &&
-                                                    application.automaticPriceConsent() &&
-                                                    application.automaticPriceGeneration() == generation,
-                                            )
-                                        })
-                                    application.refreshAutomaticPriceSet(transport::get) { check(!closing.get()) }
-                                    application.recordAutomaticPriceStatus(true)
-                                } catch (failure: Exception) {
-                                    if (!closing.get()) application.recordAutomaticPriceStatus(false)
-                                    throw failure
-                                } finally {
-                                    dataRevision.update { it + 1 }
+                    synchronized(priceGate) {
+                        if (!priceRestorePaused) {
+                            try {
+                                JvmSqliteDatabase(file.toString()).use { connection ->
+                                    val application = PortfolioApplication(connection, System::currentTimeMillis)
+                                    if (application.automaticPriceConsent()) {
+                                        try {
+                                            val generation = application.automaticPriceGeneration()
+                                            val transport =
+                                                automaticPriceTransport {
+                                                    check(
+                                                        !closing.get() &&
+                                                            !priceRestorePaused &&
+                                                            application.automaticPriceConsent() &&
+                                                            application.automaticPriceGeneration() == generation,
+                                                    )
+                                                }
+                                            application.refreshAutomaticPriceSet(transport) { check(!closing.get() && !priceRestorePaused) }
+                                            application.recordAutomaticPriceStatus(true)
+                                        } catch (failure: Exception) {
+                                            if (!closing.get() && !priceRestorePaused) application.recordAutomaticPriceStatus(false)
+                                            throw failure
+                                        } finally {
+                                            dataRevision.update { it + 1 }
+                                        }
+                                    }
                                 }
+                            } catch (_: Exception) {
+                                // Saved observations remain available until a later refresh succeeds.
                             }
                         }
-                    } catch (_: Exception) {
-                        // Saved observations remain available until a later refresh succeeds.
                     }
                 }, 0, 1, java.util.concurrent.TimeUnit.HOURS)
             } else {

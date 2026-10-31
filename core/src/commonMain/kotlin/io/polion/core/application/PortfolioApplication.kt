@@ -1227,9 +1227,20 @@ class PortfolioApplication(
 
     fun automaticPriceGeneration(): String? = setting("automatic_price_generation")
 
+    /** Cancel in-flight automatic requests without changing the user's saved consent or scope. */
+    fun invalidateAutomaticPriceRequests() =
+        db.transaction {
+            putSetting("automatic_price_generation", priceRequestNonce())
+        }
+
     fun automaticPortfolioPriceConsent(): Boolean = setting("automatic_price_scope") == "all"
 
     fun automaticPriceStatus(): String? = setting("automatic_price_status")
+
+    fun recordAutomaticPriceSchedulingFailure() =
+        db.transaction {
+            if (automaticPriceConsent()) putSetting("automatic_price_status", "Automatic price refresh could not be scheduled")
+        }
 
     fun recordAutomaticPriceStatus(success: Boolean) =
         db.transaction {

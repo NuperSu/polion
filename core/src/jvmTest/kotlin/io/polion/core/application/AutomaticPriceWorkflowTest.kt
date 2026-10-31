@@ -10,6 +10,23 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class AutomaticPriceWorkflowTest {
+    @Test fun restoreInvalidationCancelsInFlightRequestWithoutChangingConsentScope() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { now }
+            app.setAutomaticPriceConsent(true)
+            val current = now / hour * hour
+            assertFailsWith<CoingeckoProviderException> {
+                app.refreshAutomaticPrices({
+                    app.invalidateAutomaticPriceRequests()
+                    """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, "40000")},${candle(current, "41000")}],"last":0}}"""
+                })
+            }
+            assertEquals(true, app.automaticPriceConsent())
+            assertEquals(true, app.automaticPortfolioPriceConsent())
+            assertEquals("0", db.query("SELECT COUNT(*) FROM market_prices").single().single())
+        }
+    }
+
     @Test fun revokedConsentStopsRemainingCurrencyRequests() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
