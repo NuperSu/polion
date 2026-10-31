@@ -464,7 +464,7 @@ private fun Product(
                                                     remember(data.valuations, data.currency, data.coverage) {
                                                         AssetAllocation.project(data.valuations, data.currency, data.coverage)
                                                     }
-                                                AllocationPanel(allocation)
+                                                AllocationPanel(allocation) { selectedAsset = it }
                                             }
                                         DashboardWidget.ASSETS ->
                                             item(key = "dashboard-assets") {

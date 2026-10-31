@@ -9,6 +9,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import io.polion.core.application.AssetAllocation
@@ -21,6 +22,7 @@ import io.polion.core.model.AtomicAmount
 import io.polion.core.model.ExactDecimal
 import io.polion.core.model.ExactInteger
 import kotlin.test.Test
+import kotlin.test.assertEquals
 
 @OptIn(ExperimentalTestApi::class)
 class AllocationPanelTest {
@@ -39,21 +41,28 @@ class AllocationPanelTest {
                 AssetId("USD"),
                 BalanceCoverage.PARTIAL,
             )
+        var selected: AssetId? = null
         runDesktopComposeUiTest(width = 360, height = 800) {
             setContent {
                 PolionTheme(AppearanceTheme.LIGHT) {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) { AllocationPanel(allocation) }
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                    ) { AllocationPanel(allocation) { selected = it.asset } }
                 }
             }
             onNodeWithText("History coverage: partial · allocation may be incomplete").assertIsDisplayed()
             onNodeWithText("Included subtotal · 3.00 USD").assertIsDisplayed()
             onNodeWithText("33.34% · 1.00 USD").assertIsDisplayed()
             onNodeWithText("stale price").performScrollTo().assertIsDisplayed()
-            onNodeWithText("UNPRICED · price unavailable").performScrollTo().assertIsDisplayed()
-            onNodeWithText("NEGATIVE · zero or negative holding").performScrollTo().assertIsDisplayed()
-            onNodeWithText("ZERO-PRICE · zero or negative priced value").performScrollTo().assertIsDisplayed()
+            onNodeWithText("UNPRICED · price unavailable  →").performScrollTo().assertIsDisplayed()
+            onNodeWithText("NEGATIVE · zero or negative holding  →").performScrollTo().assertIsDisplayed()
+            onNodeWithText("ZERO-PRICE · zero or negative priced value  →").performScrollTo().assertIsDisplayed()
             onNodeWithTag("allocation-negative").assertDoesNotExist()
             onNodeWithTag("allocation-unpriced").assertDoesNotExist()
+            onNodeWithTag("allocation-a").performScrollTo().performClick()
+            assertEquals(AssetId("a"), selected)
+            onNodeWithTag("allocation-excluded-unpriced").performScrollTo().performClick()
+            assertEquals(AssetId("unpriced"), selected)
         }
     }
 
@@ -66,7 +75,7 @@ class AllocationPanelTest {
                 BalanceCoverage.COMPLETE,
             )
         runDesktopComposeUiTest(width = 1200, height = 800) {
-            setContent { PolionTheme(AppearanceTheme.DARK) { AllocationPanel(allocation) } }
+            setContent { PolionTheme(AppearanceTheme.DARK) { AllocationPanel(allocation) {} } }
             onNodeWithText("History coverage: complete").assertIsDisplayed()
             onNodeWithText("Included subtotal · 9007199254740993.25 USD").assertIsDisplayed()
             onNodeWithText("100.00% · 9007199254740993.25 USD").assertIsDisplayed()
@@ -79,10 +88,10 @@ class AllocationPanelTest {
         val allocation =
             AssetAllocation.project(listOf(valuation("unknown", null)), AssetId("USD"), BalanceCoverage.UNKNOWN)
         runDesktopComposeUiTest(width = 360, height = 800) {
-            setContent { PolionTheme(AppearanceTheme.LIGHT) { AllocationPanel(allocation) } }
+            setContent { PolionTheme(AppearanceTheme.LIGHT) { AllocationPanel(allocation) {} } }
             onNodeWithText("No positive priced holdings").assertIsDisplayed()
             onNodeWithText("History coverage: unknown · allocation may be incomplete").assertIsDisplayed()
-            onNodeWithText("UNKNOWN · price unavailable").assertIsDisplayed()
+            onNodeWithText("UNKNOWN · price unavailable  →").assertIsDisplayed()
             onNodeWithTag("allocation-subtotal").assertDoesNotExist()
             onNodeWithText("0.00%").assertDoesNotExist()
         }

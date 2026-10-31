@@ -2,6 +2,7 @@ package io.polion.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,15 +16,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.AllocationExclusionReason
 import io.polion.core.application.AssetAllocationProjection
+import io.polion.core.application.AssetValuation
 import io.polion.core.holdings.BalanceCoverage
 
 @Composable
-internal fun AllocationPanel(allocation: AssetAllocationProjection) {
+internal fun AllocationPanel(
+    allocation: AssetAllocationProjection,
+    onAsset: (AssetValuation) -> Unit,
+) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -56,7 +62,11 @@ internal fun AllocationPanel(allocation: AssetAllocationProjection) {
             allocation.slices.forEach { slice ->
                 val valuation = slice.valuation
                 Column(
-                    Modifier.fillMaxWidth().testTag("allocation-${valuation.asset.value}"),
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("allocation-${valuation.asset.value}")
+                        .clickable(role = Role.Button, onClickLabel = "Open asset details") { onAsset(valuation) }
+                        .padding(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(valuation.metadata?.let { "${it.name} (${it.symbol})" } ?: valuation.asset.value, fontWeight = FontWeight.Medium)
@@ -73,6 +83,7 @@ internal fun AllocationPanel(allocation: AssetAllocationProjection) {
                         color = Teal,
                         trackColor = Mint,
                     )
+                    Text("View asset →", color = Teal, fontSize = 11.sp)
                 }
             }
             Text("Displayed shares total 100.00%; rounding is distributed across holdings.", fontSize = 11.sp, color = Muted)
@@ -88,7 +99,17 @@ internal fun AllocationPanel(allocation: AssetAllocationProjection) {
                         AllocationExclusionReason.NON_POSITIVE_AMOUNT -> "zero or negative holding"
                         AllocationExclusionReason.NON_POSITIVE_VALUE -> "zero or negative priced value"
                     }
-                Text("${valuation.metadata?.symbol ?: valuation.asset.value} · $reason", fontSize = 12.sp, color = Muted)
+                Text(
+                    "${valuation.metadata?.symbol ?: valuation.asset.value} · $reason  →",
+                    fontSize = 12.sp,
+                    color = Muted,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("allocation-excluded-${valuation.asset.value}")
+                            .clickable(role = Role.Button, onClickLabel = "Open asset details") { onAsset(valuation) }
+                            .padding(vertical = 8.dp),
+                )
             }
             Text("Excluded holdings have no share in this subtotal. Unpriced values remain unknown.", fontSize = 11.sp, color = Muted)
         }
