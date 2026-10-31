@@ -123,7 +123,7 @@ internal class ProductPresenter(
             update { copy(chartLoading = false) }
             return
         }
-        update { copy(chart = emptyList(), chartLoading = true) }
+        update { copy(chart = emptyList(), chartLoading = true, chartError = false) }
         try {
             val loaded =
                 withContext(dispatcher) {
@@ -152,7 +152,10 @@ internal class ProductPresenter(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            if (request == chartRequest) notify("Historical values could not be loaded. Saved balances are still available.")
+            if (request == chartRequest) {
+                update { copy(chartError = true) }
+                notify("Historical values could not be loaded. Saved balances are still available.")
+            }
         } finally {
             if (request == chartRequest) update { copy(chartLoading = false) }
         }

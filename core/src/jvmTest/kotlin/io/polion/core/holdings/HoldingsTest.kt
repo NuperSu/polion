@@ -31,6 +31,35 @@ import kotlin.test.assertNull
 class HoldingsTest {
     private val asset = AssetId("asset")
 
+    @Test fun historicalSeriesMatchesIndividualQueries() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repo = HoldingsRepository(db)
+            val activities =
+                listOf(
+                    event("transfer", 300, "a" to "-300", "b" to "300"),
+                    event("deposit", 100, "a" to "1000"),
+                    event("pending", 150, "a" to "999").copy(status = ActivityStatus.PENDING),
+                    event("reversed", 200, "b" to "123").copy(status = ActivityStatus.REVERSED),
+                    event("spend", 200, "a" to "-210"),
+                )
+            val times = listOf(300L, 0L, 200L, 100L, 200L, 299L, 1000L)
+            assertEquals(
+                times.map {
+                    repo.historical(activities, it, BalanceCoverage.PARTIAL)
+                },
+                repo.historicalSeries(activities, times, BalanceCoverage.PARTIAL),
+            )
+            assertFailsWith<IllegalArgumentException> {
+                repo.historicalSeries(
+                    activities + activities.first(),
+                    times,
+                    BalanceCoverage.PARTIAL,
+                )
+            }
+        }
+    }
+
     private fun event(
         id: String,
         time: Long,

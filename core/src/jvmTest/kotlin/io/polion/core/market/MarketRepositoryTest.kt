@@ -16,6 +16,77 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class MarketRepositoryTest {
+    @Test fun indexedLookupMatchesSelectionAcrossPoliciesAndWithdrawalTimes() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = MarketRepository(db)
+            register(repository)
+            val observations =
+                (0 until 36).map { i ->
+                    val provider =
+                        when (i % 3) {
+                            0 -> null
+                            1 -> provider1
+                            else -> provider2
+                        }
+                    PriceObservation(
+                        "price-$i",
+                        Price(token1, usd, ExactDecimal.parse("${i + 1}")),
+                        provider,
+                        (i % 8 * 10).toLong(),
+                        (
+                            i % 6 *
+                                12
+                        ).toLong(),
+                        provider == null,
+                    )
+                }
+            observations.forEach(repository::recordPrice)
+            val withdrawn = observations.first { it.manual }
+            repository.withdrawManualPrice(withdrawn.id, 40, 50)
+            for (at in listOf(0L, 25L, 50L, 80L, 120L)) {
+                for (known in listOf(0L, 30L, 49L, 50L, 120L)) {
+                    for (providers in listOf(emptyList(), listOf(provider1), listOf(provider1, provider2), listOf(provider2, provider1))) {
+                        for (fresh in listOf(false, true)) {
+                            for (latest in listOf(false, true)) {
+                                val policy = PricePolicy(providers, 20, fresh, latest)
+
+                                fun stale(o: PriceObservation) = o.validAtMillis < at - policy.maxAgeMillis
+                                val expected =
+                                    observations
+                                        .filter {
+                                            it.validAtMillis <= at &&
+                                                it.observedAtMillis <= known &&
+                                                (it.manual || it.providerId in providers) &&
+                                                !(it == withdrawn && at >= 40 && known >= 50)
+                                        }.minWithOrNull(
+                                            compareBy<PriceObservation> { if (it.manual) 0 else 1 }
+                                                .thenBy { if (!it.manual && fresh && stale(it)) 1 else 0 }
+                                                .thenByDescending { if (!it.manual && latest) it.validAtMillis else Long.MIN_VALUE }
+                                                .thenBy { if (it.manual) -1 else providers.indexOf(it.providerId) }
+                                                .thenByDescending { it.validAtMillis }
+                                                .thenByDescending { it.observedAtMillis }
+                                                .thenBy { it.id },
+                                        )
+                                val status =
+                                    if (expected ==
+                                        null
+                                    ) {
+                                        PriceStatus.MISSING
+                                    } else if (stale(expected)) {
+                                        PriceStatus.STALE
+                                    } else {
+                                        PriceStatus.FRESH
+                                    }
+                                assertEquals(PriceResult(status, expected), repository.lookup(token1, usd, at, known, policy))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Test fun switchingToProviderPricesEndsAllActiveOverridesWithoutChangingHistoryOrOtherPairs() {
         JvmSqliteDatabase(":memory:").use { db ->
             Store(db)

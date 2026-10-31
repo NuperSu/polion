@@ -67,7 +67,8 @@ internal data class ProductPresentation(
     val snapshotFilter: ActivityFilter = ActivityFilter(),
     val chart: List<HistoryPoint> = emptyList(),
     val snapshotLoading: Boolean = false,
-    val chartLoading: Boolean = false,
+    val chartLoading: Boolean = true,
+    val chartError: Boolean = false,
     val revision: Int = 0,
     val busy: Boolean = false,
     val sourceDraftEndpoint: String? = null,
@@ -147,7 +148,27 @@ internal sealed interface ProductEvent {
 
 internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentation =
     when (event) {
-        is ProductEvent.Navigate -> copy(page = event.page, offset = 0)
+        is ProductEvent.Navigate ->
+            copy(
+                page = event.page,
+                offset = 0,
+                chartLoading =
+                    if (event.page !=
+                        page
+                    ) {
+                        event.page == Page.OVERVIEW || event.page == Page.REPORTS
+                    } else {
+                        chartLoading
+                    },
+                chartError =
+                    if (event.page !=
+                        page
+                    ) {
+                        false
+                    } else {
+                        chartError
+                    },
+            )
         is ProductEvent.Search -> copy(search = event.value, offset = 0)
         is ProductEvent.Kind -> copy(kind = event.value, offset = 0)
         is ProductEvent.Status -> copy(activityStatus = event.value, offset = 0)
@@ -166,8 +187,32 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
                 selectedAsset = null,
             )
         ProductEvent.ClearActivityAsset -> copy(activityAsset = null, offset = 0)
-        is ProductEvent.Portfolio -> copy(selectedPortfolio = event.value)
+        is ProductEvent.Portfolio ->
+            copy(
+                selectedPortfolio = event.value,
+                chartLoading =
+                    if (selectedPortfolio !=
+                        event.value
+                    ) {
+                        showsHistory
+                    } else {
+                        chartLoading
+                    },
+                chartError = if (selectedPortfolio != event.value) false else chartError,
+            )
         is ProductEvent.Offset -> copy(offset = event.value.also { require(it >= 0) })
-        is ProductEvent.Period -> copy(period = event.days.also { require(it in setOf(0, 1, 7, 30, 90, 365)) })
+        is ProductEvent.Period ->
+            copy(
+                period = event.days.also { require(it in setOf(0, 1, 7, 30, 90, 365)) },
+                chartLoading =
+                    if (period !=
+                        event.days
+                    ) {
+                        showsHistory
+                    } else {
+                        chartLoading
+                    },
+                chartError = if (period != event.days) false else chartError,
+            )
         is ProductEvent.Dialog -> copy(dialog = event.value)
     }

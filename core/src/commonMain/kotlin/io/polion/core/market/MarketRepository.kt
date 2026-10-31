@@ -283,28 +283,40 @@ class MarketRepository(
         policy: PricePolicy,
     ): PriceResult {
         require(base != quote)
-        val observations =
-            db
-                .query(
-                    "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) AND p.observed_at<=CAST(? AS INTEGER) AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER))",
-                    listOf(
-                        base.value,
-                        quote.value,
-                        atMillis.toString(),
-                        knownAtMillis.toString(),
-                        atMillis.toString(),
-                        knownAtMillis.toString(),
-                    ),
-                ).map { row ->
-                    PriceObservation(
-                        row[0]!!,
-                        Price(base, quote, ExactDecimal.parse(row[1]!!)),
-                        row[2]?.let(::ProviderId),
-                        row[3]!!.toLong(),
-                        row[4]!!.toLong(),
-                        row[5] == "1",
-                    )
-                }.filter { it.manual || it.providerId in policy.providerPriority }
+
+        fun latest(provider: ProviderId?): PriceObservation? {
+            val filter = if (provider == null) "p.manual=1" else "p.manual=0 AND p.provider=?"
+            val args =
+                listOf(
+                    base.value,
+                    quote.value,
+                    atMillis.toString(),
+                    knownAtMillis.toString(),
+                    atMillis.toString(),
+                    knownAtMillis.toString(),
+                ) +
+                    listOfNotNull(provider?.value)
+            val row =
+                db
+                    .query(
+                        "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p " +
+                            "WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) " +
+                            "AND p.observed_at<=CAST(? AS INTEGER) " +
+                            "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id " +
+                            "AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER)) AND $filter " +
+                            "ORDER BY p.valid_at DESC, p.observed_at DESC, p.id ASC LIMIT 1",
+                        args,
+                    ).singleOrNull() ?: return null
+            return PriceObservation(
+                row[0]!!,
+                Price(base, quote, ExactDecimal.parse(row[1]!!)),
+                row[2]?.let(::ProviderId),
+                row[3]!!.toLong(),
+                row[4]!!.toLong(),
+                row[5] == "1",
+            )
+        }
+        val observations = listOfNotNull(latest(null)) + policy.providerPriority.mapNotNull(::latest)
 
         fun isStale(observation: PriceObservation): Boolean =
             atMillis >= Long.MIN_VALUE + policy.maxAgeMillis && observation.validAtMillis < atMillis - policy.maxAgeMillis

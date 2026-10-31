@@ -155,6 +155,29 @@ class HoldingsRepository(
         return BalanceView(amounts, coverage, atMillis)
     }
 
+    /** Replay confirmed movements once, retaining results in the caller's timestamp order. */
+    fun historicalSeries(
+        activities: List<Activity>,
+        times: List<Long>,
+        coverage: BalanceCoverage,
+    ): List<BalanceView> {
+        require(activities.map { it.id }.distinct().size == activities.size)
+        val events = activities.filter { it.status == ActivityStatus.CONFIRMED }.sortedBy { it.occurredAtEpochMillis }
+        val amounts = mutableMapOf<BalanceKey, ExactInteger>()
+        val results = arrayOfNulls<BalanceView>(times.size)
+        var cursor = 0
+        times.withIndex().sortedBy { it.value }.forEach { (index, at) ->
+            while (cursor < events.size && events[cursor].occurredAtEpochMillis <= at) {
+                events[cursor++].movements.forEach { movement ->
+                    val key = BalanceKey(movement.accountId, movement.amount.assetId)
+                    amounts[key] = (amounts[key] ?: ExactInteger.ZERO) + movement.amount.atomicUnits
+                }
+            }
+            results[index] = BalanceView(amounts.toMap(), coverage, at)
+        }
+        return results.map { requireNotNull(it) }
+    }
+
     fun observe(observation: ReportedBalance) {
         db.execute(
             "INSERT OR REPLACE INTO balance_observations VALUES (?,?,?,?,?)",

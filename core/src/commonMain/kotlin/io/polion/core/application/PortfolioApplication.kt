@@ -436,8 +436,8 @@ class PortfolioApplication(
         val entries = ledger().activities.map { it.activity }
         val quote = portfolioCurrency(portfolio)
         val knownAt = now()
-        return times.map { at ->
-            val balance = holdings.historical(entries, at, BalanceCoverage.UNKNOWN)
+        return holdings.historicalSeries(entries, times, BalanceCoverage.UNKNOWN).map { balance ->
+            val at = balance.atMillis
             HistoryPoint(
                 at,
                 valuations(

@@ -436,7 +436,12 @@ private fun Product(
                                         modifier = Modifier.testTag("manage-accounts"),
                                     ) { Text("Manage accounts") }
                                 }
-                                item { BalanceHero(data, chart, compact, period, { period = it }, { dialog = "price" }) }
+                                item {
+                                    BalanceHero(data, chart, presenter.state.chartLoading, presenter.state.chartError, compact, period, {
+                                        period =
+                                            it
+                                    }, { dialog = "price" })
+                                }
                                 item {
                                     TextButton(
                                         onClick = { widgetDraft = widgets },
@@ -756,7 +761,12 @@ private fun Product(
                             }
                             Page.REPORTS -> {
                                 item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
-                                item { BalanceHero(data, chart, compact, period, { period = it }, { dialog = "price" }) }
+                                item {
+                                    BalanceHero(data, chart, presenter.state.chartLoading, presenter.state.chartError, compact, period, {
+                                        period =
+                                            it
+                                    }, { dialog = "price" })
+                                }
                                 item { AnalyticsPanel(app, host, selectedPortfolio, revision + hostRevision.toInt()) }
                                 item { AccountingPanel(app, host, selectedPortfolio, revision + hostRevision.toInt()) { revision++ } }
                                 item {
@@ -1039,6 +1049,8 @@ private fun Product(
 private fun BalanceHero(
     data: PortfolioSnapshot,
     points: List<HistoryPoint>,
+    chartLoading: Boolean,
+    chartError: Boolean,
     compact: Boolean,
     period: Int,
     onPeriod: (Int) -> Unit,
@@ -1089,7 +1101,13 @@ private fun BalanceHero(
                 fontSize = 12.sp,
             )
         }
-        ValueChart(points, Modifier.fillMaxWidth().height(if (compact) 112.dp else 150.dp), dark = true)
+        ValueChart(
+            points,
+            Modifier.fillMaxWidth().height(if (compact) 112.dp else 150.dp),
+            dark = true,
+            loading = chartLoading,
+            error = chartError,
+        )
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf(1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", 365 to "1Y", 0 to "ALL").forEach { (days, label) ->
                 Text(
@@ -1121,7 +1139,7 @@ private fun BalanceHero(
             }
         }
         Text("Historical portfolio value · not investment return", color = Color(0xFFB6CFC2), fontSize = 11.sp)
-        HistoryInspector(points, data.currency)
+        if (!chartLoading && !chartError) HistoryInspector(points, data.currency)
         val missing = data.valuations.count { it.value == null }
         if (missing >
             0
@@ -1137,10 +1155,12 @@ private fun BalanceHero(
 }
 
 @Composable
-private fun ValueChart(
+internal fun ValueChart(
     points: List<HistoryPoint>,
     modifier: Modifier,
     dark: Boolean,
+    loading: Boolean,
+    error: Boolean,
 ) {
     // Conversion to Float is exclusively for drawing coordinates; authoritative values remain exact.
     val values =
@@ -1149,10 +1169,14 @@ private fun ValueChart(
                 ?.toString()
                 ?.toDoubleOrNull()
         }
-    if (values.none { it != null }) {
+    if (loading || error || values.none { it != null }) {
         Box(modifier, contentAlignment = Alignment.Center) {
             Text(
-                "Fresh historical prices are needed to show value over time",
+                when {
+                    loading -> "Loading history…"
+                    error -> "History could not be loaded"
+                    else -> "Fresh historical prices are needed to show value over time"
+                },
                 color = if (dark) Color(0xFFAAC6B7) else Muted,
                 fontSize = 12.sp,
             )

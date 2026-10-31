@@ -1,11 +1,14 @@
 package io.polion.ui
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
+import androidx.compose.ui.unit.dp
 import io.polion.core.application.AssetValuation
 import io.polion.core.application.HistoryPoint
 import io.polion.core.market.PriceStatus
@@ -19,6 +22,23 @@ import kotlin.test.assertNull
 
 @OptIn(ExperimentalTestApi::class)
 class HistoryInspectorTest {
+    @Test
+    fun chartDistinguishesLoadingErrorsAndMissingPrices() {
+        runDesktopComposeUiTest(width = 360, height = 300) {
+            setContent { ValueChart(emptyList(), Modifier.size(200.dp), dark = false, loading = true, error = false) }
+            onNodeWithText("Loading history…").assertIsDisplayed()
+            onNodeWithText("Fresh historical prices are needed to show value over time").assertDoesNotExist()
+        }
+        runDesktopComposeUiTest(width = 360, height = 300) {
+            setContent { ValueChart(emptyList(), Modifier.size(200.dp), dark = false, loading = false, error = true) }
+            onNodeWithText("History could not be loaded").assertIsDisplayed()
+        }
+        runDesktopComposeUiTest(width = 360, height = 300) {
+            setContent { ValueChart(emptyList(), Modifier.size(200.dp), dark = false, loading = false, error = false) }
+            onNodeWithText("Fresh historical prices are needed to show value over time").assertIsDisplayed()
+        }
+    }
+
     @Test
     fun inspectDatedPointsWithoutTreatingMissingPricesAsZero() {
         val asset = AssetId("BTC")
