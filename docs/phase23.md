@@ -14,6 +14,8 @@ The price dialog offers opt-in automatic Kraken Bitcoin prices for USD, EUR and 
 
 The price dialog can request an immediate refresh and shows queued or running status. Android restores the one-time request's queued/running state from WorkManager when the app reopens and may wait for a network or system scheduling; the last completed result remains visible after a process restart. Desktop shows its in-process refresh state while running.
 
+An HTTP 429 from Kraken stops the current price batch and reports rate limiting while preserving saved observations. A shared in-process cooldown prevents another Kraken request for one minute. The cooldown is not persisted across process restarts, and scheduled execution remains subject to platform timing.
+
 Current portfolio values and recent chart points use a two-hour freshness window; older chart points allow a daily observation for up to 24 hours. Current totals can include stale saved quotes and explicitly warn when they do. Accounting valuation requires a fresh current quote.
 
 Backup restore invalidates in-flight automatic price requests and waits for their database connection to close before replacing the database. The scheduler is reconciled with restored consent; opening Android also reconciles saved consent with WorkManager. A scheduling failure does not prevent access to saved portfolio data.

@@ -1,5 +1,6 @@
 package io.polion.desktop
 
+import io.polion.core.market.KrakenRateLimitedException
 import java.net.HttpURLConnection
 import java.net.URI
 
@@ -8,15 +9,22 @@ internal class KrakenPricePacer(
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
 ) {
     private var lastRequestAt: Long? = null
+    private var rateLimitedUntil: Long? = null
 
     @Synchronized
     fun await(beforeRequest: () -> Unit) {
+        if (rateLimitedUntil?.let { clock() < it } == true) throw KrakenRateLimitedException()
         lastRequestAt?.let { previous ->
             val remaining = 1_100L - (clock() - previous)
             if (remaining > 0) sleep(remaining)
         }
         beforeRequest()
         lastRequestAt = clock()
+    }
+
+    @Synchronized
+    fun rateLimited() {
+        rateLimitedUntil = clock() + 60_000L
     }
 }
 
@@ -37,7 +45,12 @@ internal class KrakenPriceTransport(
             connection.connectTimeout = 10_000
             connection.readTimeout = 20_000
             connection.instanceFollowRedirects = false
-            require(connection.responseCode in 200..299) { "Price provider unavailable" }
+            val response = connection.responseCode
+            if (response == 429) {
+                pacer.rateLimited()
+                throw KrakenRateLimitedException()
+            }
+            require(response in 200..299) { "Price provider unavailable" }
             return connection.inputStream.use { input ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(8192)

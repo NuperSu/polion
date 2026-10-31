@@ -32,6 +32,35 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "priceRateLimit" to {
+                    var now = 0L
+                    var requests = 0
+                    var code = 429
+                    val response =
+                        object : java.net.HttpURLConnection(java.net.URI("https://api.kraken.com").toURL()) {
+                            override fun connect() = Unit
+
+                            override fun disconnect() = Unit
+
+                            override fun usingProxy() = false
+
+                            override fun getResponseCode() = code
+
+                            override fun getInputStream() = "{}".byteInputStream()
+                        }
+                    val pacer = KrakenPricePacer(clock = { now }, sleep = { now += it })
+                    val transport = KrakenPriceTransport(openConnection = {
+                        requests++
+                        response
+                    }, pacer = pacer)
+                    val url = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"
+                    check(runCatching { transport.get(url) }.exceptionOrNull() is io.polion.core.market.KrakenRateLimitedException)
+                    code = 200
+                    check(runCatching { transport.get(url) }.exceptionOrNull() is io.polion.core.market.KrakenRateLimitedException)
+                    check(requests == 1)
+                    now += 60_000
+                    check(transport.get(url) == "{}" && requests == 2)
+                },
                 "priceRefreshProgress" to {
                     val tracker = PriceRefreshTracker()
                     check(tracker.status.value == io.polion.ui.PriceRefreshPhase.IDLE)

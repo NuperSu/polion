@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import io.polion.core.application.PortfolioApplication
+import io.polion.core.market.KrakenRateLimitedException
 import io.polion.core.storage.AndroidSqliteDatabase
 import io.polion.ui.PriceRefreshPhase
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,7 +88,7 @@ class AutomaticPriceWorker(
                     app.refreshAutomaticPriceSet(transport::get) { check(!isStopped && !AutomaticPriceGate.paused) }
                     app.recordAutomaticPriceStatus(true)
                 } catch (failure: Exception) {
-                    if (!isStopped && !AutomaticPriceGate.paused) app.recordAutomaticPriceStatus(false)
+                    if (!isStopped && !AutomaticPriceGate.paused) app.recordAutomaticPriceStatus(false, failure is KrakenRateLimitedException)
                     RefreshWorker.dataRevision.update { it + 1 }
                     throw failure
                 }

@@ -1,5 +1,6 @@
 package io.polion.desktop
 
+import io.polion.core.market.KrakenRateLimitedException
 import java.net.HttpURLConnection
 import java.net.URI
 import kotlin.test.Test
@@ -8,6 +9,43 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class KrakenPriceTransportTest {
+    @Test fun rateLimitStopsNewRequestsUntilCooldownExpires() {
+        var now = 0L
+        var requests = 0
+        var responseCode = 429
+        val response =
+            object : HttpURLConnection(URI("https://api.kraken.com").toURL()) {
+                override fun connect() = Unit
+
+                override fun disconnect() = Unit
+
+                override fun usingProxy() = false
+
+                override fun getResponseCode() = responseCode
+
+                override fun getInputStream() = "{}".byteInputStream()
+            }
+        val pacer = KrakenPricePacer(clock = { now }, sleep = { now += it })
+        val first =
+            KrakenPriceTransport(openConnection = {
+                requests++
+                response
+            }, pacer = pacer)
+        val second =
+            KrakenPriceTransport(openConnection = {
+                requests++
+                response
+            }, pacer = pacer)
+        val url = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"
+        assertFailsWith<KrakenRateLimitedException> { first.get(url) }
+        responseCode = 200
+        assertFailsWith<KrakenRateLimitedException> { second.get(url) }
+        assertEquals(1, requests)
+        now += 60_000
+        assertEquals("{}", second.get(url))
+        assertEquals(2, requests)
+    }
+
     @Test fun cancellationDuringPacingPreventsNextRequest() {
         var now = 0L
         var active = true

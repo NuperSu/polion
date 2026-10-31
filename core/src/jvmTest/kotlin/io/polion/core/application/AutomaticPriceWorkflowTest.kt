@@ -2,6 +2,7 @@ package io.polion.core.application
 
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
+import io.polion.core.market.KrakenRateLimitedException
 import io.polion.core.model.PortfolioId
 import io.polion.core.ownership.Portfolio
 import io.polion.core.storage.JvmSqliteDatabase
@@ -10,6 +11,33 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class AutomaticPriceWorkflowTest {
+    @Test fun rateLimitStopsTheWholePriceBatchAndPreservesSavedData() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { now }
+            app.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
+            app.setAutomaticPriceConsent(true)
+            val current = now / hour * hour
+            app.refreshAutomaticPrices({
+                """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, "40000")},${candle(current, "41000")}],"last":0}}"""
+            })
+            val saved = db.query("SELECT id,value,valid_at FROM market_prices ORDER BY id")
+            var requests = 0
+            assertFailsWith<KrakenRateLimitedException> {
+                app.refreshAutomaticPriceSet(transport = {
+                    requests++
+                    throw KrakenRateLimitedException()
+                })
+            }
+            assertEquals(1, requests)
+            assertEquals(saved, db.query("SELECT id,value,valid_at FROM market_prices ORDER BY id"))
+            app.recordAutomaticPriceStatus(false, rateLimited = true)
+            assertEquals(
+                "Kraken is rate limiting requests; wait a minute before retrying. Saved prices remain available",
+                app.automaticPriceStatus(),
+            )
+        }
+    }
+
     @Test fun restoreInvalidationCancelsInFlightRequestWithoutChangingConsentScope() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }

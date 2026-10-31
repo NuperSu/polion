@@ -492,7 +492,14 @@ internal class DesktopHost(
                             application.refreshAutomaticPriceSet(transport) { check(!closing.get() && !priceRestorePaused) }
                             application.recordAutomaticPriceStatus(true)
                         } catch (failure: Exception) {
-                            if (!closing.get() && !priceRestorePaused) application.recordAutomaticPriceStatus(false)
+                            if (!closing.get() &&
+                                !priceRestorePaused
+                            ) {
+                                application.recordAutomaticPriceStatus(
+                                    false,
+                                    failure is io.polion.core.market.KrakenRateLimitedException,
+                                )
+                            }
                             throw failure
                         } finally {
                             dataRevision.update { it + 1 }

@@ -43,6 +43,7 @@ import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
 import io.polion.core.market.KrakenPrices
+import io.polion.core.market.KrakenRateLimitedException
 import io.polion.core.market.MarketRepository
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
@@ -1242,21 +1243,25 @@ class PortfolioApplication(
             if (automaticPriceConsent()) putSetting("automatic_price_status", "Automatic price refresh could not be scheduled")
         }
 
-    fun recordAutomaticPriceStatus(success: Boolean) =
-        db.transaction {
-            if (automaticPriceConsent()) {
-                putSetting(
-                    "automatic_price_status",
-                    if (success) {
-                        "Last refresh succeeded at ${Instant.fromEpochMilliseconds(
-                            now(),
-                        )}"
-                    } else {
-                        "Some price requests failed; saved prices remain available"
-                    },
-                )
-            }
+    fun recordAutomaticPriceStatus(
+        success: Boolean,
+        rateLimited: Boolean = false,
+    ) = db.transaction {
+        if (automaticPriceConsent()) {
+            putSetting(
+                "automatic_price_status",
+                if (success) {
+                    "Last refresh succeeded at ${Instant.fromEpochMilliseconds(
+                        now(),
+                    )}"
+                } else if (rateLimited) {
+                    "Kraken is rate limiting requests; wait a minute before retrying. Saved prices remain available"
+                } else {
+                    "Some price requests failed; saved prices remain available"
+                },
+            )
         }
+    }
 
     fun setAutomaticPriceConsent(accepted: Boolean) =
         db.transaction {
@@ -1315,6 +1320,7 @@ class PortfolioApplication(
                     throw cancelled
                 } catch (failure: Exception) {
                     checkAuthorization()
+                    if (failure is KrakenRateLimitedException) throw failure
                     if (failure is CoingeckoProviderException && failure.failure == CoingeckoProviderFailure.CANCELLED) throw failure
                     failures++
                 }
