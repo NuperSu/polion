@@ -246,13 +246,13 @@ internal class DesktopHost(
                 syncStatus.value = start
                 status =
                     try {
-                        task(syncApplication())
+                        task(syncApplication()).copy(operation = start.operation)
                     } catch (failure: Exception) {
                         SyncStatus(
                             SyncPhase.ERROR,
                             (failure as? BitcoinProviderException)?.reason?.userMessage
                                 ?: "Could not finish sync. Check storage and provider, then retry.",
-                        )
+                        ).copy(operation = start.operation)
                     }
             }
         if (!accepted) SwingUtilities.invokeLater { onResult("A sync is already running") }
@@ -281,7 +281,7 @@ internal class DesktopHost(
     ): EsploraTransport =
         BlockstreamTransport(
             endpoint,
-            onProgress = { syncStatus.value = SyncStatus(SyncPhase.SYNCING, it) },
+            onProgress = { syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = it) },
             ensureActive = {
                 if (closing.get() || !application.sourceConsent() || application.sourceEndpoint() != endpoint) {
                     throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
@@ -290,7 +290,7 @@ internal class DesktopHost(
         )
 
     override fun verifyAccountingOrder(onResult: (String) -> Unit) {
-        runSync(SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…"), onResult) { application ->
+        runSync(SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…", io.polion.ui.SyncOperation.ORDER), onResult) { application ->
             runCatching {
                 application.verifyAccountingOrder(bitcoinTransport(application))
                 SyncStatus(SyncPhase.SUCCESS, "Bitcoin order verified. Mixed-source chronology may still require review.")
@@ -308,10 +308,13 @@ internal class DesktopHost(
         walletId: io.polion.core.model.TrackingTargetId,
         onResult: (String) -> Unit,
     ) {
-        runSync(SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…"), onResult) { application ->
+        runSync(
+            SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…", io.polion.ui.SyncOperation.DISCOVERY),
+            onResult,
+        ) { application ->
             val endpoint = application.sourceEndpoint()
             discoverWalletStatus(application, walletId, bitcoinTransport(application, endpoint), providerEndpoint = endpoint) { detail ->
-                syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
+                syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
             }
         }
     }
@@ -323,7 +326,10 @@ internal class DesktopHost(
         apiKey: String,
         onResult: (String) -> Unit,
     ) {
-        runSync(SyncStatus(SyncPhase.SYNCING, "Fetching daily historical price…"), onResult) { application ->
+        runSync(
+            SyncStatus(SyncPhase.SYNCING, "Fetching daily historical price…", io.polion.ui.SyncOperation.PRICES),
+            onResult,
+        ) { application ->
             try {
                 val result = application.fetchHistoricalPrice({ url -> priceTransport.get(url, apiKey) }, asset, quote, dayUtcMillis)
                 if (result.status == io.polion.core.market.PriceStatus.MISSING) {
@@ -346,7 +352,10 @@ internal class DesktopHost(
         apiKey: String,
         onResult: (String) -> Unit,
     ) {
-        runSync(SyncStatus(SyncPhase.SYNCING, "Fetching Bitcoin price history…"), onResult) { application ->
+        runSync(
+            SyncStatus(SyncPhase.SYNCING, "Fetching Bitcoin price history…", io.polion.ui.SyncOperation.PRICES),
+            onResult,
+        ) { application ->
             try {
                 val count = application.fetchPriceHistory({ url -> priceTransport.get(url, apiKey) }, asset, quote, days)
                 SyncStatus(SyncPhase.SUCCESS, "Saved $count Bitcoin price points from CoinGecko.")

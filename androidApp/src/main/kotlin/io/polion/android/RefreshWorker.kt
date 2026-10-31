@@ -63,7 +63,7 @@ class RefreshWorker(
                                 BlockstreamTransport(
                                     endpoint,
                                     onProgress = { detail ->
-                                        syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
+                                        syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
                                         onProgress(detail)
                                     },
                                     ensureActive = {
@@ -84,7 +84,7 @@ class RefreshWorker(
                         if (verifyOrder) {
                             app.verifyAccountingOrder(transport) { progress ->
                                 val detail = "Verifying blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                                syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
+                                syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
                                 onProgress(detail)
                             }
                             return SyncStatus(
@@ -103,7 +103,7 @@ class RefreshWorker(
                                             "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
                                                 "${progress.pages} pages · ${progress.transactions} transactions"
                                     }
-                                syncStatus.value = SyncStatus(SyncPhase.SYNCING, detail)
+                                syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
                                 onProgress(detail)
                             }
                         when {

@@ -11,6 +11,7 @@ import android.os.PowerManager
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.ui.SyncPhase
+import io.polion.ui.SyncOperation
 import io.polion.ui.SyncStatus
 import kotlinx.coroutines.flow.update
 
@@ -35,8 +36,17 @@ class BitcoinRefreshService : Service() {
             getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Polion:sync").apply {
                 acquire(60 * 60 * 1000L)
             }
+        val operation = when {
+            intent?.getBooleanExtra("verify_order", false) == true -> SyncOperation.ORDER
+            intent?.getStringExtra("wallet_id") != null -> SyncOperation.DISCOVERY
+            else -> SyncOperation.HISTORY
+        }
         val initialDetail =
-            if (intent?.getBooleanExtra("recover_history", false) ==
+            if (operation == SyncOperation.ORDER) {
+                "Verifying Bitcoin order…"
+            } else if (operation == SyncOperation.DISCOVERY) {
+                "Discovering wallet addresses…"
+            } else if (intent?.getBooleanExtra("recover_history", false) ==
                 true
             ) {
                 "Recovering full Bitcoin history…"
@@ -49,7 +59,7 @@ class BitcoinRefreshService : Service() {
         } else {
             startForeground(SyncNotification.ID, notification)
         }
-        RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail)
+        RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail, operation)
         RefreshWorker.executor.execute {
             var lastNotification = 0L
             val status =
@@ -71,7 +81,7 @@ class BitcoinRefreshService : Service() {
                         lastNotification = now
                     }
                 }
-            RefreshWorker.syncStatus.value = status
+            RefreshWorker.syncStatus.value = status.copy(operation = operation)
             RefreshWorker.dataRevision.update { it + 1 }
             Handler(Looper.getMainLooper()).post {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -87,7 +97,7 @@ class BitcoinRefreshService : Service() {
     ) {
         stopping = true
         RefreshWorker.syncStatus.value =
-            SyncStatus(SyncPhase.ERROR, "Android's background time limit was reached. Saved data is unchanged; retry.")
+            RefreshWorker.syncStatus.value.copy(phase = SyncPhase.ERROR, message = "Android's background time limit was reached. Saved data is unchanged; retry.")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

@@ -367,7 +367,21 @@ private fun Product(
                                         ButtonDefaults.filledTonalButtonColors(
                                             containerColor = Mint,
                                         ),
-                                ) { Text(if (syncStatus.phase == SyncPhase.SYNCING) "Syncing…" else "↻  Sync") }
+                                ) {
+                                    Text(
+                                        if (syncStatus.phase !=
+                                            SyncPhase.SYNCING
+                                        ) {
+                                            "↻  Sync"
+                                        } else if (syncStatus.operation ==
+                                            SyncOperation.HISTORY
+                                        ) {
+                                            "Syncing…"
+                                        } else {
+                                            "Working…"
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -1771,17 +1785,24 @@ private fun date(millis: Long) = Instant.fromEpochMilliseconds(millis).toString(
 private fun newId(prefix: String) = "$prefix-${Clock.System.now().toEpochMilliseconds()}-${kotlin.random.Random.nextInt(1_000_000)}"
 
 @Composable
-private fun SyncBanner(
+internal fun SyncBanner(
     status: SyncStatus,
     saved: SourceStatus?,
     onDetails: () -> Unit,
 ) {
     val running = status.phase == SyncPhase.SYNCING
+    val operation =
+        when (status.operation) {
+            SyncOperation.HISTORY -> "Sync"
+            SyncOperation.DISCOVERY -> "Wallet discovery"
+            SyncOperation.ORDER -> "Order verification"
+            SyncOperation.PRICES -> "Price import"
+        }
     val title =
         when (status.phase) {
-            SyncPhase.SYNCING -> "Syncing…"
-            SyncPhase.SUCCESS -> "Sync complete"
-            SyncPhase.ERROR -> "Sync needs attention"
+            SyncPhase.SYNCING -> if (status.operation == SyncOperation.HISTORY) "Syncing…" else "$operation in progress"
+            SyncPhase.SUCCESS -> "$operation complete"
+            SyncPhase.ERROR -> "$operation needs attention"
             SyncPhase.IDLE ->
                 if (saved?.interrupted ==
                     true
@@ -1832,7 +1853,9 @@ private fun SyncBanner(
         )
         if (running) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = Teal, trackColor = MaterialTheme.colorScheme.surface)
-            Text("History is being fetched. Saved balances update after the full scan is checked.", fontSize = 11.sp, color = Muted)
+            if (status.operation == SyncOperation.HISTORY || status.operation == SyncOperation.DISCOVERY) {
+                Text("History is being fetched. Saved balances update after the full scan is checked.", fontSize = 11.sp, color = Muted)
+            }
         }
         if (!running &&
             saved?.lastError != null

@@ -58,6 +58,24 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
     @Test
+    fun bannerNamesTheActualBackgroundOperation() {
+        val status = androidx.compose.runtime.mutableStateOf(SyncStatus(SyncPhase.SYNCING, "Reading prices", SyncOperation.PRICES))
+        runDesktopComposeUiTest(width = 360, height = 400) {
+            setContent { PolionTheme(AppearanceTheme.LIGHT) { SyncBanner(status.value, null) {} } }
+            onNodeWithText("Price import in progress").assertIsDisplayed()
+            onNodeWithText("History is being fetched. Saved balances update after the full scan is checked.").assertDoesNotExist()
+            runOnIdle { status.value = SyncStatus(SyncPhase.SUCCESS, "Prices saved", SyncOperation.PRICES) }
+            onNodeWithText("Price import complete").assertIsDisplayed()
+            onNodeWithText("Sync complete").assertDoesNotExist()
+            runOnIdle { status.value = SyncStatus(SyncPhase.ERROR, "Order unavailable", SyncOperation.ORDER) }
+            onNodeWithText("Order verification needs attention").assertIsDisplayed()
+            runOnIdle { status.value = SyncStatus(SyncPhase.SYNCING, "Reading history", SyncOperation.HISTORY) }
+            onNodeWithText("Syncing…").assertIsDisplayed()
+            onNodeWithText("History is being fetched. Saved balances update after the full scan is checked.").assertIsDisplayed()
+        }
+    }
+
+    @Test
     fun assetDetailCanSwitchFromManualToProviderPrices() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

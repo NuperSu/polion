@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.StateFlow
 
 enum class SyncPhase { IDLE, SYNCING, SUCCESS, ERROR }
 
+enum class SyncOperation { HISTORY, DISCOVERY, ORDER, PRICES }
+
 enum class PriceRefreshPhase { IDLE, QUEUED, RUNNING }
 
 private val idlePriceRefresh = MutableStateFlow(PriceRefreshPhase.IDLE)
@@ -15,6 +17,7 @@ private val idlePriceRefresh = MutableStateFlow(PriceRefreshPhase.IDLE)
 data class SyncStatus(
     val phase: SyncPhase = SyncPhase.IDLE,
     val message: String = "Not synced yet",
+    val operation: SyncOperation = SyncOperation.HISTORY,
 )
 
 data class UnlockResult(
