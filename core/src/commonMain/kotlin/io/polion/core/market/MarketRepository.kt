@@ -251,6 +251,29 @@ class MarketRepository(
         )
     }
 
+    /** End every currently active manual override for a pair without changing prior valuations. */
+    fun withdrawActiveManualPrices(
+        base: AssetId,
+        quote: AssetId,
+        atMillis: Long,
+    ): Int =
+        db.transaction {
+            val at = atMillis.toString()
+            val ids =
+                db
+                    .query(
+                        "SELECT p.id FROM market_prices p WHERE p.base_asset=? AND p.quote_asset=? AND p.manual=1 " +
+                            "AND p.valid_at<=CAST(? AS INTEGER) AND p.observed_at<=CAST(? AS INTEGER) " +
+                            "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id " +
+                            "AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER))",
+                        listOf(base.value, quote.value, at, at, at, at),
+                    ).map { requireNotNull(it.single()) }
+            ids.forEach { id ->
+                db.execute("INSERT OR IGNORE INTO market_override_withdrawals VALUES (?, ?, ?)", listOf(id, at, at))
+            }
+            ids.size
+        }
+
     /** Select manual override first; other observations follow freshness and provider policy. */
     fun lookup(
         base: AssetId,

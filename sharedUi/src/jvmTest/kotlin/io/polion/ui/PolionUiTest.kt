@@ -58,6 +58,36 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PolionUiTest {
     @Test
+    fun assetDetailCanSwitchFromManualToProviderPrices() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Host().use { host ->
+                val app = PortfolioApplication(db) { System.currentTimeMillis() }
+                app.seedDemo()
+                runDesktopComposeUiTest(width = 360, height = 800) {
+                    setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("destination-OVERVIEW").performClick()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Bitcoin"))
+                    onNodeWithText("Bitcoin").performClick()
+                    onNodeWithTag("use-provider-prices").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithText("Provider prices selected; manual history retained").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    assertEquals(
+                        null,
+                        app
+                            .snapshot()
+                            .valuations
+                            .single()
+                            .price,
+                    )
+                    assertEquals("4", db.query("SELECT COUNT(*) FROM market_prices WHERE manual=1").single().single())
+                }
+            }
+        }
+    }
+
+    @Test
     fun portfolioTotalWarnsWhenCurrentPriceIsStale() {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->

@@ -974,6 +974,7 @@ internal fun AssetDialog(
     price: () -> Unit,
     activity: () -> Unit,
     disposalActivity: (EffectiveActivity) -> Unit,
+    useProviderPrices: () -> Unit,
 ) {
     var showAccounting by remember(asset.asset, portfolio) { mutableStateOf(false) }
     FormDialog(asset.metadata?.name ?: asset.asset.value, close) {
@@ -992,6 +993,17 @@ internal fun AssetDialog(
                 )}\nObserved ${kotlin.time.Instant.fromEpochMilliseconds(p.observedAtMillis)}",
                 fontSize = 12.sp,
             )
+            if (p.manual) {
+                Text(
+                    "Manual prices override provider prices until you switch back. Historical observations stay saved. " +
+                        "If no provider price is available, this asset will be unpriced.",
+                    fontSize = 12.sp,
+                )
+                OutlinedButton(
+                    onClick = useProviderPrices,
+                    modifier = Modifier.testTag("use-provider-prices"),
+                ) { Text("Use provider prices from now") }
+            }
         }
         Text(
             "Confirmed quantities are reconstructed from the same effective ledger as reports. Pending movements are excluded. Missing prices remain unknown.",

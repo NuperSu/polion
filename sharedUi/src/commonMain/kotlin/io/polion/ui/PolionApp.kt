@@ -1026,6 +1026,9 @@ private fun Product(
             }, { presenter.dispatch(ProductEvent.AssetActivity(asset.asset)) }, { activity ->
                 selectedAsset = null
                 selectedActivity = activity
+            }, {
+                execute("Provider prices selected; manual history retained") { app.useProviderPrices(asset.asset, snapshot!!.currency) }
+                selectedAsset = null
             })
         }
     }

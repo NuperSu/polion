@@ -319,6 +319,30 @@ class ReliabilityInstrumentation : Instrumentation() {
                             check(db.query("SELECT COUNT(*) FROM market_prices").single().single() == "1")
                             app.setPriceSourceConsent(false)
                             check(db.query("SELECT COUNT(*) FROM market_prices").single().single() == "1")
+                            val btc =
+                                io.polion.core.model
+                                    .AssetId("bitcoin:btc")
+                            val usd =
+                                io.polion.core.model
+                                    .AssetId("USD")
+                            app.recordManualPrice(
+                                io.polion.core.market.PriceObservation(
+                                    "manual-fixture",
+                                    io.polion.core.model
+                                        .Price(
+                                            btc,
+                                            usd,
+                                            io.polion.core.model.ExactDecimal
+                                                .parse("50000"),
+                                        ),
+                                    null,
+                                    day,
+                                    at,
+                                    true,
+                                ),
+                            )
+                            check(app.useProviderPrices(btc, usd) == 1)
+                            check(db.query("SELECT COUNT(*) FROM market_override_withdrawals").single().single() == "1")
                         }
                     }
                 },

@@ -1858,6 +1858,11 @@ class PortfolioApplication(
         market.recordPrice(value)
     }
 
+    fun useProviderPrices(
+        base: AssetId,
+        quote: AssetId,
+    ): Int = market.withdrawActiveManualPrices(base, quote, now())
+
     fun setCurrency(currency: AssetId) {
         ensureDefaultAssets()
         require(market.asset(currency) != null) { "Unknown currency asset" }

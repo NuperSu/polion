@@ -16,6 +16,26 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class MarketRepositoryTest {
+    @Test fun switchingToProviderPricesEndsAllActiveOverridesWithoutChangingHistoryOrOtherPairs() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = MarketRepository(db)
+            register(repository)
+            val policy = PricePolicy(listOf(provider1), 1000)
+            val provider = PriceObservation("provider", Price(token1, usd, ExactDecimal.parse("5")), provider1, 10, 10)
+            val first = PriceObservation("manual-first", Price(token1, usd, ExactDecimal.parse("7")), null, 20, 20, true)
+            val second = PriceObservation("manual-second", Price(token1, usd, ExactDecimal.parse("9")), null, 30, 30, true)
+            val other = PriceObservation("manual-other", Price(token2, usd, ExactDecimal.parse("3")), null, 20, 20, true)
+            listOf(provider, first, second, other).forEach { repository.recordPrice(it) }
+            assertEquals(second, repository.lookup(token1, usd, 40, 40, policy).observation)
+            assertEquals(2, repository.withdrawActiveManualPrices(token1, usd, 50))
+            assertEquals(0, repository.withdrawActiveManualPrices(token1, usd, 50))
+            assertEquals(second, repository.lookup(token1, usd, 49, 50, policy).observation)
+            assertEquals(provider, repository.lookup(token1, usd, 50, 50, policy).observation)
+            assertEquals(other, repository.lookup(token2, usd, 50, 50, policy).observation)
+        }
+    }
+
     private val usd = AssetId("fiat:usd")
     private val token1 = AssetId("evm:one")
     private val token2 = AssetId("evm:two")

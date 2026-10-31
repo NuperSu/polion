@@ -91,6 +91,8 @@ The asset list saves its value/name sort and optional empty-position filter. Hid
 
 Asset detail links to the activity explorer filtered to that asset and the current portfolio. The link clears other activity filters so they do not hide relevant movements; the asset filter remains visible and can be cleared. Results are shown only after the requested filter has loaded.
 
+When an asset uses a manual price, its detail offers a switch back to provider prices for that asset and quote currency. The action ends all active manual overrides from the current time and retains their historical observations.
+
 Each classified FIFO disposal links to its effective activity within the portfolio scope. Activity details show movements, original quantities and source identifiers, and provide the existing correction workflow.
 
 For sourced activity, saved observation details can be loaded on demand. They show record identity, provider/source, retrieval time and revision checksum; they do not assert which saved revision the decoder used. The ten most recent observations per record are shown.
