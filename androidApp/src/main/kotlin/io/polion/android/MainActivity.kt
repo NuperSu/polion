@@ -117,6 +117,21 @@ private class AndroidHost(
     val locked = mutableStateOf(lockStore.hasLock)
 
     init {
+        runCatching {
+            androidx.work.WorkManager
+                .getInstance(activity)
+                .getWorkInfosForUniqueWorkLiveData("polion-price-refresh-now")
+                .observe(activity) { work ->
+                    AutomaticPriceWorker.tracker.setWorkState(
+                        queued =
+                            work.any {
+                                it.state == androidx.work.WorkInfo.State.ENQUEUED ||
+                                    it.state == androidx.work.WorkInfo.State.BLOCKED
+                            },
+                        running = work.any { it.state == androidx.work.WorkInfo.State.RUNNING },
+                    )
+                }
+        }
         executor.execute {
             try {
                 Files.createDirectories(file.parent)
@@ -341,15 +356,13 @@ private class AndroidHost(
         } else {
             manager.cancelUniqueWork("polion-price-refresh")
             manager.cancelUniqueWork("polion-price-refresh-now")
-            AutomaticPriceWorker.status.value = io.polion.ui.PriceRefreshPhase.IDLE
+            AutomaticPriceWorker.tracker.setWorkState(queued = false, running = false)
         }
     }
 
     override fun refreshAutomaticPrices(onResult: (String) -> Unit) {
         try {
-            if (AutomaticPriceWorker.status.value == io.polion.ui.PriceRefreshPhase.IDLE) {
-                AutomaticPriceWorker.status.value = io.polion.ui.PriceRefreshPhase.QUEUED
-            }
+            AutomaticPriceWorker.tracker.setWorkState(queued = true, running = false)
             val work =
                 androidx.work
                     .OneTimeWorkRequestBuilder<AutomaticPriceWorker>()
@@ -364,9 +377,7 @@ private class AndroidHost(
                 .enqueueUniqueWork("polion-price-refresh-now", androidx.work.ExistingWorkPolicy.KEEP, work)
             onResult("Price refresh queued; Android will run it when network access is available.")
         } catch (_: Exception) {
-            if (AutomaticPriceWorker.status.value == io.polion.ui.PriceRefreshPhase.QUEUED) {
-                AutomaticPriceWorker.status.value = io.polion.ui.PriceRefreshPhase.IDLE
-            }
+            AutomaticPriceWorker.tracker.setWorkState(queued = false, running = false)
             onResult("Could not schedule a price refresh.")
         }
     }

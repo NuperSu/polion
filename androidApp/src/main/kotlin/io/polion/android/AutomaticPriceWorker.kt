@@ -15,12 +15,45 @@ internal object AutomaticPriceGate {
     @Volatile var paused = false
 }
 
+internal class PriceRefreshTracker {
+    val status = MutableStateFlow(PriceRefreshPhase.IDLE)
+    private var workerRunning = false
+    private var workQueued = false
+    private var workRunning = false
+
+    @Synchronized
+    fun setWorkerRunning(value: Boolean) {
+        workerRunning = value
+        publish()
+    }
+
+    @Synchronized
+    fun setWorkState(
+        queued: Boolean,
+        running: Boolean,
+    ) {
+        workQueued = queued
+        workRunning = running
+        publish()
+    }
+
+    private fun publish() {
+        status.value =
+            when {
+                workerRunning || workRunning -> PriceRefreshPhase.RUNNING
+                workQueued -> PriceRefreshPhase.QUEUED
+                else -> PriceRefreshPhase.IDLE
+            }
+    }
+}
+
 class AutomaticPriceWorker(
     context: Context,
     parameters: WorkerParameters,
 ) : Worker(context, parameters) {
     companion object {
-        val status = MutableStateFlow(PriceRefreshPhase.IDLE)
+        internal val tracker = PriceRefreshTracker()
+        val status = tracker.status
     }
 
     override fun doWork(): Result =
@@ -28,11 +61,11 @@ class AutomaticPriceWorker(
             if (AutomaticPriceGate.paused) {
                 Result.retry()
             } else {
-                status.value = PriceRefreshPhase.RUNNING
+                tracker.setWorkerRunning(true)
                 try {
                     refresh()
                 } finally {
-                    status.value = PriceRefreshPhase.IDLE
+                    tracker.setWorkerRunning(false)
                 }
             }
         }

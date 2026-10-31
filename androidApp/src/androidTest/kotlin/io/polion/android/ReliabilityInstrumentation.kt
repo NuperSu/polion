@@ -32,6 +32,45 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "priceRefreshProgress" to {
+                    val tracker = PriceRefreshTracker()
+                    check(tracker.status.value == io.polion.ui.PriceRefreshPhase.IDLE)
+                    tracker.setWorkState(queued = true, running = false)
+                    check(tracker.status.value == io.polion.ui.PriceRefreshPhase.QUEUED)
+                    tracker.setWorkerRunning(true)
+                    check(tracker.status.value == io.polion.ui.PriceRefreshPhase.RUNNING)
+                    tracker.setWorkerRunning(false)
+                    check(tracker.status.value == io.polion.ui.PriceRefreshPhase.QUEUED)
+                    tracker.setWorkState(queued = false, running = true)
+                    check(tracker.status.value == io.polion.ui.PriceRefreshPhase.RUNNING)
+                    tracker.setWorkState(queued = false, running = false)
+                    check(tracker.status.value == io.polion.ui.PriceRefreshPhase.IDLE)
+                },
+                "priceRefreshQueuedWork" to {
+                    val manager = androidx.work.WorkManager.getInstance(targetContext)
+                    val name = "polion-test-price-" + java.util.UUID.randomUUID()
+                    try {
+                        val request =
+                            androidx.work.OneTimeWorkRequest
+                                .Builder(AutomaticPriceWorker::class.java)
+                                .setInitialDelay(1, java.util.concurrent.TimeUnit.DAYS)
+                                .build()
+                        manager
+                            .enqueueUniqueWork(name, androidx.work.ExistingWorkPolicy.KEEP, request)
+                            .result
+                            .get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        val saved = manager.getWorkInfosForUniqueWork(name).get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        check(saved.single().state == androidx.work.WorkInfo.State.ENQUEUED)
+                        val reopened =
+                            androidx.work.WorkManager
+                                .getInstance(targetContext)
+                                .getWorkInfosForUniqueWork(name)
+                                .get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        check(reopened.single().id == request.id && reopened.single().state == androidx.work.WorkInfo.State.ENQUEUED)
+                    } finally {
+                        manager.cancelUniqueWork(name).result.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                    }
+                },
                 "boundedDuplicateProjection" to {
                     fixture { file -> AndroidSqliteDatabase(file.path).use(::verifyBoundedDuplicateNative) }
                 },
