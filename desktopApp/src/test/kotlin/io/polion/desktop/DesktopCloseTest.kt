@@ -6,6 +6,7 @@ import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.bitcoin.PacedEsploraTransport
 import io.polion.core.model.OwnerId
 import io.polion.core.ownership.Owner
+import io.polion.ui.SyncOperation
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
 import java.nio.file.Files
@@ -18,6 +19,29 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopCloseTest {
+    @Test
+    fun workerRetainsOperationOnSuccessAndFailure() {
+        val host = DesktopHost(Files.createTempDirectory("polion-operation-status-"), false)
+        try {
+            val success = CountDownLatch(1)
+            host.runSync(SyncStatus(SyncPhase.SYNCING, "Importing prices", SyncOperation.PRICES), { success.countDown() }) {
+                SyncStatus(SyncPhase.SUCCESS, "Saved")
+            }
+            assertTrue(success.await(10, TimeUnit.SECONDS))
+            assertEquals(SyncOperation.PRICES, host.syncStatus.value.operation)
+            assertEquals(SyncPhase.SUCCESS, host.syncStatus.value.phase)
+            val failure = CountDownLatch(1)
+            host.runSync(SyncStatus(SyncPhase.SYNCING, "Verifying order", SyncOperation.ORDER), { failure.countDown() }) {
+                error("fixture failure")
+            }
+            assertTrue(failure.await(10, TimeUnit.SECONDS))
+            assertEquals(SyncOperation.ORDER, host.syncStatus.value.operation)
+            assertEquals(SyncPhase.ERROR, host.syncStatus.value.phase)
+        } finally {
+            host.close()
+        }
+    }
+
     @Test
     fun closeCancelsPacedWaitAndKeepsWorkerDatabaseOpenUntilCleanupFinishes() {
         val host = DesktopHost(Files.createTempDirectory("polion-host-close-"), false)
