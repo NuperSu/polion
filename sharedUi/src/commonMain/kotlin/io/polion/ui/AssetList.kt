@@ -12,6 +12,8 @@ internal data class PricingSummary(
     val stale: Int,
 )
 
+internal fun stalePriceMessage(count: Int): String = "$count asset${if (count == 1) " uses" else "s use"} stale prices"
+
 /** A zero quantity needs no quote; it cannot make an unpriced nonzero holding appear priced. */
 internal fun pricingSummary(valuations: List<AssetValuation>): PricingSummary {
     val holdings = valuations.filter { it.amount.atomicUnits.sign != 0 }

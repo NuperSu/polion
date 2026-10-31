@@ -1,6 +1,6 @@
 # Product contract
 
-This contract maps the crypto-first roadmap to the application inspected on 29 October 2026. It defines product language and capability boundaries; it does not certify release readiness. See [UI map](ui-map.md), [design direction](design-direction.md), and [validation](validation.md) for presentation plans and executed checks.
+This contract maps the crypto-first roadmap to the current application. It defines product language and capability boundaries; it does not certify release readiness. See [UI map](ui-map.md), [design direction](design-direction.md), and [validation](validation.md) for presentation plans and executed checks.
 
 ## Invariants
 
@@ -20,9 +20,9 @@ An owner, portfolio, account, tracking target, wallet-software brand, network, c
 | --- | --- | --- | --- |
 | Local tracking | Owners, account groups, portfolios, Bitcoin mainnet addresses, bounded descriptor/xpub import and discovery, archive/restore | Capability-driven source inventory and clearer account/target hierarchy | EVM, exchanges and additional chain families |
 | Connection | Public Bitcoin validation, configured Esplora endpoint, explicit query consent, refresh and recovery actions | Separate saved/validated/connected/synced status; structured per-target progress | Secure exchange permission verification and generalized provider routing |
-| Portfolio | Exact quantities, priced subtotal, missing-price notice, portfolio selection, historical value chart | Shared screen states, original adaptive design, dashboard/asset-row improvements | Saved card layouts, richer grouping and interactive comparisons |
+| Portfolio | Exact quantities, priced subtotal with missing/stale price notices, portfolio selection, historical value chart, saved widget visibility/order and asset-list filters | Dashboard grouping, accessibility and full traceability | Richer grouping and interactive comparisons |
 | Activity | Search, account/kind filters, pagination, movements, provenance, corrections, rules and reconciliation review | Preserve workflows through presentation extraction; audit scope of every action | Additional date/network/status filters and broader source decoders |
-| Prices | Manual saved quotes and consented historical CoinGecko workflow, freshness/provenance | Explicit valuation coverage model and provider-limit UX | Global token resolution, additional market providers and optional benchmarks |
+| Prices | Manual saved quotes, consented CoinGecko ranges and automatic Kraken Bitcoin prices, freshness/provenance and Kraken rate-limit backoff | Explicit valuation coverage model and broader provider-limit UX | Global token resolution, additional market providers and optional benchmarks |
 | Accounting | FIFO, treatment and lot reports, missing/invalid treatment and chronology warnings | Explain metric-specific coverage and basis continuity | Independently tested TWR/MWR/drawdown, benchmarks and additional cost-basis methods |
 | Privacy and storage | Local SQLite, app privacy lock, encrypted backup/staging restore, CSV, offline saved data | Preserve migration/restore compatibility and improve diagnostics | Optional encrypted multi-device sync |
 | Scheduling | Android foreground manual sync and best-effort WorkManager; desktop refresh while open | Structured lifecycle/status integration | Local watchlist and alert workflows |

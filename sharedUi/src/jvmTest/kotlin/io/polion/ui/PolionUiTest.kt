@@ -98,9 +98,14 @@ class PolionUiTest {
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty() }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("1 asset uses stale prices").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("page-content").performScrollToNode(hasText("1 asset uses stale prices"))
+                    onNodeWithText("1 asset uses stale prices").assertIsDisplayed()
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("1 asset uses stale prices"))
                     onNodeWithText("1 asset uses stale prices").assertIsDisplayed()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Stale · manual quote"))
+                    onNodeWithText("Stale · manual quote").assertIsDisplayed()
                 }
             }
         }

@@ -387,6 +387,9 @@ private fun Product(
                                         Text("Priced value · ${data.currency.value}", color = Muted)
                                         Text(pricing.total?.let { money(it, data.currency) } ?: "Unavailable", fontSize = 30.sp)
                                         Text("${pricing.missing} unpriced assets excluded", color = Muted)
+                                        if (pricing.stale > 0) {
+                                            Text(stalePriceMessage(pricing.stale), color = Orange, fontSize = 12.sp)
+                                        }
                                         TextButton(onClick = { page = Page.OVERVIEW }) { Text("Open Portfolio") }
                                         OutlinedButton(
                                             onClick = { page = Page.ACCOUNTS },
@@ -1094,7 +1097,7 @@ private fun BalanceHero(
         val staleCount = pricing.stale
         if (staleCount > 0) {
             Text(
-                "$staleCount asset${if (staleCount == 1) " uses" else "s use"} stale prices",
+                stalePriceMessage(staleCount),
                 color = Color(0xFFE9D3A6),
                 fontSize = 12.sp,
             )
@@ -1307,15 +1310,10 @@ private fun AssetsCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Text(asset.value?.let { money(it, data.currency) } ?: "Unpriced", fontWeight = FontWeight.Medium, fontSize = 13.sp)
                     Text(
-                        if (asset.price?.manual ==
-                            true
-                        ) {
-                            "Manual quote"
-                        } else {
-                            asset.priceStatus.name
-                                .lowercase()
-                                .replaceFirstChar { it.uppercase() }
-                        },
+                        asset.priceStatus.name
+                            .lowercase()
+                            .replaceFirstChar { it.uppercase() } +
+                            if (asset.price?.manual == true) " · manual quote" else "",
                         fontSize = 10.sp,
                         color =
                             if (asset.priceStatus ==
