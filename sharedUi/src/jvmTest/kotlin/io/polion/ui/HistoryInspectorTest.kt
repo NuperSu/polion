@@ -23,6 +23,22 @@ import kotlin.test.assertNull
 @OptIn(ExperimentalTestApi::class)
 class HistoryInspectorTest {
     @Test
+    fun zeroHoldingsDoNotRequirePricesButNonzeroHoldingsDo() {
+        val btc = AssetId("BTC")
+        val zero = AssetValuation(btc, AtomicAmount(btc, ExactInteger.ZERO), null, PriceStatus.MISSING, null, null)
+        val active = zero.copy(amount = AtomicAmount(btc, ExactInteger.parse("1")))
+        val priced = active.copy(priceStatus = PriceStatus.FRESH, value = ExactDecimal.parse("4"))
+        assertEquals(ExactDecimal.parse("0"), historyTotal(HistoryPoint(0, listOf(zero))))
+        assertEquals(ExactDecimal.parse("4"), historyTotal(HistoryPoint(0, listOf(zero, priced))))
+        assertNull(historyTotal(HistoryPoint(0, listOf(zero, active))))
+        assertNull(historyTotal(HistoryPoint(0, listOf(zero, priced.copy(priceStatus = PriceStatus.STALE)))))
+        runDesktopComposeUiTest(width = 360, height = 300) {
+            setContent { PolionTheme(AppearanceTheme.DARK) { HistoryInspector(listOf(HistoryPoint(0, listOf(zero))), AssetId("USD")) } }
+            onNodeWithText("1970-01-01 00:00 UTC · 0 USD").assertIsDisplayed()
+        }
+    }
+
+    @Test
     fun chartDistinguishesLoadingErrorsAndMissingPrices() {
         runDesktopComposeUiTest(width = 360, height = 300) {
             setContent { ValueChart(emptyList(), Modifier.size(200.dp), dark = false, loading = true, error = false) }
@@ -35,6 +51,16 @@ class HistoryInspectorTest {
         }
         runDesktopComposeUiTest(width = 360, height = 300) {
             setContent { ValueChart(emptyList(), Modifier.size(200.dp), dark = false, loading = false, error = false) }
+            onNodeWithText("No history available yet").assertIsDisplayed()
+        }
+        runDesktopComposeUiTest(width = 360, height = 300) {
+            setContent { ValueChart(listOf(HistoryPoint(0, emptyList())), Modifier.size(200.dp), false, false, false) }
+            onNodeWithText("No tracked holdings in this period").assertIsDisplayed()
+        }
+        val btc = AssetId("BTC")
+        val missing = AssetValuation(btc, AtomicAmount(btc, ExactInteger.parse("1")), null, PriceStatus.MISSING, null, null)
+        runDesktopComposeUiTest(width = 360, height = 300) {
+            setContent { ValueChart(listOf(HistoryPoint(0, listOf(missing))), Modifier.size(200.dp), false, false, false) }
             onNodeWithText("Fresh historical prices are needed to show value over time").assertIsDisplayed()
         }
     }

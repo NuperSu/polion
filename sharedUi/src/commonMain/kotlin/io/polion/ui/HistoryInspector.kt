@@ -23,10 +23,12 @@ import io.polion.core.model.AssetId
 import io.polion.core.model.ExactDecimal
 import kotlin.time.Instant
 
-/** Historical chart totals require a fresh price for every holding at the sampled time. */
+/** Historical chart totals require a fresh price for every nonzero holding at the sampled time. */
 internal fun historyTotal(point: HistoryPoint): ExactDecimal? {
-    if (point.valuations.isEmpty() || point.valuations.any { it.value == null || it.priceStatus != PriceStatus.FRESH }) return null
-    return point.valuations.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + requireNotNull(valuation.value) }
+    if (point.valuations.isEmpty()) return null
+    val holdings = point.valuations.filter { it.amount.atomicUnits.sign != 0 }
+    if (holdings.any { it.value == null || it.priceStatus != PriceStatus.FRESH }) return null
+    return holdings.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + requireNotNull(valuation.value) }
 }
 
 @Composable
@@ -62,10 +64,11 @@ internal fun HistoryInspector(
                 .take(16)
                 .replace('T', ' ')
         val value = historyTotal(point)
+        val holdings = point.valuations.filter { it.amount.atomicUnits.sign != 0 }
         val unavailable =
-            if (point.valuations.any { it.value == null || it.priceStatus == PriceStatus.MISSING }) {
+            if (holdings.any { it.value == null || it.priceStatus == PriceStatus.MISSING }) {
                 "Value unavailable · missing price"
-            } else if (point.valuations.any { it.priceStatus == PriceStatus.STALE }) {
+            } else if (holdings.any { it.priceStatus == PriceStatus.STALE }) {
                 "Value unavailable · stale price"
             } else {
                 "Value unavailable"

@@ -1175,6 +1175,8 @@ internal fun ValueChart(
                 when {
                     loading -> "Loading history…"
                     error -> "History could not be loaded"
+                    points.isEmpty() -> "No history available yet"
+                    points.all { it.valuations.isEmpty() } -> "No tracked holdings in this period"
                     else -> "Fresh historical prices are needed to show value over time"
                 },
                 color = if (dark) Color(0xFFAAC6B7) else Muted,
