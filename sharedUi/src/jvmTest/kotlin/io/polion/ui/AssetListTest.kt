@@ -13,6 +13,32 @@ import kotlin.test.assertEquals
 
 class AssetListTest {
     @Test
+    fun priceSummaryExcludesZeroQuantitiesFromWarningsAndPartialTotals() {
+        fun asset(
+            id: String,
+            amount: String,
+            value: String?,
+            status: PriceStatus,
+        ) = AssetValuation(
+            AssetId(id),
+            AtomicAmount(AssetId(id), ExactInteger.parse(amount)),
+            null,
+            status,
+            value?.let(ExactDecimal::parse),
+            null,
+        )
+        val zeroMissing = asset("zero-missing", "0", null, PriceStatus.MISSING)
+        val zeroStale = asset("zero-stale", "0", "0", PriceStatus.STALE)
+        val missing = asset("missing", "1", null, PriceStatus.MISSING)
+        val priced = asset("priced", "1", "12.5", PriceStatus.FRESH)
+        val stale = asset("stale", "1", "2.5", PriceStatus.STALE)
+        assertEquals(PricingSummary(null, 0, 0), pricingSummary(emptyList()))
+        assertEquals(PricingSummary(ExactDecimal.parse("0"), 0, 0), pricingSummary(listOf(zeroMissing, zeroStale)))
+        assertEquals(PricingSummary(null, 1, 0), pricingSummary(listOf(zeroStale, missing)))
+        assertEquals(PricingSummary(ExactDecimal.parse("15.0"), 1, 1), pricingSummary(listOf(zeroMissing, missing, priced, stale)))
+    }
+
+    @Test
     fun hidingSmallKeepsUnknownStaleNegativeAndBoundaryPositions() {
         fun asset(
             id: String,

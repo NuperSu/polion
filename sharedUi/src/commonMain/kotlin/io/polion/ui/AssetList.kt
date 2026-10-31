@@ -6,6 +6,26 @@ import io.polion.core.application.AssetValuation
 import io.polion.core.market.PriceStatus
 import io.polion.core.model.ExactDecimal
 
+internal data class PricingSummary(
+    val total: ExactDecimal?,
+    val missing: Int,
+    val stale: Int,
+)
+
+/** A zero quantity needs no quote; it cannot make an unpriced nonzero holding appear priced. */
+internal fun pricingSummary(valuations: List<AssetValuation>): PricingSummary {
+    val holdings = valuations.filter { it.amount.atomicUnits.sign != 0 }
+    val priced = holdings.filter { it.value != null }
+    val total =
+        when {
+            valuations.isEmpty() -> null
+            holdings.isEmpty() -> ExactDecimal.parse("0")
+            priced.isEmpty() -> null
+            else -> priced.fold(ExactDecimal.parse("0")) { sum, row -> sum + requireNotNull(row.value) }
+        }
+    return PricingSummary(total, holdings.count { it.value == null }, priced.count { it.priceStatus == PriceStatus.STALE })
+}
+
 /** Display filtering never alters the underlying balance projection. */
 internal fun displayedAssets(
     valuations: List<AssetValuation>,

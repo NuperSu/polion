@@ -383,11 +383,10 @@ private fun Product(
                                 item {
                                     Panel {
                                         Text("Your portfolio", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                                        val priced = data.valuations.filter { it.value != null }
-                                        val value = priced.fold(ExactDecimal.parse("0")) { total, asset -> total + asset.value!! }
+                                        val pricing = pricingSummary(data.valuations)
                                         Text("Priced value · ${data.currency.value}", color = Muted)
-                                        Text(if (priced.isEmpty()) "Unavailable" else money(value, data.currency), fontSize = 30.sp)
-                                        Text("${data.valuations.count { it.value == null }} unpriced assets excluded", color = Muted)
+                                        Text(pricing.total?.let { money(it, data.currency) } ?: "Unavailable", fontSize = 30.sp)
+                                        Text("${pricing.missing} unpriced assets excluded", color = Muted)
                                         TextButton(onClick = { page = Page.OVERVIEW }) { Text("Open Portfolio") }
                                         OutlinedButton(
                                             onClick = { page = Page.ACCOUNTS },
@@ -1068,10 +1067,9 @@ private fun BalanceHero(
             Text("PRICED VALUE", color = Color(0xFFB6CFC2), fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Medium)
             Text(data.currency.value, color = Color(0xFFB6CFC2), fontSize = 12.sp)
         }
-        val known = data.valuations.filter { it.value != null }
-        val total = known.fold(ExactDecimal.parse("0")) { sum, it -> sum + it.value!! }
+        val pricing = pricingSummary(data.valuations)
         Text(
-            if (known.isEmpty()) "—" else money(total, data.currency),
+            pricing.total?.let { money(it, data.currency) } ?: "—",
             color = Color.White,
             fontSize = if (compact) 34.sp else 44.sp,
             fontWeight = FontWeight.Medium,
@@ -1093,7 +1091,7 @@ private fun BalanceHero(
                 modifier = Modifier.weight(1f),
             )
         }
-        val staleCount = known.count { it.priceStatus == PriceStatus.STALE }
+        val staleCount = pricing.stale
         if (staleCount > 0) {
             Text(
                 "$staleCount asset${if (staleCount == 1) " uses" else "s use"} stale prices",
@@ -1140,7 +1138,7 @@ private fun BalanceHero(
         }
         Text("Historical portfolio value · not investment return", color = Color(0xFFB6CFC2), fontSize = 11.sp)
         if (!chartLoading && !chartError) HistoryInspector(points, data.currency)
-        val missing = data.valuations.count { it.value == null }
+        val missing = pricing.missing
         if (missing >
             0
         ) {
@@ -1361,7 +1359,8 @@ private fun HealthCard(
         HorizontalDivider(color = Line)
         HealthLine("History", if (data.coverage.name == "COMPLETE") "Complete" else "Unverified", data.coverage.name == "COMPLETE")
         HealthLine("Pending activity", data.pendingCount.toString(), false)
-        HealthLine("Unpriced assets", data.valuations.count { it.value == null }.toString(), data.valuations.none { it.value == null })
+        val missing = pricingSummary(data.valuations).missing
+        HealthLine("Unpriced assets", missing.toString(), missing == 0)
         TextButton(onClick = onSync, contentPadding = PaddingValues(0.dp)) { Text("Review sources & sync →", fontSize = 12.sp) }
     }
 }
