@@ -160,3 +160,7 @@ The 2026-10-29 integrated JDK21 run passes 133 core JVM tests, 29 Android-host t
 API29 emulator instrumentation passes 9 checks with 0 failures, including the shared Bitcoin financial workflow and exact historical-price persistence after consent revocation. Core regressions cover explicit consent, exact provider valuation/manual priority/offline reuse, missing/error prices, request pacing and cancellation after erasure or consent replacement. Desktop transport tests verify sensitive header placement and access/rate-limit failures. UI tests cover historical date/consent flow. Live CoinGecko access with a personal Demo key has not been exercised; fake transports and native persistence establish the local call paths.
 
 Local evidence: `/tmp/polion-integrated-prices-utxo-final.log` and `/tmp/polion-native-prices-utxo.txt`. These checks do not close the remaining descriptor audit, durable Bitcoin graph, operational reorg/RBF, independent chain acceptance, rule-management and broader connector-execution requirements.
+
+## Automatic hourly price verification
+
+On the Pixel 8 Pro, a disposable Android database fetched live public Kraken hourly Bitcoin candles, stored the completed hours and passed the native reliability harness: 15 checks, 0 failures. The fixture did not access the user's portfolio. A separate deterministic Android check covers cancellation rollback. This verifies the Android network and storage path; it does not verify WorkManager scheduling or the user's portfolio chart.

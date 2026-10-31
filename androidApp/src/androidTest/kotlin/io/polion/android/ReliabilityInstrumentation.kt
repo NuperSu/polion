@@ -19,8 +19,11 @@ import java.io.File
 
 /** Exercises the actual Android SQLite and crypto bindings using disposable fixture databases. */
 class ReliabilityInstrumentation : Instrumentation() {
+    private var livePrices = false
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
+        livePrices = arguments?.getString("live_prices") == "true"
         start()
     }
 
@@ -36,31 +39,61 @@ class ReliabilityInstrumentation : Instrumentation() {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
                             Store(db)
-                            val overlays = io.polion.core.reconcile.OverlayRepository(db)
-                            val account = io.polion.core.model.AccountId("account")
-                            val asset = io.polion.core.model.AssetId("asset")
-                            val entries = (0 until 130).map { index ->
-                                val id = "batch-$index"
-                                io.polion.core.ledger.Activity(
-                                    io.polion.core.model.ActivityId(id), index.toLong(), id,
-                                    io.polion.core.ledger.ActivityKind.DEPOSIT, io.polion.core.ledger.ActivityStatus.CONFIRMED,
-                                    listOf(io.polion.core.ledger.Movement(io.polion.core.model.EventId(id), account,
-                                        io.polion.core.model.AtomicAmount(asset, io.polion.core.model.ExactInteger.parse("1")),
-                                        io.polion.core.ledger.MovementRole.TRANSFER)), emptySet(), null, manual = true,
-                                )
-                            }
-                            overlays.saveOverlay(io.polion.core.reconcile.ActivityOverlay(entries.last().id, label = "checked"))
+                            val overlays =
+                                io.polion.core.reconcile
+                                    .OverlayRepository(db)
+                            val account =
+                                io.polion.core.model
+                                    .AccountId("account")
+                            val asset =
+                                io.polion.core.model
+                                    .AssetId("asset")
+                            val entries =
+                                (0 until 130).map { index ->
+                                    val id = "batch-$index"
+                                    io.polion.core.ledger.Activity(
+                                        io.polion.core.model
+                                            .ActivityId(id),
+                                        index.toLong(),
+                                        id,
+                                        io.polion.core.ledger.ActivityKind.DEPOSIT,
+                                        io.polion.core.ledger.ActivityStatus.CONFIRMED,
+                                        listOf(
+                                            io.polion.core.ledger.Movement(
+                                                io.polion.core.model
+                                                    .EventId(id),
+                                                account,
+                                                io.polion.core.model
+                                                    .AtomicAmount(
+                                                        asset,
+                                                        io.polion.core.model.ExactInteger
+                                                            .parse("1"),
+                                                    ),
+                                                io.polion.core.ledger.MovementRole.TRANSFER,
+                                            ),
+                                        ),
+                                        emptySet(),
+                                        null,
+                                        manual = true,
+                                    )
+                                }
+                            overlays.saveOverlay(
+                                io.polion.core.reconcile
+                                    .ActivityOverlay(entries.last().id, label = "checked"),
+                            )
                             val expected = overlays.replay(entries)
                             val actual = mutableListOf<io.polion.core.reconcile.EffectiveActivity>()
                             overlays.replayClassificationsBatched(entries.chunked(128).asSequence()) { actual.addAll(it) }
                             check(expected == actual)
                             db.execute("CREATE TABLE batch_fixture (id TEXT PRIMARY KEY)")
-                            check(runCatching {
-                                overlays.replayClassificationsBatched(entries.chunked(128).asSequence()) { batch ->
-                                    batch.forEach { db.execute("INSERT INTO batch_fixture VALUES (?)", listOf(it.activity.id.value)) }
-                                    error("interrupted")
-                                }
-                            }.isFailure)
+                            check(
+                                runCatching {
+                                    overlays.replayClassificationsBatched(entries.chunked(128).asSequence()) { batch ->
+                                        batch.forEach { db.execute("INSERT INTO batch_fixture VALUES (?)", listOf(it.activity.id.value)) }
+                                        error("interrupted")
+                                    }
+                                }.isFailure,
+                            )
                             check(db.query("SELECT COUNT(*) FROM batch_fixture").single().single() == "0")
                         }
                     }
@@ -69,22 +102,50 @@ class ReliabilityInstrumentation : Instrumentation() {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
                             Store(db)
-                            val repo = io.polion.core.holdings.HoldingsRepository(db)
-                            val account = io.polion.core.model.AccountId("account")
-                            val asset = io.polion.core.model.AssetId("asset")
-                            val entries = (0 until 130).map { index ->
-                                val id = "fixture-$index"
-                                io.polion.core.ledger.Activity(
-                                    io.polion.core.model.ActivityId(id), index.toLong(), id,
-                                    io.polion.core.ledger.ActivityKind.DEPOSIT, io.polion.core.ledger.ActivityStatus.CONFIRMED,
-                                    listOf(io.polion.core.ledger.Movement(io.polion.core.model.EventId(id), account,
-                                        io.polion.core.model.AtomicAmount(asset, io.polion.core.model.ExactInteger.parse("100000000000000000000")),
-                                        io.polion.core.ledger.MovementRole.TRANSFER)), emptySet(), null, manual = true,
-                                )
-                            }
+                            val repo =
+                                io.polion.core.holdings
+                                    .HoldingsRepository(db)
+                            val account =
+                                io.polion.core.model
+                                    .AccountId("account")
+                            val asset =
+                                io.polion.core.model
+                                    .AssetId("asset")
+                            val entries =
+                                (0 until 130).map { index ->
+                                    val id = "fixture-$index"
+                                    io.polion.core.ledger.Activity(
+                                        io.polion.core.model
+                                            .ActivityId(id),
+                                        index.toLong(),
+                                        id,
+                                        io.polion.core.ledger.ActivityKind.DEPOSIT,
+                                        io.polion.core.ledger.ActivityStatus.CONFIRMED,
+                                        listOf(
+                                            io.polion.core.ledger.Movement(
+                                                io.polion.core.model
+                                                    .EventId(id),
+                                                account,
+                                                io.polion.core.model.AtomicAmount(
+                                                    asset,
+                                                    io.polion.core.model.ExactInteger
+                                                        .parse("100000000000000000000"),
+                                                ),
+                                                io.polion.core.ledger.MovementRole.TRANSFER,
+                                            ),
+                                        ),
+                                        emptySet(),
+                                        null,
+                                        manual = true,
+                                    )
+                                }
                             repo.refreshStream(entries.asSequence())
                             val before = repo.current(io.polion.core.holdings.BalanceCoverage.PARTIAL, 1)
-                            val interrupted = sequence { yield(entries.first().copy(status = io.polion.core.ledger.ActivityStatus.REVERSED)); error("interrupted") }
+                            val interrupted =
+                                sequence {
+                                    yield(entries.first().copy(status = io.polion.core.ledger.ActivityStatus.REVERSED))
+                                    error("interrupted")
+                                }
                             check(runCatching { repo.refreshStream(interrupted) }.isFailure)
                             check(before == repo.current(io.polion.core.holdings.BalanceCoverage.PARTIAL, 1))
                             repo.refreshStream(entries.drop(1).asSequence())
@@ -206,13 +267,27 @@ class ReliabilityInstrumentation : Instrumentation() {
                             val current = System.currentTimeMillis() / hour * hour
                             val at = current + 30_000
                             val app = PortfolioApplication(db) { at }
-                            val payload = """{"error":[],"result":{"XXBTZUSD":[[${(current - 2 * hour) / 1000},"1","2","1","40000.12","1","1",1],[${(current - hour) / 1000},"1","2","1","41000.34","1","1",1],[${current / 1000},"1","2","1","99999","1","1",1]],"last":0}}"""
+                            val payload =
+                                """{"error":[],"result":{"XXBTZUSD":[""" +
+                                    """[${(current - 2 * hour) / 1000},"1","2","1","40000.12","1","1",1],""" +
+                                    """[${(current - hour) / 1000},"1","2","1","41000.34","1","1",1],""" +
+                                    """[${current / 1000},"1","2","1","99999","1","1",1]],"last":0}}"""
                             app.setAutomaticPriceConsent(true)
                             check(app.refreshAutomaticPrices({ payload }) == 2)
                             val prices = db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at")
                             check(prices == listOf(listOf((current - hour).toString(), "40000.12"), listOf(current.toString(), "41000.34")))
                             var calls = 0
-                            check(runCatching { app.refreshAutomaticPrices({ payload }) { if (++calls == 3) error("cancelled") } }.isFailure)
+                            check(
+                                runCatching {
+                                    app.refreshAutomaticPrices({ payload }) {
+                                        if (++calls ==
+                                            3
+                                        ) {
+                                            error("cancelled")
+                                        }
+                                    }
+                                }.isFailure,
+                            )
                             check(db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at") == prices)
                             app.setAutomaticPriceConsent(false)
                             check(runCatching { app.refreshAutomaticPrices({ error("must not fetch") }) }.isFailure)
@@ -359,7 +434,29 @@ class ReliabilityInstrumentation : Instrumentation() {
                     check(!LockPassword.verify("wrong-password", verifier))
                     check(!LockPassword.verify("fixture-password", "corrupt"))
                 },
-            )
+            ) +
+                if (livePrices) {
+                    listOf(
+                        "liveHourlyPrice" to {
+                            fixture { file ->
+                                AndroidSqliteDatabase(file.path).use { db ->
+                                    val app = PortfolioApplication(db, System::currentTimeMillis)
+                                    app.setAutomaticPriceConsent(true)
+                                    val count = app.refreshAutomaticPrices(KrakenPriceTransport()::get)
+                                    check(count in 1..720)
+                                    val rows =
+                                        db.query(
+                                            "SELECT valid_at, value FROM market_prices WHERE provider='kraken' ORDER BY valid_at",
+                                        )
+                                    check(rows.size == count)
+                                    check(rows.last()[0]!!.toLong() <= System.currentTimeMillis())
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    emptyList()
+                }
         checks.forEach { (name, check) ->
             try {
                 check()
