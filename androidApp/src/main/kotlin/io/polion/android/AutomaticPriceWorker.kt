@@ -5,6 +5,8 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.storage.AndroidSqliteDatabase
+import io.polion.ui.PriceRefreshPhase
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
 internal object AutomaticPriceGate {
@@ -17,9 +19,22 @@ class AutomaticPriceWorker(
     context: Context,
     parameters: WorkerParameters,
 ) : Worker(context, parameters) {
+    companion object {
+        val status = MutableStateFlow(PriceRefreshPhase.IDLE)
+    }
+
     override fun doWork(): Result =
         synchronized(AutomaticPriceGate.lock) {
-            if (AutomaticPriceGate.paused) Result.retry() else refresh()
+            if (AutomaticPriceGate.paused) {
+                Result.retry()
+            } else {
+                status.value = PriceRefreshPhase.RUNNING
+                try {
+                    refresh()
+                } finally {
+                    status.value = PriceRefreshPhase.IDLE
+                }
+            }
         }
 
     private fun refresh(): Result =

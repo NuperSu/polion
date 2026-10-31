@@ -15,6 +15,40 @@ import kotlin.test.assertTrue
 
 class DesktopRestoreTest {
     @Test
+    fun manualPriceRefreshShowsRunningAndRejectsDuplicateRequests() {
+        val directory = Files.createTempDirectory("polion-price-refresh-")
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val host =
+            DesktopHost(directory, false) { before ->
+                { _: String ->
+                    before()
+                    started.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                    "{}"
+                }
+            }
+        try {
+            host.app.value.setAutomaticPriceConsent(true)
+            var first = ""
+            host.refreshAutomaticPrices { first = it }
+            assertEquals("Price refresh queued.", first)
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+            assertEquals(io.polion.ui.PriceRefreshPhase.RUNNING, host.priceRefreshStatus.value)
+            var duplicate = ""
+            host.refreshAutomaticPrices { duplicate = it }
+            assertEquals("A price refresh is already queued or the app is closing.", duplicate)
+            release.countDown()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (host.priceRefreshStatus.value != io.polion.ui.PriceRefreshPhase.IDLE && System.nanoTime() < deadline) Thread.sleep(10)
+            assertEquals(io.polion.ui.PriceRefreshPhase.IDLE, host.priceRefreshStatus.value)
+        } finally {
+            release.countDown()
+            host.close()
+        }
+    }
+
+    @Test
     fun restoringEnabledPriceConsentStartsAutomaticRefresh() {
         val directory = Files.createTempDirectory("polion-price-restore-enable-")
         val requested = CountDownLatch(1)

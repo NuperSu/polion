@@ -12,6 +12,8 @@ Reports provides **Verify Bitcoin transaction order** for uncertain Bitcoin chro
 
 The price dialog offers opt-in automatic Kraken Bitcoin prices for USD, EUR and GBP, without an API key. Users can choose whether to include other saved portfolio currencies; existing consent for the default currency remains limited until expanded. The public endpoint receives the pairs and IP address, not wallet addresses. Requests are spaced at least 1.1 seconds apart. Only closed candles are stored, at the end of their interval. Android WorkManager schedules hourly refreshes when available, and desktop refreshes hourly while running. The app fetches hourly history on each refresh and daily history at most once per UTC day. Kraken supplies at most 720 closed candles per interval; older saved points remain available offline. The last refresh status is visible in the price dialog.
 
+The price dialog can request an immediate refresh and shows queued or running status while the app process is active. Android may wait for a network or system scheduling; the last completed result remains visible after a process restart.
+
 Current portfolio values and recent chart points use a two-hour freshness window; older chart points allow a daily observation for up to 24 hours. Current totals can include stale saved quotes and explicitly warn when they do. Accounting valuation requires a fresh current quote.
 
 Backup restore invalidates in-flight automatic price requests and waits for their database connection to close before replacing the database. The scheduler is reconciled with restored consent; opening Android also reconciles saved consent with WorkManager. A scheduling failure does not prevent access to saved portfolio data.

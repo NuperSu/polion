@@ -3,9 +3,14 @@ package io.polion.ui
 import io.polion.core.model.AssetId
 import io.polion.core.model.TrackingTargetId
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 enum class SyncPhase { IDLE, SYNCING, SUCCESS, ERROR }
+
+enum class PriceRefreshPhase { IDLE, QUEUED, RUNNING }
+
+private val idlePriceRefresh = MutableStateFlow(PriceRefreshPhase.IDLE)
 
 data class SyncStatus(
     val phase: SyncPhase = SyncPhase.IDLE,
@@ -22,6 +27,7 @@ interface PlatformActions {
     val dispatcher: CoroutineDispatcher
     val dataRevision: StateFlow<Long>
     val syncStatus: StateFlow<SyncStatus>
+    val priceRefreshStatus: StateFlow<PriceRefreshPhase> get() = idlePriceRefresh
     val hasLock: Boolean
 
     fun saveFile(
@@ -70,6 +76,10 @@ interface PlatformActions {
     fun setBackgroundRefresh(enabled: Boolean)
 
     fun setAutomaticPriceRefresh(enabled: Boolean) {}
+
+    fun refreshAutomaticPrices(onResult: (String) -> Unit) {
+        onResult("Price refresh is unavailable on this host.")
+    }
 
     fun backgroundRefreshEnabled(): Boolean
 

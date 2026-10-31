@@ -142,6 +142,7 @@ internal fun WorkflowDialog(
     var acceptedBackup by rememberSaveable { mutableStateOf(false) }
     var acceptedRecovery by rememberSaveable { mutableStateOf(false) }
     val syncStatus by host.syncStatus.collectAsState()
+    val priceRefreshStatus by host.priceRefreshStatus.collectAsState()
     val priceRevision by host.dataRevision.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(type) {
@@ -447,6 +448,21 @@ internal fun WorkflowDialog(
                         color = Muted,
                         fontSize = 12.sp,
                     )
+                    when (priceRefreshStatus) {
+                        PriceRefreshPhase.QUEUED -> Text("Price refresh queued.", color = Muted, fontSize = 12.sp)
+                        PriceRefreshPhase.RUNNING -> Text("Refreshing prices…", color = Muted, fontSize = 12.sp)
+                        PriceRefreshPhase.IDLE -> Unit
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            host.refreshAutomaticPrices { message ->
+                                priceMessage = message
+                                notify(message)
+                            }
+                        },
+                        enabled = priceRefreshStatus == PriceRefreshPhase.IDLE,
+                        modifier = Modifier.testTag("refresh-prices-now"),
+                    ) { Text("Refresh prices now") }
                 }
                 Text("Bitcoin price history", fontWeight = FontWeight.SemiBold)
                 Text(

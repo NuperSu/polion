@@ -100,6 +100,7 @@ private class AndroidHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     override val dataRevision = RefreshWorker.dataRevision
     override val syncStatus = RefreshWorker.syncStatus
+    override val priceRefreshStatus = AutomaticPriceWorker.status
     override val hasLock: Boolean get() = lockStore.hasLock
     private val main = Handler(Looper.getMainLooper())
     private val file = activity.getDatabasePath("portfolio.sqlite").toPath()
@@ -339,6 +340,34 @@ private class AndroidHost(
             manager.enqueueUniquePeriodicWork("polion-price-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
         } else {
             manager.cancelUniqueWork("polion-price-refresh")
+            manager.cancelUniqueWork("polion-price-refresh-now")
+            AutomaticPriceWorker.status.value = io.polion.ui.PriceRefreshPhase.IDLE
+        }
+    }
+
+    override fun refreshAutomaticPrices(onResult: (String) -> Unit) {
+        try {
+            if (AutomaticPriceWorker.status.value == io.polion.ui.PriceRefreshPhase.IDLE) {
+                AutomaticPriceWorker.status.value = io.polion.ui.PriceRefreshPhase.QUEUED
+            }
+            val work =
+                androidx.work
+                    .OneTimeWorkRequestBuilder<AutomaticPriceWorker>()
+                    .setConstraints(
+                        androidx.work.Constraints
+                            .Builder()
+                            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                            .build(),
+                    ).build()
+            androidx.work.WorkManager
+                .getInstance(activity)
+                .enqueueUniqueWork("polion-price-refresh-now", androidx.work.ExistingWorkPolicy.KEEP, work)
+            onResult("Price refresh queued; Android will run it when network access is available.")
+        } catch (_: Exception) {
+            if (AutomaticPriceWorker.status.value == io.polion.ui.PriceRefreshPhase.QUEUED) {
+                AutomaticPriceWorker.status.value = io.polion.ui.PriceRefreshPhase.IDLE
+            }
+            onResult("Could not schedule a price refresh.")
         }
     }
 

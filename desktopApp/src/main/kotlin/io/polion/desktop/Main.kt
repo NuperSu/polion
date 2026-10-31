@@ -87,6 +87,8 @@ internal class DesktopHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     private val unlockExecutor = Executors.newSingleThreadExecutor()
     private val priceExecutor = Executors.newSingleThreadScheduledExecutor()
+    private val manualPricePending = AtomicBoolean(false)
+    override val priceRefreshStatus = MutableStateFlow(io.polion.ui.PriceRefreshPhase.IDLE)
     private var automaticPriceTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val priceGate = Any()
 
@@ -433,43 +435,76 @@ internal class DesktopHost(
         automaticPriceTask?.cancel(false)
         automaticPriceTask =
             if (enabled && !closing.get()) {
-                priceExecutor.scheduleWithFixedDelay({
-                    synchronized(priceGate) {
-                        if (!priceRestorePaused) {
-                            try {
-                                JvmSqliteDatabase(file.toString()).use { connection ->
-                                    val application = PortfolioApplication(connection, System::currentTimeMillis)
-                                    if (application.automaticPriceConsent()) {
-                                        try {
-                                            val generation = application.automaticPriceGeneration()
-                                            val transport =
-                                                automaticPriceTransport {
-                                                    check(
-                                                        !closing.get() &&
-                                                            !priceRestorePaused &&
-                                                            application.automaticPriceConsent() &&
-                                                            application.automaticPriceGeneration() == generation,
-                                                    )
-                                                }
-                                            application.refreshAutomaticPriceSet(transport) { check(!closing.get() && !priceRestorePaused) }
-                                            application.recordAutomaticPriceStatus(true)
-                                        } catch (failure: Exception) {
-                                            if (!closing.get() && !priceRestorePaused) application.recordAutomaticPriceStatus(false)
-                                            throw failure
-                                        } finally {
-                                            dataRevision.update { it + 1 }
-                                        }
-                                    }
-                                }
-                            } catch (_: Exception) {
-                                // Saved observations remain available until a later refresh succeeds.
-                            }
-                        }
-                    }
-                }, 0, 1, java.util.concurrent.TimeUnit.HOURS)
+                priceExecutor.scheduleWithFixedDelay(::runAutomaticPriceRefresh, 0, 1, java.util.concurrent.TimeUnit.HOURS)
             } else {
                 null
             }
+    }
+
+    override fun refreshAutomaticPrices(onResult: (String) -> Unit) {
+        if (closing.get() || !manualPricePending.compareAndSet(false, true)) {
+            onResult("A price refresh is already queued or the app is closing.")
+            return
+        }
+        if (priceRefreshStatus.value ==
+            io.polion.ui.PriceRefreshPhase.IDLE
+        ) {
+            priceRefreshStatus.value = io.polion.ui.PriceRefreshPhase.QUEUED
+        }
+        try {
+            priceExecutor.execute {
+                try {
+                    runAutomaticPriceRefresh()
+                } finally {
+                    manualPricePending.set(false)
+                }
+            }
+            onResult("Price refresh queued.")
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            manualPricePending.set(false)
+            priceRefreshStatus.value = io.polion.ui.PriceRefreshPhase.IDLE
+            onResult("Could not schedule a price refresh.")
+        }
+    }
+
+    private fun runAutomaticPriceRefresh() {
+        synchronized(priceGate) {
+            if (priceRestorePaused) {
+                priceRefreshStatus.value = io.polion.ui.PriceRefreshPhase.IDLE
+                return
+            }
+            priceRefreshStatus.value = io.polion.ui.PriceRefreshPhase.RUNNING
+            try {
+                JvmSqliteDatabase(file.toString()).use { connection ->
+                    val application = PortfolioApplication(connection, System::currentTimeMillis)
+                    if (application.automaticPriceConsent()) {
+                        try {
+                            val generation = application.automaticPriceGeneration()
+                            val transport =
+                                automaticPriceTransport {
+                                    check(
+                                        !closing.get() &&
+                                            !priceRestorePaused &&
+                                            application.automaticPriceConsent() &&
+                                            application.automaticPriceGeneration() == generation,
+                                    )
+                                }
+                            application.refreshAutomaticPriceSet(transport) { check(!closing.get() && !priceRestorePaused) }
+                            application.recordAutomaticPriceStatus(true)
+                        } catch (failure: Exception) {
+                            if (!closing.get() && !priceRestorePaused) application.recordAutomaticPriceStatus(false)
+                            throw failure
+                        } finally {
+                            dataRevision.update { it + 1 }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Saved observations remain available until a later refresh succeeds.
+            } finally {
+                priceRefreshStatus.value = io.polion.ui.PriceRefreshPhase.IDLE
+            }
+        }
     }
 
     override fun removeLockPassword(onResult: (String) -> Unit) {

@@ -30,11 +30,11 @@ class KrakenPriceTransportTest {
                     requests++
                     response
                 },
-                clock = { now },
-                sleep = { delay ->
-                    now += delay
-                    active = false
-                },
+                pacer =
+                    KrakenPricePacer(clock = { now }, sleep = { delay ->
+                        now += delay
+                        active = false
+                    }),
                 beforeRequest = { check(active) },
             )
         val url = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"
@@ -63,20 +63,26 @@ class KrakenPriceTransportTest {
         var requests = 0
         var now = 0L
         val waits = mutableListOf<Long>()
+        val pacer =
+            KrakenPricePacer(clock = { now }, sleep = { delay ->
+                waits.add(delay)
+                now += delay
+            })
         val transport =
             KrakenPriceTransport(
                 openConnection = {
                     requests++
                     response
                 },
-                clock = { now },
-                sleep = { delay ->
-                    waits.add(delay)
-                    now += delay
-                },
+                pacer = pacer,
             )
+        val nextTransport =
+            KrakenPriceTransport(openConnection = {
+                requests++
+                response
+            }, pacer = pacer)
         assertEquals("{}", transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"))
-        assertEquals("{}", transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440"))
+        assertEquals("{}", nextTransport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440"))
         assertEquals(listOf(1_100L), waits)
         assertTrue(response.closed)
         assertFailsWith<IllegalArgumentException> {

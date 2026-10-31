@@ -118,7 +118,13 @@ class PolionUiTest {
                     onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { host.automaticPrices }
                     assertTrue(app.automaticPriceConsent())
-                    onNodeWithTag("automatic-price-consent").performClick()
+                    onNodeWithTag("refresh-prices-now").performScrollTo().performClick()
+                    onAllNodesWithText("Price refresh queued.").onFirst().assertIsDisplayed()
+                    onNodeWithTag("refresh-prices-now").assertIsNotEnabled()
+                    host.priceRefreshStatus.value = PriceRefreshPhase.RUNNING
+                    onNodeWithText("Refreshing prices…").assertIsDisplayed()
+                    host.priceRefreshStatus.value = PriceRefreshPhase.IDLE
+                    onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { !host.automaticPrices }
                     assertEquals(false, app.automaticPriceConsent())
                 }
@@ -252,6 +258,7 @@ class PolionUiTest {
         override val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         override val dataRevision = MutableStateFlow(0L)
         override val syncStatus = MutableStateFlow(SyncStatus())
+        override val priceRefreshStatus = MutableStateFlow(PriceRefreshPhase.IDLE)
         override val hasLock = false
 
         @Volatile var priceRequests = 0
@@ -315,6 +322,11 @@ class PolionUiTest {
 
         override fun setAutomaticPriceRefresh(enabled: Boolean) {
             automaticPrices = enabled
+        }
+
+        override fun refreshAutomaticPrices(onResult: (String) -> Unit) {
+            priceRefreshStatus.value = PriceRefreshPhase.QUEUED
+            onResult("Price refresh queued.")
         }
 
         override fun refresh(onResult: (String) -> Unit) {

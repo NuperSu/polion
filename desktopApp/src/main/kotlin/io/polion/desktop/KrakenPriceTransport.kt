@@ -3,23 +3,35 @@ package io.polion.desktop
 import java.net.HttpURLConnection
 import java.net.URI
 
-internal class KrakenPriceTransport(
-    private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
+internal class KrakenPricePacer(
     private val clock: () -> Long = { System.nanoTime() / 1_000_000L },
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
-    private val beforeRequest: () -> Unit = {},
 ) {
     private var lastRequestAt: Long? = null
 
     @Synchronized
-    fun get(url: String): String {
-        require(url.matches(Regex("https://api\\.kraken\\.com/0/public/OHLC\\?pair=XBT(USD|EUR|GBP)&interval=(60|1440)")))
+    fun await(beforeRequest: () -> Unit) {
         lastRequestAt?.let { previous ->
             val remaining = 1_100L - (clock() - previous)
             if (remaining > 0) sleep(remaining)
         }
         beforeRequest()
         lastRequestAt = clock()
+    }
+}
+
+internal class KrakenPriceTransport(
+    private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
+    private val pacer: KrakenPricePacer = sharedPacer,
+    private val beforeRequest: () -> Unit = {},
+) {
+    companion object {
+        private val sharedPacer = KrakenPricePacer()
+    }
+
+    fun get(url: String): String {
+        require(url.matches(Regex("https://api\\.kraken\\.com/0/public/OHLC\\?pair=XBT(USD|EUR|GBP)&interval=(60|1440)")))
+        pacer.await(beforeRequest)
         val connection = openConnection(url)
         try {
             connection.connectTimeout = 10_000
