@@ -12,4 +12,5 @@ enum class AssetSort { VALUE, NAME }
 data class AssetListPreference(
     val sort: AssetSort = AssetSort.VALUE,
     val hideEmpty: Boolean = false,
+    val hideSmall: Boolean = false,
 )

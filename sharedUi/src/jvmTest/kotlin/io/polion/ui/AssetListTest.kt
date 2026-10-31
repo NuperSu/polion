@@ -13,6 +13,37 @@ import kotlin.test.assertEquals
 
 class AssetListTest {
     @Test
+    fun hidingSmallKeepsUnknownStaleNegativeAndBoundaryPositions() {
+        fun asset(
+            id: String,
+            value: String?,
+            status: PriceStatus,
+            amount: String = "1",
+        ) = AssetValuation(
+            AssetId(id),
+            AtomicAmount(AssetId(id), ExactInteger.parse(amount)),
+            null,
+            status,
+            value?.let(ExactDecimal::parse),
+            null,
+        )
+        val input =
+            listOf(
+                asset("small", "0.999999999", PriceStatus.FRESH),
+                asset("boundary", "1", PriceStatus.FRESH),
+                asset("stale", "0.1", PriceStatus.STALE),
+                asset("missing", null, PriceStatus.MISSING),
+                asset("negative", "-0.1", PriceStatus.FRESH, "-1"),
+                asset("zero", "0", PriceStatus.FRESH, "0"),
+            )
+        assertEquals(
+            setOf("boundary", "stale", "missing", "negative", "zero"),
+            displayedAssets(input, AssetListPreference(hideSmall = true)).map { it.asset.value }.toSet(),
+        )
+        assertEquals(6, input.size)
+    }
+
+    @Test
     fun hidingEmptyPreservesNegativeAndUnpricedPositions() {
         fun asset(
             id: String,

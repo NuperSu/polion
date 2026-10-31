@@ -1515,13 +1515,16 @@ class PortfolioApplication(
 
     fun assetListPreference(): AssetListPreference {
         val parts = setting("asset_list_preference")?.split(':') ?: return AssetListPreference()
-        if (parts.size != 2 || parts[1] !in setOf("0", "1")) return AssetListPreference()
+        if (parts.size !in 2..3 || parts.drop(1).any { it !in setOf("0", "1") }) return AssetListPreference()
         val sort = AssetSort.entries.firstOrNull { it.name == parts[0] } ?: return AssetListPreference()
-        return AssetListPreference(sort, parts[1] == "1")
+        return AssetListPreference(sort, parts[1] == "1", parts.getOrNull(2) == "1")
     }
 
     fun setAssetListPreference(preference: AssetListPreference) {
-        putSetting("asset_list_preference", "${preference.sort.name}:${if (preference.hideEmpty) 1 else 0}")
+        putSetting(
+            "asset_list_preference",
+            "${preference.sort.name}:${if (preference.hideEmpty) 1 else 0}:${if (preference.hideSmall) 1 else 0}",
+        )
     }
 
     fun dashboardWidgets(): List<DashboardWidgetPreference> {

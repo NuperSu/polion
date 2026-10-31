@@ -22,7 +22,9 @@ class PortfolioApplicationTest {
             app.seedDemo()
             val before = app.snapshot().balances
             assertEquals(AssetListPreference(), app.assetListPreference())
-            val preference = AssetListPreference(AssetSort.NAME, hideEmpty = true)
+            db.execute("INSERT OR REPLACE INTO application_settings VALUES (?, ?)", listOf("asset_list_preference", "NAME:1"))
+            assertEquals(AssetListPreference(AssetSort.NAME, hideEmpty = true), app.assetListPreference())
+            val preference = AssetListPreference(AssetSort.NAME, hideEmpty = true, hideSmall = true)
             app.setAssetListPreference(preference)
             assertEquals(preference, PortfolioApplication(db) { 1000L }.assetListPreference())
             assertEquals(before, app.snapshot().balances)

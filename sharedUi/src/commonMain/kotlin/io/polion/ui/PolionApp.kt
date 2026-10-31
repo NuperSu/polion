@@ -1247,6 +1247,16 @@ private fun AssetsCard(
                 FilterChip(selected = preference.hideEmpty, enabled = !busy, onClick = {
                     onPreference(preference.copy(hideEmpty = !preference.hideEmpty))
                 }, label = { Text("Hide empty") }, modifier = Modifier.testTag("hide-empty-assets"))
+                FilterChip(selected = preference.hideSmall, enabled = !busy, onClick = {
+                    onPreference(preference.copy(hideSmall = !preference.hideSmall))
+                }, label = { Text("Hide under 1 ${data.currency.value}") }, modifier = Modifier.testTag("hide-small-assets"))
+            }
+            if (preference.hideSmall) {
+                Text(
+                    "Small positions with fresh prices are hidden from this list only. Stale and unpriced positions remain visible.",
+                    color = Muted,
+                    fontSize = 11.sp,
+                )
             }
         }
         if (data.valuations.isEmpty()) {
@@ -1258,7 +1268,7 @@ private fun AssetsCard(
             )
         }
         if (data.valuations.isNotEmpty() && sorted.isEmpty()) {
-            Text("All positions are empty. Turn off Hide empty to see them.", color = Muted, fontSize = 13.sp)
+            Text("No positions match these display filters. Turn off a filter to see them.", color = Muted, fontSize = 13.sp)
         }
         sorted.forEach { asset ->
             Row(

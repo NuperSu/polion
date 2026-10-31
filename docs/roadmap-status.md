@@ -7,7 +7,7 @@ This is a progress map for the crypto-first roadmap. A working feature does not 
 | Phases | Direction | Current position |
 | --- | --- | --- |
 | 0–6 | Reliable baseline, responsive UI, source identity, offline onboarding and connection workflows | Core Bitcoin tracking, background sync, source consent, onboarding and responsive navigation are implemented. Full device, accessibility and workflow gates remain open. |
-| 7–8 | Portfolio dashboard, activity explorer, asset and source details | Dashboard sections, allocation with asset drilldowns, activity filters, asset account/FIFO details, observation evidence and per-address fetch status are available. Complete source audit, grouping, chart presentation and end-to-end traceability remain open. |
+| 7–8 | Portfolio dashboard, activity explorer, asset and source details | Dashboard sections, allocation with asset drilldowns, saved empty/small position filters, activity filters, asset account/FIFO details, observation evidence and per-address fetch status are available. Complete source audit, grouping, chart presentation and end-to-end traceability remain open. |
 | 9–12 | Financial correctness, provider routing, prices and Bitcoin robustness | Exact quantities, FIFO foundations, manual corrections, Bitcoin graph/reorg handling and opt-in automatic hourly Bitcoin prices exist. Performance calculations, provider routing, broader price coverage and full Bitcoin acceptance remain open. |
 | 13–15 | Ethereum/EVM, DeFi, additional chains and imports | Deferred until the user explicitly requests additional integrations. |
 | 16–18 | Watchlists, alerts, deterministic insights and optional AI | Planned; local operation must remain independent of optional AI. |

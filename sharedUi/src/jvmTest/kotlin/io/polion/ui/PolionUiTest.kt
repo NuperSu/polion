@@ -552,6 +552,9 @@ class PolionUiTest {
                     onNodeWithTag("hide-empty-assets").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { app.assetListPreference().hideEmpty }
                     assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.assetListPreference().hideEmpty)
+                    onNodeWithTag("hide-small-assets").performScrollTo().performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.assetListPreference().hideSmall }
+                    assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.assetListPreference().hideSmall)
                 }
             }
         }
