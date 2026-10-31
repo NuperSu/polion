@@ -24,6 +24,61 @@ import kotlin.test.assertTrue
 
 class ProductPresentationTest {
     @Test
+    fun chartCacheRespectsScopeRevisionsAndExpiry() =
+        runBlocking {
+            var time = 100_000_000L
+            var calls = 0
+            val queries =
+                object : ProductQueries {
+                    override fun reload() = Unit
+
+                    override fun snapshot(filter: ActivityFilter): PortfolioSnapshot = error("not requested")
+
+                    override fun history(
+                        times: List<Long>,
+                        portfolio: PortfolioId?,
+                    ): List<HistoryPoint> {
+                        calls++
+                        return listOf(HistoryPoint(times.last(), emptyList()))
+                    }
+                }
+            val presenter =
+                ProductPresenter(
+                    ProductPresentation(page = Page.OVERVIEW),
+                    queries,
+                    kotlinx.coroutines.Dispatchers.Unconfined,
+                    this,
+                ) { time }
+            presenter.loadChart(1)
+            val original = presenter.state.chart
+            presenter.dispatch(ProductEvent.Navigate(Page.ACCOUNTS))
+            presenter.loadChart(1)
+            presenter.dispatch(ProductEvent.Navigate(Page.OVERVIEW))
+            presenter.loadChart(1)
+            assertEquals(1, calls)
+            assertEquals(original, presenter.state.chart)
+            assertFalse(presenter.state.chartLoading)
+            presenter.dispatch(ProductEvent.Period(7))
+            presenter.loadChart(1)
+            presenter.dispatch(ProductEvent.Period(30))
+            presenter.loadChart(1)
+            assertEquals(2, calls)
+            presenter.dispatch(ProductEvent.Portfolio(PortfolioId("other")))
+            presenter.loadChart(1)
+            assertEquals(3, calls)
+            presenter.update { copy(revision = revision + 1) }
+            presenter.loadChart(1)
+            presenter.loadChart(2)
+            assertEquals(5, calls)
+            time += 60_000
+            presenter.loadChart(2)
+            assertEquals(6, calls)
+            time -= 120_000
+            presenter.loadChart(2)
+            assertEquals(7, calls)
+        }
+
+    @Test
     fun assetDrilldownResetsUnrelatedFiltersButPreservesPortfolio() {
         val portfolio = PortfolioId("portfolio")
         val state =

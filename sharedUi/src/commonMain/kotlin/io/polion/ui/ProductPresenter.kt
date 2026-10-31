@@ -55,6 +55,20 @@ internal class ProductPresenter(
     private var chartRequest = 0L
     private var activeMutations = 0
 
+    private data class ChartKey(
+        val portfolio: PortfolioId?,
+        val period: Int,
+        val revision: Int,
+        val hostRevision: Long,
+    )
+
+    private data class CachedChart(
+        val at: Long,
+        val points: List<HistoryPoint>,
+    )
+
+    private val charts = mutableMapOf<ChartKey, CachedChart>()
+
     fun dispatch(event: ProductEvent) {
         state = state.reduce(event)
     }
@@ -123,6 +137,13 @@ internal class ProductPresenter(
             update { copy(chartLoading = false) }
             return
         }
+        val key = ChartKey(selected.selectedPortfolio, selected.period, selected.revision, hostRevision)
+        val currentTime = now()
+        val cached = charts[key]
+        if (cached != null && currentTime >= cached.at && currentTime - cached.at < 60_000L) {
+            update { copy(chart = cached.points, chartLoading = false, chartError = false) }
+            return
+        }
         update { copy(chart = emptyList(), chartLoading = true, chartError = false) }
         try {
             val loaded =
@@ -148,7 +169,11 @@ internal class ProductPresenter(
                         selected.selectedPortfolio,
                     )
                 }
-            if (request == chartRequest) update { copy(chart = loaded) }
+            if (request == chartRequest) {
+                if (charts.size >= 12) charts.remove(charts.keys.first())
+                charts[key] = CachedChart(now(), loaded)
+                update { copy(chart = loaded) }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
