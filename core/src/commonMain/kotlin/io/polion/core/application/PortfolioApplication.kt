@@ -1255,7 +1255,12 @@ class PortfolioApplication(
                         now(),
                     )}"
                 } else if (rateLimited) {
-                    "Kraken is rate limiting requests; wait a minute before retrying. Saved prices remain available"
+                    val until = setting("kraken_retry_after")?.toLongOrNull()?.let { Instant.fromEpochMilliseconds(it) }
+                    if (until == null) {
+                        "Kraken is rate limiting requests. Saved prices remain available"
+                    } else {
+                        "Kraken is rate limiting requests; retry after $until. Saved prices remain available"
+                    }
                 } else {
                     "Some price requests failed; saved prices remain available"
                 },
@@ -1340,7 +1345,14 @@ class PortfolioApplication(
         require(quote in automaticPriceCurrencies()) { "Unsupported portfolio currency" }
         val generation = requireNotNull(setting("automatic_price_generation"))
         val observedAt = now()
-        return KrakenPrices.fetch(transport, market, BITCOIN_ASSET, quote, observedAt, "kraken:${quote.value}:${priceRequestNonce()}") {
+        return KrakenPrices.fetch(
+            guardKrakenRequests(transport, authorize),
+            market,
+            BITCOIN_ASSET,
+            quote,
+            observedAt,
+            "kraken:${quote.value}:${priceRequestNonce()}",
+        ) {
             authorize()
             if (!automaticPriceConsent() || setting("automatic_price_generation") != generation || quote !in automaticPriceCurrencies()) {
                 throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
@@ -1364,7 +1376,7 @@ class PortfolioApplication(
         if (setting(key)?.toLongOrNull() == day) return 0
         val count =
             KrakenPrices.fetch(
-                transport,
+                guardKrakenRequests(transport, authorize),
                 market,
                 BITCOIN_ASSET,
                 quote,
@@ -1389,6 +1401,28 @@ class PortfolioApplication(
         }
         return count
     }
+
+    /** A provider cooldown is shared by app instances through the local database. */
+    private fun guardKrakenRequests(
+        transport: (String) -> String,
+        authorize: () -> Unit,
+    ): (String) -> String =
+        { url ->
+            authorize()
+            val remaining = (setting("kraken_retry_after")?.toLongOrNull() ?: 0L) - now()
+            if (remaining > 0) throw KrakenRateLimitedException(remaining)
+            try {
+                transport(url)
+            } catch (failure: KrakenRateLimitedException) {
+                val delay = failure.retryAfterMillis.coerceIn(0L, 86_400_000L)
+                db.transaction {
+                    val at = now().coerceAtMost(Long.MAX_VALUE - delay) + delay
+                    val previous = setting("kraken_retry_after")?.toLongOrNull() ?: 0L
+                    putSetting("kraken_retry_after", maxOf(previous, at).toString())
+                }
+                throw failure
+            }
+        }
 
     fun setPriceSourceConsent(accepted: Boolean) =
         db.transaction {

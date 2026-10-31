@@ -9,7 +9,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class KrakenRateLimitedException : Exception("Kraken is rate limiting price requests. Wait a minute and retry.")
+class KrakenRateLimitedException(
+    val retryAfterMillis: Long = 60_000L,
+) : Exception("Kraken is rate limiting price requests.")
 
 /** Closed BTC exchange candles. The currently forming candle is never recorded as a historical close. */
 object KrakenPrices {

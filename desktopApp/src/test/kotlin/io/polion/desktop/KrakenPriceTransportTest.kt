@@ -9,6 +9,41 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class KrakenPriceTransportTest {
+    @Test fun retryAfterAcceptsSecondsAndDatesWithSafeBounds() {
+        fun delay(
+            header: String?,
+            date: Long = -1,
+        ): Long {
+            val response =
+                object : HttpURLConnection(URI("https://api.kraken.com").toURL()) {
+                    override fun connect() = Unit
+
+                    override fun disconnect() = Unit
+
+                    override fun usingProxy() = false
+
+                    override fun getResponseCode() = 429
+
+                    override fun getHeaderField(name: String?) = header
+
+                    override fun getHeaderFieldDate(
+                        name: String?,
+                        defaultValue: Long,
+                    ) = date
+                }
+            val transport =
+                KrakenPriceTransport(openConnection = { response }, pacer = KrakenPricePacer(clock = { 0 }), wallClock = { 1_000 })
+            return assertFailsWith<KrakenRateLimitedException> {
+                transport.get("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60")
+            }.retryAfterMillis
+        }
+        assertEquals(120_000L, delay("120"))
+        assertEquals(60_000L, delay("1"))
+        assertEquals(86_400_000L, delay("999999999999999999999999"))
+        assertEquals(180_000L, delay("date", 181_000))
+        assertEquals(60_000L, delay(null))
+    }
+
     @Test fun rateLimitStopsNewRequestsUntilCooldownExpires() {
         var now = 0L
         var requests = 0

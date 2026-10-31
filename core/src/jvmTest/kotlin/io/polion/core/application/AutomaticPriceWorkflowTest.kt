@@ -6,11 +6,41 @@ import io.polion.core.market.KrakenRateLimitedException
 import io.polion.core.model.PortfolioId
 import io.polion.core.ownership.Portfolio
 import io.polion.core.storage.JvmSqliteDatabase
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class AutomaticPriceWorkflowTest {
+    @Test fun cooldownSurvivesDatabaseCloseAndReopen() {
+        val path = Files.createTempFile("price-cooldown", ".sqlite")
+        try {
+            JvmSqliteDatabase(path.toString()).use { db ->
+                val app = PortfolioApplication(db) { now }
+                app.setAutomaticPriceConsent(true)
+                assertFailsWith<KrakenRateLimitedException> {
+                    app.refreshAutomaticPrices({ throw KrakenRateLimitedException(120_000) })
+                }
+            }
+            JvmSqliteDatabase(path.toString()).use { db ->
+                var clock = now + 60_000
+                val app = PortfolioApplication(db) { clock }
+                assertFailsWith<KrakenRateLimitedException> { app.refreshAutomaticPrices({ error("unexpected request") }) }
+                clock = now + 120_000
+                var requested = false
+                assertFailsWith<IllegalArgumentException> {
+                    app.refreshAutomaticPrices({
+                        requested = true
+                        "invalid"
+                    })
+                }
+                assertEquals(true, requested)
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
     @Test fun rateLimitStopsTheWholePriceBatchAndPreservesSavedData() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
@@ -25,16 +55,34 @@ class AutomaticPriceWorkflowTest {
             assertFailsWith<KrakenRateLimitedException> {
                 app.refreshAutomaticPriceSet(transport = {
                     requests++
-                    throw KrakenRateLimitedException()
+                    throw KrakenRateLimitedException(120_000)
                 })
             }
             assertEquals(1, requests)
             assertEquals(saved, db.query("SELECT id,value,valid_at FROM market_prices ORDER BY id"))
             app.recordAutomaticPriceStatus(false, rateLimited = true)
             assertEquals(
-                "Kraken is rate limiting requests; wait a minute before retrying. Saved prices remain available",
+                "Kraken is rate limiting requests; retry after ${kotlin.time.Instant.fromEpochMilliseconds(
+                    now + 120_000,
+                )}. Saved prices remain available",
                 app.automaticPriceStatus(),
             )
+            var clock = now + 60_000
+            val reopened = PortfolioApplication(db) { clock }
+            assertFailsWith<KrakenRateLimitedException> { reopened.refreshAutomaticPrices({ error("cooldown must prevent requests") }) }
+            assertEquals(
+                (now + 120_000).toString(),
+                db.query("SELECT value FROM application_settings WHERE key='kraken_retry_after'").single().single(),
+            )
+            clock = now + 120_000
+            var retried = false
+            assertFailsWith<IllegalArgumentException> {
+                reopened.refreshAutomaticPrices({
+                    retried = true
+                    "invalid"
+                })
+            }
+            assertEquals(true, retried)
         }
     }
 

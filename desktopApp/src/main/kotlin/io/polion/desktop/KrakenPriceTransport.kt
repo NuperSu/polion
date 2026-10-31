@@ -13,7 +13,8 @@ internal class KrakenPricePacer(
 
     @Synchronized
     fun await(beforeRequest: () -> Unit) {
-        if (rateLimitedUntil?.let { clock() < it } == true) throw KrakenRateLimitedException()
+        val remaining = (rateLimitedUntil ?: 0L) - clock()
+        if (remaining > 0) throw KrakenRateLimitedException(remaining)
         lastRequestAt?.let { previous ->
             val remaining = 1_100L - (clock() - previous)
             if (remaining > 0) sleep(remaining)
@@ -23,8 +24,8 @@ internal class KrakenPricePacer(
     }
 
     @Synchronized
-    fun rateLimited() {
-        rateLimitedUntil = clock() + 60_000L
+    fun rateLimited(delay: Long) {
+        rateLimitedUntil = clock() + delay
     }
 }
 
@@ -32,6 +33,7 @@ internal class KrakenPriceTransport(
     private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
     private val pacer: KrakenPricePacer = sharedPacer,
     private val beforeRequest: () -> Unit = {},
+    private val wallClock: () -> Long = System::currentTimeMillis,
 ) {
     companion object {
         private val sharedPacer = KrakenPricePacer()
@@ -47,8 +49,9 @@ internal class KrakenPriceTransport(
             connection.instanceFollowRedirects = false
             val response = connection.responseCode
             if (response == 429) {
-                pacer.rateLimited()
-                throw KrakenRateLimitedException()
+                val delay = retryAfterMillis(connection)
+                pacer.rateLimited(delay)
+                throw KrakenRateLimitedException(delay)
             }
             require(response in 200..299) { "Price provider unavailable" }
             return connection.inputStream.use { input ->
@@ -65,5 +68,18 @@ internal class KrakenPriceTransport(
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun retryAfterMillis(connection: HttpURLConnection): Long {
+        val value = connection.getHeaderField("Retry-After")?.trim()
+        val numeric = value?.takeIf { it.isNotEmpty() && it.all { c -> c in '0'..'9' } }
+        val delay =
+            if (numeric != null) {
+                (numeric.toLongOrNull() ?: 86_400L).coerceAtMost(86_400L) * 1000
+            } else {
+                val at = connection.getHeaderFieldDate("Retry-After", -1)
+                if (at < 0) 60_000L else (at - wallClock()).coerceAtLeast(0)
+            }
+        return delay.coerceIn(60_000L, 86_400_000L)
     }
 }

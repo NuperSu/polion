@@ -46,6 +46,8 @@ class ReliabilityInstrumentation : Instrumentation() {
 
                             override fun getResponseCode() = code
 
+                            override fun getHeaderField(name: String?) = if (name == "Retry-After") "120" else null
+
                             override fun getInputStream() = "{}".byteInputStream()
                         }
                     val pacer = KrakenPricePacer(clock = { now }, sleep = { now += it })
@@ -58,7 +60,7 @@ class ReliabilityInstrumentation : Instrumentation() {
                     code = 200
                     check(runCatching { transport.get(url) }.exceptionOrNull() is io.polion.core.market.KrakenRateLimitedException)
                     check(requests == 1)
-                    now += 60_000
+                    now += 120_000
                     check(transport.get(url) == "{}" && requests == 2)
                 },
                 "priceRefreshProgress" to {
