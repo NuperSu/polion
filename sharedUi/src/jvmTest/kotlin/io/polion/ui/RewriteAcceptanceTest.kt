@@ -20,6 +20,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import io.polion.core.application.PortfolioApplication
@@ -74,9 +76,22 @@ class RewriteAcceptanceTest {
                         onNodeWithTag("page-content").performScrollToNode(hasText("Global market rankings are unavailable."))
                         onNodeWithText("Global market rankings are unavailable.").performScrollTo().assertIsDisplayed()
                         capture("main-discover")
+                        onNodeWithTag("page-content").performScrollToNode(hasText("Top losers"))
+                        capture("main-discover-bottom")
                         onNodeWithTag("destination-OVERVIEW").performClick()
                         onNodeWithText("PRICED VALUE").assertIsDisplayed()
                         capture("portfolio")
+                        onNodeWithTag("add-action").performClick()
+                        capture("add-method")
+                        onNodeWithText("Bitcoin public wallet").performTouchInput { swipeUp() }
+                        capture("add-method-bottom")
+                        onNodeWithTag("source-choice-manual-activity").performScrollTo().performClick()
+                        capture("manual-transaction")
+                        onNodeWithText("Label (optional)").performScrollTo()
+                        capture("manual-scrolled")
+                        onNodeWithText("Record locally").performScrollTo()
+                        capture("manual-bottom")
+                        onNodeWithText("Close").performScrollTo().performClick()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Bitcoin"))
                         capture("portfolio-assets")
                         onNodeWithText("Bitcoin").performClick()
@@ -85,6 +100,12 @@ class RewriteAcceptanceTest {
                         onNodeWithTag("detail-Transactions").performScrollTo().performClick()
                         onNodeWithTag("detail-add-transaction").performScrollTo().assertIsDisplayed()
                         capture("coin-transactions")
+                        onNodeWithText("Open in Activity").performScrollTo()
+                        capture("coin-transactions-scrolled")
+                        onNodeWithTag("detail-add-transaction").performScrollTo().performClick()
+                        capture("coin-manual-transaction")
+                        onNodeWithText("Close").performClick()
+                        onNodeWithText("Bitcoin").performClick()
                         onNodeWithTag("detail-Alerts").performScrollTo().performClick()
                         onNodeWithText(
                             "Price alerts are not available yet. Saved prices and manual observations are available in General.",
