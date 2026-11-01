@@ -130,8 +130,7 @@ internal class DesktopHost(
                 throw failure
             }
         if (demo) app.value.seedDemo()
-        if (Files.exists(refreshPreference)) setBackgroundRefresh(true)
-        if (app.value.automaticPriceConsent() && runCatching { setAutomaticPriceRefresh(true) }.isFailure) {
+        if (runCatching { reconcileRefreshPreferences() }.isFailure) {
             runCatching { app.value.recordAutomaticPriceSchedulingFailure() }
         }
     }
@@ -213,7 +212,7 @@ internal class DesktopHost(
                             priceRestorePaused = false
                             if (swapped &&
                                 replacementReady &&
-                                runCatching { setAutomaticPriceRefresh(app.value.automaticPriceConsent()) }.isFailure
+                                runCatching { reconcileRefreshPreferences() }.isFailure
                             ) {
                                 result = "Backup restored; automatic price scheduling could not be updated"
                             }
@@ -425,8 +424,27 @@ internal class DesktopHost(
         }
     }
 
-    override fun setBackgroundRefresh(enabled: Boolean) {
-        if (enabled) Files.writeString(refreshPreference, "enabled") else Files.deleteIfExists(refreshPreference)
+    override fun refreshPreferences(): io.polion.ui.RefreshPreferences =
+        io.polion.ui.RefreshPreferences(
+            app.value.automaticRefreshPreference() ?: (Files.exists(refreshPreference) || app.value.automaticPriceConsent()),
+            app.value.wifiOnlyRefreshPreference(),
+        )
+
+    override fun updateRefreshPreferences(preferences: io.polion.ui.RefreshPreferences) {
+        app.value.setRefreshPreferences(preferences.automaticRefresh, preferences.wifiOnly)
+        reconcileRefreshPreferences()
+    }
+
+    private fun reconcileRefreshPreferences() {
+        val preference = refreshPreferences()
+        app.value.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
+        scheduleWalletRefresh(preference.automaticRefresh && app.value.sourceConsent())
+        setAutomaticPriceRefresh(app.value.automaticPriceConsent())
+    }
+
+    override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))
+
+    private fun scheduleWalletRefresh(enabled: Boolean) {
         refreshTask?.cancel(false)
         refreshTask =
             if (enabled) {
@@ -438,12 +456,12 @@ internal class DesktopHost(
             }
     }
 
-    override fun backgroundRefreshEnabled(): Boolean = Files.exists(refreshPreference)
+    override fun backgroundRefreshEnabled(): Boolean = refreshPreferences().automaticRefresh
 
     override fun setAutomaticPriceRefresh(enabled: Boolean) {
         automaticPriceTask?.cancel(false)
         automaticPriceTask =
-            if (enabled && !closing.get()) {
+            if (enabled && refreshPreferences().automaticRefresh && app.value.automaticPriceConsent() && !closing.get()) {
                 priceExecutor.scheduleWithFixedDelay(::runAutomaticPriceRefresh, 0, 1, java.util.concurrent.TimeUnit.HOURS)
             } else {
                 null

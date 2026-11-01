@@ -20,6 +20,11 @@ data class SyncStatus(
     val operation: SyncOperation = SyncOperation.HISTORY,
 )
 
+data class RefreshPreferences(
+    val automaticRefresh: Boolean = false,
+    val wifiOnly: Boolean = false,
+)
+
 data class UnlockResult(
     val success: Boolean,
     val message: String? = null,
@@ -75,6 +80,14 @@ interface PlatformActions {
     fun refresh(onResult: (String) -> Unit)
 
     fun recoverBitcoinHistory(onResult: (String) -> Unit)
+
+    val wifiOnlyRefreshSupported: Boolean get() = false
+
+    fun refreshPreferences(): RefreshPreferences = RefreshPreferences(backgroundRefreshEnabled())
+
+    fun updateRefreshPreferences(preferences: RefreshPreferences) {
+        setBackgroundRefresh(preferences.automaticRefresh)
+    }
 
     fun setBackgroundRefresh(enabled: Boolean)
 

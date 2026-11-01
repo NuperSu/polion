@@ -1499,6 +1499,18 @@ class PortfolioApplication(
             preferLatest = true,
         )
 
+    fun automaticRefreshPreference(): Boolean? = setting("refresh_automatic")?.toBooleanStrictOrNull()
+
+    fun wifiOnlyRefreshPreference(): Boolean = setting("refresh_wifi_only") == "true"
+
+    fun setRefreshPreferences(
+        automatic: Boolean,
+        wifiOnly: Boolean,
+    ) = db.transaction {
+        putSetting("refresh_automatic", automatic.toString())
+        putSetting("refresh_wifi_only", wifiOnly.toString())
+    }
+
     fun sourceConsent(): Boolean = setting("source_consent") == "true"
 
     fun setSourceConsent(accepted: Boolean) = putSetting("source_consent", accepted.toString())
@@ -1546,11 +1558,24 @@ class PortfolioApplication(
             .update(action)
 
     /** Presentation preference is local and included in portable backups. */
-    fun appearanceTheme(): String = setting("appearance_theme")?.takeIf { it in setOf("system", "light", "dark") } ?: "system"
+    fun appearanceTheme(): String = setting("appearance_theme")?.takeIf { it in setOf("system", "light", "dark") } ?: "dark"
 
     fun setAppearanceTheme(theme: String) {
         require(theme in setOf("system", "light", "dark")) { "Invalid appearance theme" }
         putSetting("appearance_theme", theme)
+    }
+
+    fun marketFavorites(): Set<AssetId> =
+        setting("market_favorites")
+            ?.lineSequence()
+            ?.filter { it.isNotBlank() }
+            ?.map(::AssetId)
+            ?.toSet()
+            .orEmpty()
+
+    fun setMarketFavorites(assets: Set<AssetId>) {
+        require(assets.all { it.value.isNotBlank() && '\n' !in it.value && '\r' !in it.value }) { "Invalid asset ID" }
+        putSetting("market_favorites", assets.map { it.value }.sorted().joinToString("\n"))
     }
 
     fun assetListPreference(): AssetListPreference {

@@ -137,7 +137,7 @@ private class AndroidHost(
                 Files.createDirectories(file.parent)
                 db = AndroidSqliteDatabase(file.toString())
                 val opened = PortfolioApplication(db, System::currentTimeMillis)
-                if (runCatching { setAutomaticPriceRefresh(opened.automaticPriceConsent()) }.isFailure) {
+                if (runCatching { reconcileRefreshPreferences(opened) }.isFailure) {
                     runCatching { opened.recordAutomaticPriceSchedulingFailure() }
                 }
                 main.post { if (!closed) app.value = opened }
@@ -224,7 +224,7 @@ private class AndroidHost(
                 if (pricePaused) {
                     AutomaticPriceGate.paused = false
                     if (swapped && replacementReady &&
-                        runCatching { app.value?.let { setAutomaticPriceRefresh(it.automaticPriceConsent()) } }.isFailure
+                        runCatching { app.value?.let { reconcileRefreshPreferences(it) } }.isFailure
                     ) {
                         result = "Backup restored; automatic price scheduling could not be updated"
                     }
@@ -257,7 +257,12 @@ private class AndroidHost(
                 activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java).putExtra("wallet_id", walletId.value))
                 onResult("Wallet discovery continues in the background.")
             } catch (_: Exception) {
-                syncStatus.value = SyncStatus(SyncPhase.ERROR, "Could not start wallet discovery. Open Polion and retry.", io.polion.ui.SyncOperation.DISCOVERY)
+                syncStatus.value =
+                    SyncStatus(
+                        SyncPhase.ERROR,
+                        "Could not start wallet discovery. Open Polion and retry.",
+                        io.polion.ui.SyncOperation.DISCOVERY,
+                    )
                 onResult(syncStatus.value.message)
             }
         }
@@ -319,8 +324,42 @@ private class AndroidHost(
         }
     }
 
-    override fun setBackgroundRefresh(enabled: Boolean) {
-        preferences.edit { putBoolean("background_refresh", enabled) }
+    override val wifiOnlyRefreshSupported: Boolean = true
+
+    override fun refreshPreferences(): io.polion.ui.RefreshPreferences =
+        app.value?.let(::readRefreshPreferences)
+            ?: io.polion.ui.RefreshPreferences(preferences.getBoolean("background_refresh", false))
+
+    private fun readRefreshPreferences(application: PortfolioApplication) =
+        io.polion.ui.RefreshPreferences(
+            application.automaticRefreshPreference()
+                ?: (preferences.getBoolean("background_refresh", false) || application.automaticPriceConsent()),
+            application.wifiOnlyRefreshPreference(),
+        )
+
+    override fun updateRefreshPreferences(preferences: io.polion.ui.RefreshPreferences) {
+        val application = app.value ?: return
+        application.setRefreshPreferences(preferences.automaticRefresh, preferences.wifiOnly)
+        reconcileRefreshPreferences(application)
+    }
+
+    private fun reconcileRefreshPreferences(application: PortfolioApplication) {
+        val preference = readRefreshPreferences(application)
+        application.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
+        scheduleWalletRefresh(preference.automaticRefresh && application.sourceConsent(), preference.wifiOnly)
+        scheduleAutomaticPrices(
+            preference.automaticRefresh && application.automaticPriceConsent(),
+            preference.wifiOnly,
+            application.automaticPriceConsent(),
+        )
+    }
+
+    override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))
+
+    private fun scheduleWalletRefresh(
+        enabled: Boolean,
+        wifiOnly: Boolean,
+    ) {
         val manager = androidx.work.WorkManager.getInstance(activity)
         if (enabled) {
             val work =
@@ -329,8 +368,9 @@ private class AndroidHost(
                     .setConstraints(
                         androidx.work.Constraints
                             .Builder()
-                            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                            .build(),
+                            .setRequiredNetworkType(
+                                if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED,
+                            ).build(),
                     ).build()
             manager.enqueueUniquePeriodicWork("polion-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
         } else {
@@ -338,29 +378,46 @@ private class AndroidHost(
         }
     }
 
-    override fun backgroundRefreshEnabled(): Boolean = preferences.getBoolean("background_refresh", false)
+    override fun backgroundRefreshEnabled(): Boolean = refreshPreferences().automaticRefresh
 
     override fun setAutomaticPriceRefresh(enabled: Boolean) {
+        val preference = refreshPreferences()
+        scheduleAutomaticPrices(enabled && preference.automaticRefresh, preference.wifiOnly, enabled)
+    }
+
+    private fun scheduleAutomaticPrices(
+        enabled: Boolean,
+        wifiOnly: Boolean,
+        consent: Boolean,
+    ) {
         val manager = androidx.work.WorkManager.getInstance(activity)
         if (enabled) {
             val work =
                 androidx.work
                     .PeriodicWorkRequestBuilder<AutomaticPriceWorker>(1, java.util.concurrent.TimeUnit.HOURS)
+                    .setInputData(androidx.work.workDataOf("automatic" to true))
                     .setConstraints(
                         androidx.work.Constraints
                             .Builder()
-                            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                            .build(),
+                            .setRequiredNetworkType(
+                                if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED,
+                            ).build(),
                     ).build()
             manager.enqueueUniquePeriodicWork("polion-price-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
         } else {
             manager.cancelUniqueWork("polion-price-refresh")
+        }
+        if (!consent) {
             manager.cancelUniqueWork("polion-price-refresh-now")
             AutomaticPriceWorker.tracker.setWorkState(queued = false, running = false)
         }
     }
 
     override fun refreshAutomaticPrices(onResult: (String) -> Unit) {
+        if (priceRefreshStatus.value != io.polion.ui.PriceRefreshPhase.IDLE) {
+            onResult("A price refresh is already queued or running.")
+            return
+        }
         try {
             AutomaticPriceWorker.tracker.setWorkState(queued = true, running = false)
             val work =

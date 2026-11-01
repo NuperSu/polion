@@ -75,20 +75,29 @@ class AutomaticPriceWorker(
         try {
             AndroidSqliteDatabase(applicationContext.getDatabasePath("portfolio.sqlite").path).use { db ->
                 val app = PortfolioApplication(db, System::currentTimeMillis)
-                if (!app.automaticPriceConsent()) return Result.success()
+                if (!app.automaticPriceConsent() ||
+                    (inputData.getBoolean("automatic", false) && app.automaticRefreshPreference() == false)
+                ) {
+                    return Result.success()
+                }
                 try {
                     val generation = app.automaticPriceGeneration()
                     val transport =
                         KrakenPriceTransport(beforeRequest = {
                             check(
                                 !isStopped && !AutomaticPriceGate.paused && app.automaticPriceConsent() &&
+                                    (!inputData.getBoolean("automatic", false) || app.automaticRefreshPreference() != false) &&
                                     app.automaticPriceGeneration() == generation,
                             )
                         })
                     app.refreshAutomaticPriceSet(transport::get) { check(!isStopped && !AutomaticPriceGate.paused) }
                     app.recordAutomaticPriceStatus(true)
                 } catch (failure: Exception) {
-                    if (!isStopped && !AutomaticPriceGate.paused) app.recordAutomaticPriceStatus(false, failure is KrakenRateLimitedException)
+                    if (!isStopped &&
+                        !AutomaticPriceGate.paused
+                    ) {
+                        app.recordAutomaticPriceStatus(false, failure is KrakenRateLimitedException)
+                    }
                     RefreshWorker.dataRevision.update { it + 1 }
                     throw failure
                 }

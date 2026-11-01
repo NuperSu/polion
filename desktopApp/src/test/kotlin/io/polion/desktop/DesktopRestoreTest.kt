@@ -15,6 +15,25 @@ import kotlin.test.assertTrue
 
 class DesktopRestoreTest {
     @Test
+    fun refreshPreferencesMigrateAndRespectExplicitDisableAfterRestore() {
+        val directory = Files.createTempDirectory("polion-refresh-preferences-")
+        Files.writeString(directory.resolve("background-refresh"), "enabled")
+        val host = DesktopHost(directory, false)
+        try {
+            assertTrue(host.refreshPreferences().automaticRefresh)
+            host.updateRefreshPreferences(io.polion.ui.RefreshPreferences(automaticRefresh = false, wifiOnly = true))
+            assertEquals(false, host.backgroundRefreshEnabled())
+            assertEquals(false, host.wifiOnlyRefreshSupported)
+            val archive = host.app.value.exportBackup("password".toCharArray())
+            host.updateRefreshPreferences(io.polion.ui.RefreshPreferences(automaticRefresh = true))
+            assertEquals("Backup restored", restore(host, archive, "password"))
+            assertEquals(io.polion.ui.RefreshPreferences(false, true), host.refreshPreferences())
+        } finally {
+            host.close()
+        }
+    }
+
+    @Test
     fun manualPriceRefreshShowsRunningAndRejectsDuplicateRequests() {
         val directory = Files.createTempDirectory("polion-price-refresh-")
         val started = CountDownLatch(1)
@@ -95,7 +114,7 @@ class DesktopRestoreTest {
             }
         try {
             host.app.value.setAutomaticPriceConsent(true)
-            host.setAutomaticPriceRefresh(true)
+            host.updateRefreshPreferences(io.polion.ui.RefreshPreferences(automaticRefresh = true))
             assertTrue(started.await(10, TimeUnit.SECONDS))
             val archive =
                 JvmSqliteDatabase(":memory:").use { db ->

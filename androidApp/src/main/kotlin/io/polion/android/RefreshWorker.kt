@@ -20,6 +20,11 @@ class RefreshWorker(
     parameters: WorkerParameters,
 ) : Worker(context, parameters) {
     override fun doWork(): Result {
+        val automaticEnabled =
+            AndroidSqliteDatabase(applicationContext.getDatabasePath("portfolio.sqlite").path).use { db ->
+                PortfolioApplication(db, System::currentTimeMillis).automaticRefreshPreference() != false
+            }
+        if (!automaticEnabled) return Result.success()
         if (syncStatus.value.phase == SyncPhase.SYNCING) return Result.retry()
         setForegroundAsync(SyncNotification.foreground(applicationContext)).get()
         syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")

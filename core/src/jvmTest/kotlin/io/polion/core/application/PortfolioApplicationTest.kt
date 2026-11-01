@@ -16,6 +16,25 @@ import kotlin.test.assertTrue
 
 class PortfolioApplicationTest {
     @Test
+    fun refreshAndMarketPreferencesSurvivePortableBackup() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 1000L }
+            assertEquals(null, app.automaticRefreshPreference())
+            assertEquals("dark", app.appearanceTheme())
+            app.setRefreshPreferences(automatic = false, wifiOnly = true)
+            app.setMarketFavorites(setOf(AssetId("btc"), AssetId("eth")))
+            val backup = app.exportBackup("password".toCharArray())
+            JvmSqliteDatabase(":memory:").use { staging ->
+                app.restoreToStaging(staging, backup, "password".toCharArray())
+                val restored = PortfolioApplication(staging) { 1000L }
+                assertEquals(false, restored.automaticRefreshPreference())
+                assertTrue(restored.wifiOnlyRefreshPreference())
+                assertEquals(setOf(AssetId("btc"), AssetId("eth")), restored.marketFavorites())
+            }
+        }
+    }
+
+    @Test
     fun assetListPreferencePersistsInBackupWithoutChangingBalances() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
@@ -60,7 +79,7 @@ class PortfolioApplicationTest {
     fun appearancePreferencePersistsAndRejectsUnknownValues() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            assertEquals("system", app.appearanceTheme())
+            assertEquals("dark", app.appearanceTheme())
             app.setAppearanceTheme("light")
             assertEquals("light", PortfolioApplication(db) { 1000L }.appearanceTheme())
             assertFails { app.setAppearanceTheme("unrecognized") }
