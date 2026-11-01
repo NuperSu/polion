@@ -1,5 +1,9 @@
 # Foundation validation
 
+## JDK 25 build — 2026-11-01
+
+The full CI task set passed locally with JDK 25 and Gradle 9.8.1, including JVM and Android host tests, Android lint, both APKs and desktop packaging. The Android Java target is 25. The desktop process started under Xvfb; window creation was not independently verified. No Android device or emulator was connected, and hosted CI has not been run for this change.
+
 ## Large-wallet snapshot limit — 2026-10-30
 
 The generated 100,000-confirmed-transaction fixture completes two Bitcoin refreshes under a 64 MiB JVM heap. Loading an unfiltered portfolio snapshot afterward exhausts that heap, before the network-filtered snapshot can run. A 10,000-transaction run with the network filter returned all 10,049 expected activities under the same heap limit. The full snapshot and network-filtered 100,000-transaction acceptance gate remains open; pagination of the displayed list does not by itself bound the ledger projection.
@@ -41,11 +45,11 @@ New tests cover persisted outpoints/scripts/states, reopen, scoped membership, p
 
 The API 29 disposable emulator reports **9 native checks, 0 failures**, including the shared Bitcoin accounting and graph-restore workflow. The green APK was installed and opened on the Pixel's current user 10 after verifying that sync was idle; the package update preserves records. These results establish deterministic storage and application paths; they do not establish independent real-chain completeness or close full-history recovery UI, bounded-memory normalized graph construction, hosted CI, or remaining product/device gates. See [chain evidence](bitcoin-chain-state.md).
 
-Baseline: Kotlin 2.4.21, Compose Multiplatform plugin 1.12.2, AGP 9.2.0, Gradle 9.4.1, JDK 21, Android compile/target SDK 37 and min SDK 26.
+Baseline: Kotlin 2.4.21, Compose Multiplatform plugin 1.12.2, AGP 9.2.0, Gradle 9.8.1, JDK 25, Android compile/target SDK 37 and min SDK 26.
 
 ## Reproduce
 
-Install JDK 21 and Android SDK platform 37 (`platforms;android-37.0`)/build tools 36.0.0. Configure a consistent SDK location with `ANDROID_HOME` or `local.properties`; if `ANDROID_SDK_ROOT` is present it must agree.
+Install JDK 25 and Android SDK platform 37 (`platforms;android-37.0`)/build tools 36.0.0. Configure a consistent SDK location with `ANDROID_HOME` or `local.properties`; if `ANDROID_SDK_ROOT` is present it must agree.
 
 ```sh
 ./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :androidApp:lintDebug :androidApp:assembleDebug :desktopApp:packageUberJarForCurrentOS

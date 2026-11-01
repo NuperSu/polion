@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose)
 }
-kotlin { jvmToolchain(21) }
+kotlin { jvmToolchain(25) }
 dependencies {
     implementation(project(":core"))
     implementation(project(":sharedUi"))

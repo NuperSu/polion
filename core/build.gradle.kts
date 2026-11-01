@@ -14,7 +14,7 @@ tasks.register<JavaExec>("bitcoinHeapStress") {
     args(providers.gradleProperty("bitcoinStressTransactions").orElse("100000").get())
 }
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
     jvm()
     android {
         namespace = "io.polion.core"

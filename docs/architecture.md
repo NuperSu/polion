@@ -14,4 +14,4 @@ Authoritative user data resides locally. Public explorer requests disclose watch
 
 ## Decisions
 
-Four modules separate platform entry points from shared UI and core. The Gradle wrapper and dependency versions are pinned; JDK 21 is the development baseline. Linux and Android are initial acceptance targets; other desktop platforms need independent validation. [Validation evidence](validation.md) distinguishes automated checks from device and hosted CI verification.
+Four modules separate platform entry points from shared UI and core. The Gradle wrapper and dependency versions are pinned; JDK 25 is the development baseline. Linux and Android are initial acceptance targets; other desktop platforms need independent validation. [Validation evidence](validation.md) distinguishes automated checks from device and hosted CI verification.

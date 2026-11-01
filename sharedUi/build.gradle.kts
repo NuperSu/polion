@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
     jvm()
     android {
         namespace = "io.polion.ui"
