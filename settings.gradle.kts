@@ -26,3 +26,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Polion"
 include(":core", ":sharedUi", ":androidApp", ":desktopApp")
+include(":uiModel")
