@@ -24,18 +24,30 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +67,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -92,67 +106,119 @@ private val coins =
 enum class ModelPage(
     val label: String,
 ) {
-    HOME("Home"),
-    MARKETS("Markets"),
+    MAIN("Main"),
     PORTFOLIO("Portfolio"),
     INSIGHTS("Insights"),
-    FOLLOWING("Following"),
 }
 
-/** Only preview navigation and chart-range selection change; all figures are illustrative. */
+private val LocalCoinClick = staticCompositionLocalOf<(Coin) -> Unit> { {} }
+
+/** Independent visual prototype. Interaction changes preview state only. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PortfolioModel(initialPage: ModelPage = ModelPage.PORTFOLIO) {
     var page by remember { mutableStateOf(initialPage) }
+    var coin by remember { mutableStateOf<Coin?>(null) }
+    var auxiliary by remember { mutableStateOf<String?>(null) }
+    var transaction by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+    var portfolio by remember { mutableStateOf("Main Portfolio") }
+    val scope = rememberCoroutineScope()
+    val refresh: () -> Unit = {
+        if (!refreshing) {
+            scope.launch {
+                refreshing = true
+                delay(900)
+                refreshing = false
+            }
+        }
+    }
+    val navigate: (ModelPage) -> Unit = {
+        page = it
+        coin = null
+        auxiliary = null
+    }
     MaterialTheme(
         colorScheme = darkColorScheme(background = Color.Black, surface = Card, onSurface = White, primary = Green),
         typography = Typography(bodyLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 14.sp, letterSpacing = 0.sp)),
     ) {
-        Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
-            BoxWithConstraints {
-                val wide = maxWidth >= 850.dp
-                val short = maxHeight < 850.dp
-                Row(Modifier.fillMaxSize()) {
-                    if (wide) SideNavigation(page) { page = it }
-                    Column(Modifier.weight(1f)) {
-                        ModelHeader(page, wide)
-                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                            key(page) {
-                                Column(
-                                    Modifier
-                                        .widthIn(max = if (wide) 1120.dp else 680.dp)
-                                        .fillMaxWidth()
-                                        .verticalScroll(rememberScrollState())
-                                        .testTag("model-content")
-                                        .padding(horizontal = if (wide) 32.dp else 16.dp)
-                                        .padding(top = 12.dp, bottom = 36.dp),
-                                    verticalArrangement = Arrangement.spacedBy(32.dp),
-                                ) {
-                                    when (page) {
-                                        ModelPage.HOME -> HomeContent(wide) { page = ModelPage.PORTFOLIO }
-                                        ModelPage.MARKETS -> MarketsContent(wide)
-                                        ModelPage.PORTFOLIO -> PortfolioContent(wide, short)
-                                        ModelPage.INSIGHTS -> InsightsContent(wide)
-                                        ModelPage.FOLLOWING -> FollowingContent()
+        CompositionLocalProvider(LocalCoinClick provides { coin = it }) {
+            Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
+                BoxWithConstraints {
+                    val wide = maxWidth >= 850.dp
+                    val short = maxHeight < 850.dp
+                    Row(Modifier.fillMaxSize()) {
+                        if (wide) SideNavigation(page, navigate)
+                        Column(Modifier.weight(1f)) {
+                            ModelHeader(
+                                coin?.name ?: auxiliary ?: page.label,
+                                coin != null || auxiliary != null,
+                                {
+                                    coin = null
+                                    auxiliary = null
+                                },
+                                { auxiliary = it },
+                                refresh,
+                            )
+                            PullToRefreshBox(
+                                isRefreshing = refreshing,
+                                onRefresh = refresh,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            ) {
+                                key(page, coin, auxiliary) {
+                                    Column(
+                                        Modifier
+                                            .widthIn(max = if (wide) 1120.dp else 680.dp)
+                                            .fillMaxWidth()
+                                            .align(Alignment.TopCenter)
+                                            .verticalScroll(rememberScrollState())
+                                            .testTag("model-content")
+                                            .padding(horizontal = if (wide) 32.dp else 16.dp)
+                                            .padding(top = 12.dp, bottom = 100.dp),
+                                        verticalArrangement = Arrangement.spacedBy(28.dp),
+                                    ) {
+                                        val selected = coin
+                                        when {
+                                            auxiliary == "Settings" -> SettingsContent()
+                                            auxiliary == "Accounts" -> AccountsContent()
+                                            selected != null -> CoinDetail(selected, portfolio) { transaction = true }
+                                            page == ModelPage.MAIN -> MainContent(wide)
+                                            page == ModelPage.PORTFOLIO -> {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    listOf("Main Portfolio", "Long term").forEach { name ->
+                                                        Capsule(name, portfolio == name) {
+                                                            portfolio =
+                                                                name
+                                                        }
+                                                    }
+                                                }
+                                                PortfolioContent(wide, short)
+                                            }
+                                            else -> InsightsContent(wide)
+                                        }
+                                        Text("POLION · DESIGN PREVIEW · SAMPLE DATA", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
                                     }
-                                    Text("POLION · DESIGN PREVIEW · SAMPLE DATA", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+                                }
+                                if (page == ModelPage.PORTFOLIO && coin == null && auxiliary == null) {
+                                    Box(
+                                        Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(20.dp)
+                                            .size(54.dp)
+                                            .background(White, CircleShape)
+                                            .clickable { transaction = true }
+                                            .testTag("add-transaction"),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text("+", fontSize = 35.sp, color = Color.Black)
+                                    }
                                 }
                             }
-                            if (page == ModelPage.PORTFOLIO) {
-                                Box(
-                                    Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(20.dp)
-                                        .size(54.dp)
-                                        .background(White, CircleShape),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text("+", fontSize = 35.sp, color = Color.Black)
-                                }
-                            }
+                            if (!wide) BottomNavigation(page, navigate)
                         }
-                        if (!wide) BottomNavigation(page) { page = it }
                     }
                 }
+                if (transaction) TransactionForm(coin ?: coins.first(), coin != null) { transaction = false }
             }
         }
     }
@@ -160,27 +226,36 @@ fun PortfolioModel(initialPage: ModelPage = ModelPage.PORTFOLIO) {
 
 @Composable
 private fun ModelHeader(
-    page: ModelPage,
-    wide: Boolean,
+    title: String,
+    back: Boolean,
+    onBack: () -> Unit,
+    menu: (String) -> Unit,
+    refresh: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-        ModelIcon("menu", Modifier.size(24.dp))
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            Text(
-                if (page ==
-                    ModelPage.PORTFOLIO
-                ) {
-                    "Portfolios"
-                } else {
-                    page.label
-                },
-                color = White,
-                fontSize = 21.sp,
-                fontWeight = FontWeight.Bold,
-            )
+    var expanded by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clickable {
+                        if (back) onBack() else expanded = true
+                    }.testTag(if (back) "model-back" else "model-menu"),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (back) Text("‹", fontSize = 32.sp) else ModelIcon("menu", Modifier.size(24.dp))
+            }
+            DropdownMenu(expanded, { expanded = false }) {
+                listOf("Accounts", "Settings").forEach { name ->
+                    DropdownMenuItem(text = { Text(name) }, onClick = {
+                        expanded = false
+                        menu(name)
+                    })
+                }
+            }
         }
-        if (wide) Text("Main Portfolio", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(end = 24.dp))
-        ModelIcon("search", Modifier.size(24.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold) }
+        TextButton(onClick = refresh, modifier = Modifier.testTag("model-refresh")) { Text("↻", color = White, fontSize = 25.sp) }
     }
 }
 
@@ -423,8 +498,13 @@ private fun CoinRow(
     coin: Coin,
     holding: Boolean = false,
 ) {
+    val open = LocalCoinClick.current
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable { open(coin) }
+            .testTag("coin-${coin.ticker}")
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
@@ -505,7 +585,7 @@ private fun PortfolioContent(
                 if (wide) {
                     280.dp
                 } else if (short) {
-                    150.dp
+                    100.dp
                 } else {
                     200.dp
                 },
@@ -523,180 +603,11 @@ private fun PortfolioContent(
 }
 
 @Composable
-private fun HomeContent(
-    wide: Boolean,
-    portfolio: () -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(32.dp).background(Green.copy(alpha = .15f), CircleShape), contentAlignment = Alignment.Center) {
-            ModelIcon("bell", Modifier.size(24.dp), Green)
-        }
-        Column {
-            Text("Good morning!", color = White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text("Check your notifications  ›", color = Muted, fontSize = 14.sp)
-        }
-    }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(if (wide) 270.dp else 250.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF2DFF83)),
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val w = size.width
-                val h = size.height
-                drawPath(
-                    Path().apply {
-                        moveTo(-30f, h * .55f)
-                        cubicTo(w * .2f, h * .18f, w * .45f, h * .18f, w * .48f, h * .23f)
-                    },
-                    Color(0xFF5000E9),
-                    style =
-                        Stroke(
-                            h * .15f,
-                            cap = StrokeCap.Round,
-                        ),
-                )
-                drawPath(
-                    Path().apply {
-                        moveTo(w * .63f, -30f)
-                        cubicTo(w * .8f, h * .3f, w * .9f, h * .3f, w + 50f, h * .37f)
-                    },
-                    Color(0xFFA58FFF),
-                    style =
-                        Stroke(
-                            h * .15f,
-                        ),
-                )
-                drawPath(
-                    Path().apply {
-                        moveTo(w * .52f, h * .18f)
-                        lineTo(w * .61f, h * .27f)
-                        lineTo(w * .52f, h * .34f)
-                        close()
-                    },
-                    Color(0xFFFF6136),
-                )
-            }
-            Text("×", color = Color.Black, fontSize = 28.sp, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
-            Text(
-                "Welcome to your\nPolion Home!",
-                color = Color.Black,
-                fontSize = 30.sp,
-                lineHeight = 36.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.BottomStart).padding(20.dp),
-            )
-        }
-        Text("•  ●  •", color = Muted, fontSize = 12.sp)
-    }
-    Heading("Your Daily Movers", "STAY ON TOP", "↗   ↙")
-    Movers()
-    Heading("Your Portfolio", "GROWING WEALTH")
-    ModelCard(Modifier.clickable(onClick = portfolio)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text("Main Portfolio ✓", color = White, fontWeight = FontWeight.Bold)
-                Text("$77.52", color = White, fontWeight = FontWeight.Bold)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text("1D", color = Muted, fontSize = 12.sp)
-                Change("+0.99%")
-            }
-        }
-    }
-    Heading("Price Highlights", "LOOKING BACK")
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(coins[1], coins[2], coins[0]).forEach { coin ->
-            ModelCard(Modifier.width(254.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CoinLogo(coin)
-                    Column {
-                        Text(coin.ticker, fontWeight = FontWeight.Bold)
-                        Text(coin.name, color = Muted, fontSize = 12.sp)
-                    }
-                }
-                Text("In the last year", fontSize = 14.sp)
-                Change(if (coin.ticker == "ETH") "−41.01%" else "−12.34%")
-                Text(coin.price, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-    Heading("Portfolio Insights", "DIVE DEEPER", "See all")
-    Decisions()
-    Heading("Upcoming Events", "MARK YOUR CALENDAR")
-    ModelCard {
-        listOf(
-            "4 Nov  Wednesday" to "Ethereum · Community call",
-            "10 Nov  Tuesday" to "Solana · Network update",
-            "18 Nov  Wednesday" to "Bitcoin · Ecosystem event",
-        ).forEach { (day, event) ->
-            Text(day, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            HorizontalDivider(color = Pill)
-            Text(event, fontSize = 14.sp, color = Muted)
-            Spacer(Modifier.height(8.dp))
-        }
-        Capsule("See all")
-    }
-    Heading("Trending Crypto", "DISCOVER WHAT'S HOT")
-    Trending()
-    Heading("What's Moving", "NEW OPPORTUNITIES")
-    ModelCard {
-        coins.take(3).forEach { coin ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CoinLogo(coin)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${coin.ticker}  ${coin.name}", fontWeight = FontWeight.Bold)
-                    Change(coin.change, false)
-                    Text(
-                        "A closer look at today's price movement and the activity across the crypto market.",
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                    )
-                    Text("1 day ago", color = Muted, fontSize = 12.sp)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-    }
-}
-
-@Composable
-private fun Movers() {
-    ModelCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
-            listOf(coins[1], coins[0], coins[2], coins[4]).forEachIndexed { index, coin ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.height(135.dp), contentAlignment = Alignment.BottomCenter) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(coin.change, color = Green, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Box(
-                                Modifier
-                                    .width(
-                                        30.dp,
-                                    ).height(
-                                        (105 - index * 26).dp,
-                                    ).clip(
-                                        RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp),
-                                    ).background(Brush.verticalGradient(listOf(Green, Card))),
-                            )
-                        }
-                    }
-                    CoinLogo(coin, 27)
-                    Text(coin.ticker, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun Trending() {
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(coins[5], coins[3], coins[4], coins[1]).forEach { coin ->
-            ModelCard(Modifier.width(156.dp)) {
+            val open = LocalCoinClick.current
+            ModelCard(Modifier.width(156.dp).clickable { open(coin) }) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     CoinLogo(coin)
                     Text("☆", fontSize = 24.sp)
@@ -713,56 +624,28 @@ private fun Trending() {
 }
 
 @Composable
-private fun MarketsContent(wide: Boolean) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Capsule("Overview")
-        Capsule("Crypto", false)
-    }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(CircleShape)
-            .background(Pill)
-            .padding(9.dp),
-        horizontalArrangement = Arrangement.SpaceAround,
-    ) {
-        listOf("All", "Layer 1", "DeFi", "Stablecoins").forEach { Text(it, fontSize = 12.sp, color = if (it == "All") White else Muted) }
-    }
+private fun MainContent(wide: Boolean) {
+    Heading("Top Coins", "CRYPTO MARKET")
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         coins.take(4).forEach { coin ->
-            ModelCard(Modifier.width(if (wide) 210.dp else 128.dp)) {
+            val open = LocalCoinClick.current
+            ModelCard(Modifier.width(if (wide) 210.dp else 142.dp).clickable { open(coin) }) {
+                CoinLogo(coin)
                 Text(coin.ticker, fontWeight = FontWeight.Bold)
                 Text(coin.price, fontWeight = FontWeight.Bold)
                 Change(coin.change)
-                LineChart(Modifier.fillMaxWidth().height(36.dp), if (coin.change.startsWith("−")) Red else Green, labels = false)
+                LineChart(Modifier.fillMaxWidth().height(38.dp), Green, labels = false)
             }
         }
     }
-    Capsule("✧  Why is Crypto moving?", false)
-    Capsule("Followed assets only", false)
-    Heading("Most Active")
-    CoinList(coins.take(5), true)
+    Heading("Favorites")
+    CoinList(listOf(coins[0], coins[1], coins[3]))
+    Heading("Trending", "DISCOVER WHAT'S HOT")
+    Trending()
     Heading("Top Gainers")
-    CoinList(listOf(coins[1], coins[0], coins[2], coins[4]), true)
+    CoinList(listOf(coins[1], coins[0], coins[2], coins[4]))
     Heading("Top Losers")
-    CoinList(listOf(coins[3], coins[5]), true)
-    Heading("Cryptocurrencies")
-    CoinList(coins, true)
-}
-
-@Composable
-private fun FollowingContent() {
-    Row { Capsule("Crypto", false) }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Capsule("☷  Highest Cap  ⌄", false)
-        Row {
-            Capsule("1H", false)
-            Capsule("1D")
-            Capsule("1W", false)
-        }
-    }
-    CoinList(coins.take(5))
-    Spacer(Modifier.height(180.dp))
+    CoinList(listOf(coins[3], coins[5]))
 }
 
 @Composable
@@ -911,6 +794,7 @@ private fun LineChart(
     tint: Color,
     history: Boolean = false,
     labels: Boolean = true,
+    priceAxis: Boolean = false,
 ) {
     Box(modifier) {
         Canvas(Modifier.fillMaxSize().padding(vertical = if (labels) 20.dp else 0.dp)) {
@@ -990,8 +874,30 @@ private fun LineChart(
             drawPath(path, tint, style = Stroke(1.6.dp.toPx()))
         }
         if (labels) {
-            Text(if (history) "$86.00" else "$77.53", color = Muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd))
-            Text(if (history) "$0.00" else "$76.70", color = Muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd))
+            Text(
+                if (priceAxis) {
+                    "$87,351.93"
+                } else if (history) {
+                    "$86.00"
+                } else {
+                    "$77.53"
+                },
+                color = Muted,
+                fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
+            Text(
+                if (priceAxis) {
+                    "$62,250.78"
+                } else if (history) {
+                    "$0.00"
+                } else {
+                    "$76.70"
+                },
+                color = Muted,
+                fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
         }
     }
 }
@@ -1035,7 +941,7 @@ private fun ModelIcon(
                 drawCircle(tint, w * .3f, Offset(w * .4f, h * .4f), style = Stroke(s))
                 line(.63f, .64f, .95f, .97f)
             }
-            "home" -> {
+            "main" -> {
                 line(.08f, .44f, .5f, .06f)
                 line(.5f, .06f, .92f, .44f)
                 line(.2f, .35f, .2f, .94f)
@@ -1060,25 +966,27 @@ private fun ModelIcon(
                 line(.57f, .05f, .84f, .05f)
                 line(.84f, .05f, .84f, .31f)
             }
-            "portfolio" ->
-                drawPath(
-                    Path().apply {
-                        moveTo(w * .42f, h * .13f)
-                        quadraticTo(w * .5f, -h * .05f, w * .6f, h * .13f)
-                        lineTo(w * .95f, h * .8f)
-                        quadraticTo(
-                            w,
-                            h * .96f,
-                            w * .8f,
-                            h * .96f,
-                        )
-                        lineTo(w * .18f, h * .96f)
-                        quadraticTo(0f, h * .96f, w * .08f, h * .8f)
-                        close()
-                    },
+            "portfolio" -> {
+                drawRoundRect(
                     tint,
+                    Offset(w * .08f, h * .2f),
+                    Size(w * .84f, h * .67f),
+                    androidx.compose.ui.geometry
+                        .CornerRadius(w * .08f),
                     style = Stroke(s),
                 )
+                drawRoundRect(
+                    tint,
+                    Offset(w * .57f, h * .42f),
+                    Size(w * .36f, h * .26f),
+                    androidx.compose.ui.geometry
+                        .CornerRadius(w * .04f),
+                    style = Stroke(s),
+                )
+                drawCircle(tint, w * .025f, Offset(w * .68f, h * .55f))
+                line(.15f, .2f, .71f, .06f)
+                line(.71f, .06f, .83f, .2f)
+            }
             "insights" -> {
                 drawCircle(tint, w * .42f, style = Stroke(s))
                 line(.5f, .08f, .5f, .92f)
@@ -1111,6 +1019,330 @@ private fun ModelIcon(
                 }
                 path.close()
                 drawPath(path, tint, style = Stroke(s))
+            }
+        }
+    }
+}
+
+@Composable
+private fun Metric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    positive: Boolean = false,
+) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, color = Muted, fontSize = 11.sp)
+        Text(value, color = if (positive) Green else White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun CoinDetail(
+    coin: Coin,
+    portfolio: String,
+    add: () -> Unit,
+) {
+    var tab by remember { mutableStateOf("General") }
+    var breakdown by remember { mutableStateOf(true) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        CoinLogo(coin)
+        Text("  ${coin.ticker}", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+    }
+    Text(portfolio, color = Muted, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+    if (breakdown) {
+        Row(Modifier.fillMaxWidth()) {
+            Metric("Owned", "0.0009934", Modifier.weight(1f))
+            Metric("Market Value", "$77.52", Modifier.weight(1f))
+            Metric("Total Gains", "+$7.52", Modifier.weight(1f), true)
+        }
+        Row(Modifier.fillMaxWidth()) {
+            Metric("Total Cost Basis", "$70.00", Modifier.weight(1f))
+            Metric("Unrealized Gain", "+$7.52", Modifier.weight(1f), true)
+            Metric("Realized Gain", "$0.00", Modifier.weight(1f))
+        }
+    }
+    TextButton(onClick = {
+        breakdown = !breakdown
+    }) { Text(if (breakdown) "Hide cost & gains breakdown  ⌃" else "Show cost & gains breakdown  ⌄", color = White) }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        listOf("General", "Transactions", "Alerts", "Order book").forEach { name ->
+            Column(Modifier.clickable { tab = name }.testTag("detail-$name").padding(vertical = 8.dp)) {
+                Text(name, color = if (tab == name) White else Muted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                if (tab == name) {
+                    Box(
+                        Modifier
+                            .padding(top = 8.dp)
+                            .width(70.dp)
+                            .height(2.dp)
+                            .background(White),
+                    )
+                }
+            }
+        }
+    }
+    when (tab) {
+        "General" -> {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(coin.price, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+                Change("+24.41%")
+                Text("Global average · ${coin.ticker}/USD", color = Muted, fontSize = 12.sp)
+            }
+            Ranges(listOf("1H", "1D", "1W", "1M", "3M", "1Y"))
+            LineChart(Modifier.fillMaxWidth().height(220.dp), Green, priceAxis = true)
+        }
+        "Transactions" -> {
+            Row(Modifier.fillMaxWidth()) {
+                Metric("Avg. Buy Price", "$70,466.14", Modifier.weight(1f))
+                Metric("Avg. Sell Price", "—", Modifier.weight(1f))
+                Metric("Transactions", "3", Modifier.weight(1f))
+            }
+            TextButton(onClick = add, modifier = Modifier.testTag("detail-add-transaction")) {
+                Text("＋  New Transaction", color = White, fontWeight = FontWeight.Bold)
+            }
+            listOf(
+                "Deposit" to "4 Sep 2026 · Wallet",
+                "Buy" to "2 Sep 2026 · Manual",
+                "Fee" to "2 Sep 2026 · Manual",
+            ).forEach { (kind, date) ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Capsule(kind, false)
+                    Text(date, color = Muted, fontSize = 12.sp)
+                }
+                ModelCard {
+                    Row(Modifier.fillMaxWidth()) {
+                        Metric(
+                            "From",
+                            if (kind ==
+                                "Deposit"
+                            ) {
+                                "Other wallet"
+                            } else {
+                                "Manual entry"
+                            },
+                            Modifier.weight(1f),
+                        )
+                        ; Metric(
+                            "Amount",
+                            if (kind ==
+                                "Fee"
+                            ) {
+                                "0.000010"
+                            } else {
+                                "0.0009934"
+                            },
+                            Modifier.weight(1f),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth()) {
+                        Metric("To", "My Wallet", Modifier.weight(1f))
+                        Metric("Fee", "$0.84", Modifier.weight(1f))
+                    }
+                    Row(Modifier.fillMaxWidth()) {
+                        Metric("Worth Now", "$77.52", Modifier.weight(1f))
+                        Metric("Worth Then", "$70.00", Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+        "Alerts" -> {
+            var enabled by remember { mutableStateOf(true) }
+            var addAlert by remember { mutableStateOf(false) }
+            TextButton(onClick = { addAlert = true }) { Text("＋  Add New Alert", color = White, fontWeight = FontWeight.Bold) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Significant Price Change", fontWeight = FontWeight.SemiBold)
+                    Text("When ${coin.ticker} moves 5% since your last visit", color = Muted, fontSize = 12.sp)
+                }
+                Switch(enabled, { enabled = it })
+            }
+            Text("${coin.ticker}/USD · Global average", color = Muted, fontSize = 12.sp)
+            if (addAlert) {
+                AlertDialog(onDismissRequest = {
+                    addAlert = false
+                }, title = {
+                    Text(
+                        "New price alert",
+                    )
+                }, text = { Text("Preview: notify when ${coin.ticker} moves by 5%.") }, confirmButton = {
+                    TextButton(onClick = {
+                        addAlert =
+                            false
+                    }) { Text("Done") }
+                })
+            }
+        }
+        else -> {
+            Text("${coin.ticker}/USD · Illustrative order book", color = Muted, fontSize = 12.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Amount")
+                Text("Bid (USD)", color = Green)
+                Text("Ask (USD)", color = Red)
+                Text("Amount")
+            }
+            repeat(8) { n ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (n % 2 ==
+                                0
+                            ) {
+                                Card
+                            } else {
+                                Color.Transparent
+                            },
+                        ).padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("0.0${12 + n}", fontSize = 12.sp)
+                    Text("${78035 - n * 12}.00", color = Green, fontSize = 12.sp)
+                    Text("${78036 + n * 12}.00", color = Red, fontSize = 12.sp)
+                    Text("0.0${18 + n}", fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+private fun Modifier.fillMaxWidth(): Modifier = fillMaxWidth()
+
+@Composable
+private fun SettingsContent() {
+    var automatic by remember { mutableStateOf(true) }
+    var wifi by remember { mutableStateOf(false) }
+    Heading("Sync settings")
+    ModelCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Automatic refresh", fontWeight = FontWeight.Bold)
+                Text("Prices and wallet history", fontSize = 12.sp, color = Muted)
+            }
+            Switch(automatic, {
+                automatic =
+                    it
+            }, modifier = Modifier.testTag("automatic-refresh"))
+        }
+        HorizontalDivider(color = Pill)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Wi-Fi only in background", fontWeight = FontWeight.Bold)
+                Text("Manual refresh can use your connection", fontSize = 12.sp, color = Muted)
+            }
+            Switch(wifi, {
+                wifi =
+                    it
+            })
+        }
+    }
+    Text(
+        "Pull down to refresh all portfolios. Only missing data since the last successful refresh is requested, with a small overlap.",
+        color = Muted,
+        fontSize = 13.sp,
+    )
+    Text("These controls demonstrate the design only.", color = Muted, fontSize = 12.sp)
+}
+
+@Composable
+private fun AccountsContent() {
+    Heading("Your accounts")
+    ModelCard {
+        Text("My Wallet", fontWeight = FontWeight.Bold)
+        Text("Bitcoin · Main Portfolio", color = Muted)
+        Text("Last refreshed just now", color = Green, fontSize = 12.sp)
+    }
+    Capsule("＋ Connect wallet", false)
+}
+
+@Composable
+private fun TransactionForm(
+    initial: Coin,
+    direct: Boolean,
+    close: () -> Unit,
+) {
+    var method by remember { mutableStateOf(direct) }
+    var selected by remember { mutableStateOf(initial) }
+    var type by remember { mutableStateOf("Buy") }
+    var amount by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("78157.96") }
+    var fee by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf("1 Nov 2026, 21:00") }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = close,
+        properties =
+            androidx.compose.ui.window
+                .DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(Modifier.widthIn(max = 540.dp).fillMaxWidth().fillMaxHeight(.94f), color = Color.Black, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(18.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (method) selected.name else "Add to your portfolio",
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                    )
+                    TextButton(onClick = close) { Text("×", color = White, fontSize = 28.sp) }
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    if (!method) {
+                        Text(
+                            "How would you like to add transactions?",
+                            fontSize = 27.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(vertical = 12.dp),
+                        )
+                        ModelCard {
+                            Text("Connect Wallet", fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                            Text("Track a public Bitcoin address or wallet", color = Muted)
+                        }
+                        ModelCard(Modifier.clickable { method = true }.testTag("choose-manual")) {
+                            Text("Add Manual Transaction", fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                            Text("Enter a buy, sell, or transfer", color = Muted)
+                        }
+                        ModelCard {
+                            Text("Import CSV File", fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                            Text("Import transactions from a file", color = Muted)
+                        }
+                        Text("Connection and import options are visual placeholders.", fontSize = 12.sp, color = Muted)
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            coins.take(3).forEach { c ->
+                                Capsule(
+                                    c.ticker,
+                                    c == selected,
+                                ) { selected = c }
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("Buy", "Sell", "Transfer").forEach { t ->
+                                Capsule(
+                                    t,
+                                    type == t,
+                                ) { type = t }
+                            }
+                        }
+                        Text("Exchange\nGlobal average", fontSize = 14.sp)
+                        HorizontalDivider(color = Pill)
+                        Text("Trading pair\n${selected.ticker}/USD", fontSize = 14.sp)
+                        OutlinedTextField(date, { date = it }, label = { Text("Date & time") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(
+                            price,
+                            { price = it },
+                            label = { Text("Price per coin (USD)") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(amount, { amount = it }, label = { Text("Amount ($type)") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(fee, { fee = it }, label = { Text("Transaction fee (USD)") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(notes, { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                if (method) {
+                    Button(onClick = close, modifier = Modifier.fillMaxWidth().testTag("preview-save-transaction")) {
+                        Text("Done · preview only", color = Color.Black)
+                    }
+                }
             }
         }
     }

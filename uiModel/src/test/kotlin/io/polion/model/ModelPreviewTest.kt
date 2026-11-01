@@ -4,52 +4,76 @@ import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import org.jetbrains.skia.Image
 import java.io.File
 import kotlin.test.Test
 
-/** Exports reviewable renders of the model; no application data is opened. */
 @OptIn(ExperimentalTestApi::class)
 class ModelPreviewTest {
     @Test
-    fun renderPhoneDesktopAndFullPages() {
+    fun normalViewportsAndDetailFlows() {
         val output = File("build/previews").apply { mkdirs() }
-        ModelPage.entries.forEach { page ->
-            runDesktopComposeUiTest(width = 420, height = 900) {
-                setContent { PortfolioModel(page) }
-                onNodeWithTag("model-${page.name}").assertIsDisplayed()
-                val bytes = Image.makeFromBitmap(onRoot().captureToImage().asSkiaBitmap()).encodeToData()!!.bytes
-                File(output, "${page.name.lowercase()}-phone.png").writeBytes(bytes)
-                onNodeWithTag("model-FOLLOWING").performClick()
-                onNodeWithText("Highest Cap", substring = true).assertIsDisplayed()
+        output.listFiles()?.filter { it.extension == "png" }?.forEach { it.delete() }
+        for ((width, height) in listOf(390 to 844, 360 to 800, 1440 to 900)) {
+            for (page in ModelPage.entries) {
+                runDesktopComposeUiTest(width = width, height = height) {
+                    fun capture(name: String) {
+                        File(
+                            output,
+                            "$name-${width}x$height.png",
+                        ).writeBytes(
+                            Image.makeFromBitmap(onAllNodes(isRoot()).onLast().captureToImage().asSkiaBitmap()).encodeToData()!!.bytes,
+                        )
+                    }
+                    setContent { PortfolioModel(page) }
+                    onNodeWithTag("model-${page.name}").assertIsDisplayed()
+                    capture(page.name.lowercase())
+                    if (page == ModelPage.MAIN) {
+                        onNodeWithText("Your Portfolio").assertDoesNotExist()
+                        onNodeWithTag("model-content").performScrollToNode(hasText("Top Losers"))
+                        capture("main-scrolled")
+                    }
+                    if (page == ModelPage.INSIGHTS) {
+                        onNodeWithTag("model-content").performScrollToNode(hasText("Gains Reporting"))
+                        capture("insights-scrolled")
+                    }
+                    if (page == ModelPage.PORTFOLIO) {
+                        onNodeWithTag("coin-BTC").performClick()
+                        onNodeWithText("Owned").assertIsDisplayed()
+                        capture("coin-general")
+                        for (tab in listOf("Transactions", "Alerts", "Order book")) {
+                            onNodeWithTag("detail-$tab").performScrollTo().performClick()
+                            capture("coin-${tab.lowercase().replace(' ', '-')}")
+                        }
+                        onNodeWithTag("model-back").performClick()
+                        onNodeWithTag("add-transaction").performClick()
+                        capture("add-method")
+                        onNodeWithTag("choose-manual").performClick()
+                        capture("manual-transaction")
+                        onNodeWithTag("preview-save-transaction").performClick()
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Settings").performClick()
+                        onNodeWithTag("automatic-refresh").assertIsDisplayed().performClick()
+                        capture("settings")
+                        onNodeWithTag("model-back").performClick()
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Accounts").performClick()
+                        onNodeWithText("Your accounts").assertIsDisplayed()
+                    }
+                    onNodeWithTag("model-MAIN").performClick()
+                    onNodeWithTag("model-content").performScrollToNode(hasText("Top Coins"))
+                    onNodeWithText("Top Coins").assertIsDisplayed()
+                }
             }
-        }
-        listOf(ModelPage.HOME to 3500, ModelPage.MARKETS to 2600, ModelPage.INSIGHTS to 2650).forEach { (page, height) ->
-            runDesktopComposeUiTest(width = 420, height = height) {
-                setContent { PortfolioModel(page) }
-                File(output, "${page.name.lowercase()}-full.png").writeBytes(
-                    Image.makeFromBitmap(onRoot().captureToImage().asSkiaBitmap()).encodeToData()!!.bytes,
-                )
-            }
-        }
-        runDesktopComposeUiTest(width = 1280, height = 900) {
-            setContent { PortfolioModel() }
-            onNodeWithTag("model-PORTFOLIO").assertIsDisplayed()
-            File(output, "portfolio-desktop.png").writeBytes(
-                Image.makeFromBitmap(onRoot().captureToImage().asSkiaBitmap()).encodeToData()!!.bytes,
-            )
-        }
-        runDesktopComposeUiTest(width = 360, height = 800) {
-            setContent { PortfolioModel() }
-            onNodeWithTag("model-PORTFOLIO").assertIsDisplayed()
-            File(output, "portfolio-small-phone.png").writeBytes(
-                Image.makeFromBitmap(onRoot().captureToImage().asSkiaBitmap()).encodeToData()!!.bytes,
-            )
         }
     }
 }

@@ -1,28 +1,37 @@
 # Polion UI model
 
-A standalone Kotlin Compose desktop design model based on the supplied `UI_TO_COPY` screenshots. It uses a black canvas, charcoal cards, bright change indicators, outline navigation, and crypto-only sample content.
+Standalone Kotlin Compose model inspired by the supplied reference screenshots. Black backgrounds, charcoal cards, outline icons, and crypto-only illustrative content.
 
-The five views are **Home**, **Markets**, **Portfolio**, **Insights**, and **Following**. Navigation, scrolling, and range selection are available for reviewing the design. All prices, balances, events, changes, and analytics are fixed illustrative fixtures. Range selection changes the selected chip, not the chart data. Other controls are visual placeholders.
+## Navigation and preview interactions
 
-This module has no dependency on Polion's financial core or application hosts and does not open a portfolio database, make network requests, or modify the installed app. Coin marks, charts, and decorative shapes are drawn in Compose.
+- **Main:** top coins, favorites, trending, top gainers, and top losers. No portfolio summary or news.
+- **Portfolio:** portfolio selector, balance, chart, holdings, and floating wallet/add controls. Coin rows open details.
+- **Insights:** portfolio history, performance, diversity, gains, locations, and fees.
+- **Coin details:** cost/gains breakdown and General, Transactions, Alerts, and Order book tabs. No analysis/discussion tab or paid badges.
+- **Add:** the Portfolio + opens method selection (wallet, manual entry, CSV placeholders). Manual entry opens a buy/sell/transfer form. New Transaction inside a coin opens the form directly.
+- **Menu:** Accounts and Settings. Settings demonstrate Automatic refresh and Wi-Fi-only background refresh.
 
-## Open the model
+All financial figures, charts, transactions, alerts and order-book rows are fixed samples. Navigation, scrolling, tabs, breakdown visibility, text fields, switches and range-chip selection work locally for reviewing the design. The form's Done action closes the preview without saving. Connection/import controls are placeholders.
 
-From the repository root, with JDK 25:
+Pull down at the top of a page or use the header refresh button to simulate refresh progress. No database or provider requests occur. The intended future backend behavior is incremental refresh across all portfolios with a small overlap; that behavior is not implemented by this design module.
+
+## Run
+
+From the repository root with JDK 25:
 
 ```sh
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk ./gradlew :uiModel:run
 ```
 
-The window starts at a phone-like size, on the Portfolio view. Resize it to explore the desktop layout; at 850 dp and above, navigation moves into a sidebar. Narrow layouts retain the reference's bottom navigation. Long pages scroll, and horizontal card strips scroll independently.
+The window opens on Portfolio. Resize to review phone and desktop layouts; at 850 dp navigation moves to a sidebar. Long pages scroll inside the viewport.
 
-## Render previews
+## Render and verify
 
 ```sh
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk SKIKO_RENDER_API=SOFTWARE \
   xvfb-run -a ./gradlew :uiModel:test
 ```
 
-Renders are written to `uiModel/build/previews/`: all five phone screens, full-page Home/Markets/Insights, and the desktop Portfolio. `ModelPreviewTest` also verifies preview navigation. Use `:uiModel:ktlintCheck` for style checks.
+PNG previews are generated in `uiModel/build/previews/` at **390×844**, **360×800**, and **1440×900**. Lower sections have separate `scrolled` captures at the same viewport sizes. The harness removes obsolete PNGs from that output directory when regenerating previews. It checks navigation, detail tabs, transaction form and settings. Use `:uiModel:ktlintCheck` for formatting checks.
 
-Screenshots used as visual references remain in the user-supplied `UI_TO_COPY` directory. All six images were inspected in sequential tiles, including the full 9,226-pixel Home reference. Stock, fund, index and commodity sections are omitted or replaced with crypto content. Paid-tier badges are omitted from this model.
+This module is independent of the financial core and application hosts. It uses no real wallet data or network integration. Coin marks and charts are drawn in Compose. Brokerage/eToro sections and stock/fund/index content are excluded.
