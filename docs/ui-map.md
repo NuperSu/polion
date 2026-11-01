@@ -1,106 +1,13 @@
-# UI inventory and transition map
+# UI map
 
-This is the Phase 1 presentation specification for the [product contract](product-contract.md). Current behavior and proposed destinations are listed separately. Screenshot mapping uses the roadmap's textual descriptions; original screenshot image files were not available for this audit.
+Polion uses **Main, Portfolio, Insights** as its shared compact bottom navigation and desktop sidebar. The menu opens Accounts, Settings and Advanced tools. The detailed current screen inventory, preserved action checklist, recreation state and refresh behavior are in [Frontend and refresh behavior](frontend-rewrite.md).
 
-## Screen inventory
+- Main presents saved market observations and favorites. Unsupported global discovery services use labeled placeholders.
+- Portfolio presents scoped holdings and historical portfolio value, with quote selection and a floating add action.
+- Coin details provide General, Transactions, Alerts and Order book tabs; only supported data and actions are interactive.
+- Insights presents allocation, accounting, analytics and reporting.
+- Accounts provides public Bitcoin source management, history refresh, discovery, scan/UTXO review and archive restoration.
+- Settings provides appearance, refresh scheduling, price consent, privacy lock, rules, exports and encrypted backups.
+- Advanced tools provides the full searchable ledger and management destinations.
 
-| Current surface | Existing content/actions to preserve | Proposed destination |
-| --- | --- | --- |
-| Overview | Portfolio picker, priced value, history chart, assets, health, recent activity, sync and add actions | Home summary plus dedicated Portfolio |
-| Activity | Search, account/kind filters, pagination, manual entry, activity detail | Activity |
-| Accounts | Owners/groups/accounts, public addresses, descriptor/xpub wallets, derived addresses, discovery, archive/restore, portfolio configuration | Sources; portfolio configuration remains reachable |
-| Reports | Portfolio scope, analytics, FIFO/treatments, ordering verification, reconciliation, CSV | Portfolio analytics and Reports reachable through More |
-| Settings | Quote currency, manual prices, consent/provider endpoint, background refresh, lock, backup/restore, CSV and local data controls | More → Settings |
-| Asset dialog | Quantity, account breakdown, quote, observation detail and on-demand FIFO lots and disposals for the current portfolio scope | Asset detail, incrementally expanded using implemented projections |
-| Activity dialogs | Movements/provenance, correction, treatment and reconciliation workflows | Activity detail and contextual panels |
-| Source dialogs | Address/account form, wallet import, consent, refresh/recovery and UTXO review | Source wizard and source detail |
-
-No extraction may drop rule management, accepted transfer/conflict review, archive restoration, detailed UTXO review, accounting-order verification, manual quote entry, app lock or encrypted restore simply because they are absent from a reference screenshot.
-
-## Responsive navigation
-
-Account management is reachable from **Manage accounts** on Home and Portfolio, **More → Accounts** on compact layouts, and **Accounts** in the desktop rail. This list covers every portfolio. **Archive account** pauses its public queries and removes the account and descendants from active portfolio scopes while retaining saved addresses, activity and accounting decisions. **Archived accounts → Restore account** restores tracking according to the saved account and target settings. Archive and restore actions are unavailable during a refresh or another saved-data operation.
-
-During Phase 2, preserve the five existing destinations: Overview, Activity, Accounts, Reports and Settings. Extract their state and events before changing information architecture. Phase 3 can introduce the adaptive shell using the mapping above.
-
-Target compact navigation:
-
-| Item | Purpose |
-| --- | --- |
-| Home | Summary, source attention, recent activity and supported shortcuts |
-| Portfolio | Portfolio/quote scope, priced value, assets, history and allocation |
-| Add | Action menu, not a persistent page: supported public address, descriptor/xpub and manual-entry workflows |
-| Activity | Searchable ledger and detail |
-| More | Sources, Reports, Settings and other implemented tools |
-
-Wide layouts use a left rail with Home, Portfolio, Activity, Accounts, Reports and Settings when space permits. Add remains an action. Portfolio customization saves the order and visibility of allocation, assets, data health and recent activity; the portfolio value remains visible. Asset/activity/source detail can occupy a contextual second pane. Keyboard focus, scrolling and dismiss/back behavior must work at every width. Avoid resizing a phone card into an otherwise empty desktop screen.
-
-Proposed Home watchlists, alerts, saved widget layouts and assistant cards remain absent until their underlying workflows exist. Unsupported DeFi, Positions and NFT sections must be hidden or clearly informational. The active portfolio and quote currency must remain visible wherever they affect figures.
-
-## Description-derived screenshot mapping
-
-| Reference behavior | Polion destination | Implementation condition |
-| --- | --- | --- |
-| Welcome/goals conversation | Optional onboarding presentation over deterministic wizard | Goals affect display preferences only; no AI/sign-up/network requirement |
-| Wallet/chain/exchange tiles | Source category and capability picker | Only implemented connections are actionable; brand is not a connector |
-| Successful connection card | Source detail and wizard progress | Separate validated input, provider connectivity, accepted sync and accounting coverage |
-| Asset/history/P&L checklist | Independent evidence/status rows | No automatic all-green checklist after a refresh |
-| Portfolio preview | Same projections used by Portfolio | Clearly tagged demo data; missing prices and basis visible |
-| Suggested portfolio questions | Later deterministic insight/query entry points | Only expose questions backed by implemented answers |
-| Alert opt-in | Later local-alert setup | Permission and best-effort scheduler limits explicit |
-| Daily portfolio screen | Portfolio with original hero/chart/rows | Historical value and performance remain separately named |
-
-## Workflow and state transitions
-
-Planned wizard:
-
-```text
-Welcome → optional preferences → supported source category → public input
-       → validation → provider/privacy consent → locally saved source
-       → optional sync monitor → honest preview → portfolio
-```
-
-Back, skip, resume and exit-to-portfolio must be possible. The first launch may finish without any source, account, model, subscription or network request. Persist resumable step/input state when implementing Phase 5; do not persist secrets in ordinary wizard state.
-
-Source operation:
-
-```text
-Saved → ready to sync → discovering/fetching → validating → accepted
-                         ↘ offline / rate limited / failed
-                         ↘ interrupted → retry/refetch and validate
-                         ↘ recovery required → explicit recovery action
-```
-
-Input errors return to the field with a reason. Consent refusal leaves a saved/offline-capable source. Provider limits show retry guidance when known. Failure/interruption retain previously accepted ledger data; accepted state changes only after validation and atomic commit. Recovery must preserve accepted data until its replacement passes validation. Current refresh/recovery workflows remain available through extraction; per-step durable wizard state is planned.
-
-Valuation and accounting do not advance automatically with the operation:
-
-```text
-Accepted source state → holdings projection
-                     → quotes: priced/unpriced + fresh/stale + provenance
-                     → accounting: available/partial/unknown/provisional + reasons
-```
-
-Changing the portfolio updates scope-dependent figures together. Filtering Activity changes its result page, not the accounting ownership policy or historical chart definition. Changing a method in a future accounting strategy recalculates derived reports, never raw source evidence.
-
-Activity can be filtered by status and network as well as account, kind and search. Network choices come from recorded sources across all accounts; selecting one matches the current activity's raw source evidence. Manual entries without network evidence appear under All networks. Filters apply before pagination and to scoped CSV exports when requested; changing them returns to the first page.
-
-The historical value chart offers 1D, 1W, 1M, 3M, 1Y and ALL. The 1D view samples hourly; longer ranges use progressively wider intervals. ALL begins with the first confirmed activity in the selected account scope; missing or stale historical prices leave gaps. Previous and Next inspect sampled UTC timestamps and explain whether a price is missing or stale. A total is shown only when every holding at that point has a fresh price. The chart shows portfolio value, not a return measure.
-
-The asset list saves its value/name sort and optional empty-position filter. Hiding empty positions changes only the list; it does not delete balances or change portfolio totals. Nonzero unpriced and negative positions remain visible.
-
-Asset detail links to the activity explorer filtered to that asset and the current portfolio. The link clears other activity filters so they do not hide relevant movements; the asset filter remains visible and can be cleared. Results are shown only after the requested filter has loaded.
-
-When an asset uses a manual price, its detail offers a switch back to provider prices for that asset and quote currency. The action ends all active manual overrides from the current time and retains their historical observations.
-
-Each classified FIFO disposal links to its effective activity within the portfolio scope. Activity details show movements, original quantities and source identifiers, and provide the existing correction workflow.
-
-For sourced activity, saved observation details can be loaded on demand. They show record identity, provider/source, retrieval time and revision checksum; they do not assert which saved revision the decoder used. The ten most recent observations per record are shown.
-
-Accounts exposes scan details for each Bitcoin source and its derived addresses. The view shows saved per-address fetch job state, page count and provider coverage from the latest scan; full-scan acceptance is separate. Saved jobs are replaced when a new scan begins and are not a long-term sync audit.
-
-## Presentation contract and acceptance
-
-Extract immutable screen states and typed events for navigation, dialogs, filters, selection and operations. Model loading, empty, offline, partial, stale, unpriced, limited, denied, error and available states explicitly. Keep asynchronous work in existing host/use-case owners; recomposition must not trigger repeated financial replay or network requests.
-
-Phase 1 is ready for implementation when each advertised action maps to an implemented application/platform operation, future features are clearly labeled, current actions have reachable target destinations and status language satisfies the product contract. This document does not establish Phase 2/3 tests or new runtime behavior. Subsequent extraction requires behavior tests; design work requires screenshot/semantics checks, large text, compact landscape, keyboard and accessibility validation.
+Financial presentation follows the [product contract](product-contract.md): saved evidence, partial coverage and unknown basis remain distinct from provider success. See [validation](validation.md) for executed responsive, platform and workflow checks.

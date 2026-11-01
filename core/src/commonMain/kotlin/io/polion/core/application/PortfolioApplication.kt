@@ -122,6 +122,20 @@ data class AssetValuation(
     val price: PriceObservation?,
 )
 
+/** A saved market quote without an assertion of ownership or quantity. */
+data class MarketCoin(
+    val asset: AssetId,
+    val metadata: AssetMetadata?,
+    val priceStatus: PriceStatus,
+    val price: PriceObservation,
+)
+
+data class MarketPricePoint(
+    val atMillis: Long,
+    val priceStatus: PriceStatus,
+    val price: PriceObservation?,
+)
+
 data class HistoryPoint(
     val atMillis: Long,
     val valuations: List<AssetValuation>,
@@ -222,6 +236,7 @@ data class PortfolioSnapshot(
     val sourceEndpoint: String,
     val sourceConsent: Boolean,
     val activityNetworks: List<String> = emptyList(),
+    val marketCoins: List<MarketCoin> = emptyList(),
 )
 
 /** Shared persisted workflows. A source connector is required before coverage can be complete. */
@@ -334,6 +349,10 @@ class PortfolioApplication(
             } else {
                 emptyList()
             },
+            market.savedPricedAssets(currency, at, at).mapNotNull { asset ->
+                val result = market.lookup(asset, currency, at, at, pricePolicy(current = true))
+                result.observation?.let { MarketCoin(asset, market.metadataAt(asset, at), result.status, it) }
+            },
         )
     }
 
@@ -427,6 +446,19 @@ class PortfolioApplication(
             portfolioCurrency(portfolio),
             now(),
         )
+    }
+
+    /** Saved per-unit observations; missing points stay missing and carry no holdings or returns. */
+    fun priceSeries(
+        asset: AssetId,
+        quote: AssetId,
+        times: List<Long>,
+    ): List<MarketPricePoint> {
+        val knownAt = now()
+        return times.map { at ->
+            val result = market.lookup(asset, quote, at, knownAt, pricePolicy(current = at >= knownAt - 86_400_000L))
+            MarketPricePoint(at, result.status, result.observation)
+        }
     }
 
     fun historySeries(

@@ -25,20 +25,22 @@ import kotlin.test.assertTrue
 class AdaptiveAppearanceTest {
     @Test
     fun compactAndRailDestinationsPreserveAllWorkflows() {
-        assertEquals(listOf(Page.HOME, Page.OVERVIEW, Page.ACTIVITY, Page.MORE), compactDestinations)
-        assertEquals(Page.MORE, compactDestination(Page.ACCOUNTS))
-        assertEquals(Page.MORE, compactDestination(Page.REPORTS))
-        assertEquals(Page.MORE, compactDestination(Page.SETTINGS))
+        assertEquals(listOf(Page.HOME, Page.OVERVIEW, Page.REPORTS), compactDestinations)
+        assertEquals(Page.OVERVIEW, compactDestination(Page.ACCOUNTS))
+        assertEquals(Page.REPORTS, compactDestination(Page.REPORTS))
+        assertEquals(Page.OVERVIEW, compactDestination(Page.SETTINGS))
         assertEquals(Page.OVERVIEW, compactDestination(Page.OVERVIEW))
-        assertEquals(Page.entries.toSet() - Page.MORE, railDestinations.toSet())
+        assertEquals(compactDestinations, railDestinations)
         assertFalse(ProductPresentation(page = Page.HOME).showsHistory)
         assertTrue(ProductPresentation(page = Page.OVERVIEW).showsHistory)
         assertEquals(ProductDialog.ADD, ProductDialog.fromKey("add"))
     }
 
     @Test
-    fun appearanceKeysFallbackToSystemAndPaletteChangesAtRuntime() {
-        assertEquals(AppearanceTheme.SYSTEM, AppearanceTheme.fromKey("unknown"))
+    fun appearanceKeysDefaultToDarkAndPaletteChangesAtRuntime() {
+        assertEquals(AppearanceTheme.DARK, AppearanceTheme.fromKey("unknown"))
+        assertEquals(AppearanceTheme.SYSTEM, AppearanceTheme.fromKey("system"))
+        assertEquals(AppearanceTheme.LIGHT, AppearanceTheme.fromKey("light"))
         runDesktopComposeUiTest(width = 100, height = 100) {
             var appearance by mutableStateOf(AppearanceTheme.LIGHT)
             setContent {

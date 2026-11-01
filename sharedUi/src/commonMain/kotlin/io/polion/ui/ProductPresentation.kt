@@ -16,13 +16,13 @@ internal enum class Page(
     val label: String,
     val glyph: String,
 ) {
-    HOME("Home", "⌂"),
+    HOME("Main", "⌂"),
     OVERVIEW("Portfolio", "◈"),
     ACTIVITY("Activity", "⇄"),
     ACCOUNTS("Accounts", "▣"),
-    REPORTS("Reports", "◷"),
+    REPORTS("Insights", "◷"),
     SETTINGS("Settings", "⚙"),
-    MORE("More", "⋯"),
+    MORE("Advanced tools", "⋯"),
 }
 
 internal enum class ProductDialog(
@@ -77,6 +77,7 @@ internal data class ProductPresentation(
     val addressWallet: TrackingTarget? = null,
     val removeAccount: Account? = null,
     val selectedAsset: AssetValuation? = null,
+    val detailAsset: AssetId? = null,
 ) {
     fun requestedFilter(): ActivityFilter =
         if (page == Page.ACTIVITY) {
@@ -92,7 +93,7 @@ internal data class ProductPresentation(
                 portfolio = selectedPortfolio,
             )
         } else {
-            ActivityFilter(portfolio = selectedPortfolio)
+            ActivityFilter(portfolio = if (page == Page.HOME) null else selectedPortfolio)
         }
 
     val showsHistory: Boolean get() = page == Page.OVERVIEW || page == Page.REPORTS
@@ -185,6 +186,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
                 selectedAccount = null,
                 offset = 0,
                 selectedAsset = null,
+                detailAsset = null,
             )
         ProductEvent.ClearActivityAsset -> copy(activityAsset = null, offset = 0)
         is ProductEvent.Portfolio ->

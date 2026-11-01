@@ -32,11 +32,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -46,8 +46,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,6 +58,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,8 +81,6 @@ import io.polion.core.application.AssetAllocation
 import io.polion.core.application.AssetListPreference
 import io.polion.core.application.AssetSort
 import io.polion.core.application.AssetValuation
-import io.polion.core.application.DashboardWidget
-import io.polion.core.application.DashboardWidgetPreference
 import io.polion.core.application.HistoryPoint
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
@@ -203,6 +204,7 @@ private fun OnboardingProduct(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Product(
     app: PortfolioApplication,
@@ -216,16 +218,22 @@ private fun Product(
     onLocalDataChanged: () -> Unit,
 ) {
     val presenter = rememberProductPresenter(app, host)
-    var widgets by remember(app) { mutableStateOf(app.dashboardWidgets()) }
+    var manualAsset by remember { mutableStateOf<AssetId?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showRefreshDetails by remember { mutableStateOf(false) }
+    var preferences by remember(host) { mutableStateOf(RefreshPreferences()) }
+    val preferenceRevision by host.dataRevision.collectAsState()
+    LaunchedEffect(app, host, preferenceRevision) {
+        preferences = withContext(host.dispatcher) { host.refreshPreferences() }
+    }
+    var refreshDetails by remember { mutableStateOf<String?>(null) }
     var assetPreference by remember(app) { mutableStateOf(app.assetListPreference()) }
-    var widgetDraft by remember(app) { mutableStateOf<List<DashboardWidgetPreference>?>(null) }
     var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
     val snapshot = presenter.state.snapshot
     val snapshotFilter = presenter.state.snapshotFilter
     var revision by presenter.field({ it.revision }) { presenter.update { copy(revision = it) } }
     val dashboardRevision by host.dataRevision.collectAsState()
     LaunchedEffect(app, dashboardRevision, revision) {
-        widgets = withContext(host.dispatcher) { app.dashboardWidgets() }
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
     }
     LaunchedEffect(revision) {
@@ -245,7 +253,14 @@ private fun Product(
     var addressWallet by presenter.field({ it.addressWallet }) { presenter.update { copy(addressWallet = it) } }
     var sourceScanTarget by remember { mutableStateOf<io.polion.core.ownership.TrackingTarget?>(null) }
     var removeAccount by presenter.field({ it.removeAccount }) { presenter.update { copy(removeAccount = it) } }
-    var selectedAsset by presenter.field({ it.selectedAsset }) { presenter.update { copy(selectedAsset = it) } }
+    var selectedAsset by presenter.field({ state ->
+        state.snapshot?.valuations?.find { it.asset == state.detailAsset }
+            ?: state.snapshot
+                ?.marketCoins
+                ?.find { it.asset == state.detailAsset }
+                ?.detailValuation()
+            ?: state.selectedAsset
+    }) { asset -> presenter.update { copy(selectedAsset = asset, detailAsset = asset?.asset) } }
     val chart = presenter.state.chart
     var period by presenter.field({ it.period }) { presenter.dispatch(ProductEvent.Period(it)) }
     var dialog by presenter.field({ it.dialog?.key }) { presenter.dispatch(ProductEvent.Dialog(ProductDialog.fromKey(it))) }
@@ -265,9 +280,78 @@ private fun Product(
     val settingsScroll = rememberLazyListState()
     val hostRevision by host.dataRevision.collectAsState()
     val syncStatus by host.syncStatus.collectAsState()
+    val pricePhase by host.priceRefreshStatus.collectAsState()
+    var notifiedPriceResult by remember { mutableStateOf<String?>(null) }
+    var priceRequested by remember { mutableStateOf(false) }
+    var observedPriceWork by remember { mutableStateOf(false) }
+    LaunchedEffect(pricePhase) {
+        if (pricePhase != PriceRefreshPhase.IDLE) observedPriceWork = true
+        if (pricePhase == PriceRefreshPhase.IDLE && observedPriceWork) {
+            observedPriceWork = false
+            priceRequested = false
+            val result = withContext(host.dispatcher) { app.automaticPriceStatus() }
+            refreshDetails = result ?: "Price refresh finished. Saved values remain available."
+            if (result != notifiedPriceResult || result == null) {
+                presenter.notify(
+                    if (result?.startsWith("Last refresh succeeded") ==
+                        true
+                    ) {
+                        "Prices refreshed"
+                    } else {
+                        "Price refresh finished · see refresh details"
+                    },
+                )
+                notifiedPriceResult = result
+            }
+        }
+    }
+
+    LaunchedEffect(preferenceRevision) {
+        if (priceRequested && pricePhase != PriceRefreshPhase.IDLE) {
+            val result = withContext(host.dispatcher) { app.automaticPriceStatus() }
+            if (result != null &&
+                result != notifiedPriceResult &&
+                (result.startsWith("Some price requests failed") || result.contains("rate limiting"))
+            ) {
+                refreshDetails = result
+                notifiedPriceResult = result
+                presenter.notify("Price refresh delayed · saved prices retained. See refresh details.")
+            }
+        }
+    }
+
+    fun refreshPrices() {
+        if (priceRequested || pricePhase != PriceRefreshPhase.IDLE) return
+        val allowedCurrencies = app.automaticPriceCurrencies().map { it.value }.toSet()
+        val missingCurrencyConsent =
+            snapshot?.ownership?.portfolios.orEmpty().any {
+                it.valuationCurrency in setOf("USD", "EUR", "GBP") && it.valuationCurrency !in allowedCurrencies
+            }
+        if (!app.automaticPriceConsent() || missingCurrencyConsent) {
+            if (missingCurrencyConsent) presenter.notify("Allow other portfolio currencies in price setup to refresh all portfolios.")
+            selectedAsset = null
+            dialog = "price"
+            return
+        }
+        priceRequested = true
+        notifiedPriceResult = null
+        host.refreshAutomaticPrices { result ->
+            refreshDetails = result
+            if (host.priceRefreshStatus.value == PriceRefreshPhase.IDLE && !result.startsWith("Price refresh queued")) {
+                priceRequested = false
+                presenter.notify(result)
+            }
+        }
+    }
     val snackbar = remember { SnackbarHostState() }
     var snackbarHeight by remember { mutableIntStateOf(0) }
-    val snackbarInset = with(LocalDensity.current) { snackbarHeight.toDp() }
+    val snackbarInset =
+        with(LocalDensity.current) { snackbarHeight.toDp() } +
+            if (snackbarHeight > 0) {
+                if (page == Page.OVERVIEW) 88.dp else 16.dp
+            } else {
+                0.dp
+            }
 
     fun execute(
         success: String = "Saved on this device",
@@ -284,7 +368,10 @@ private fun Product(
     }
     if (dialog == "add") {
         SupportedSourceDialog(
-            onSelect = { choice -> dialog = choice.workflow.productDialog().key },
+            onSelect = { choice ->
+                manualAsset = null
+                dialog = choice.workflow.productDialog().key
+            },
             onDismiss = { dialog = null },
         )
     }
@@ -304,6 +391,78 @@ private fun Product(
                         Modifier.testTag("status-message").onSizeChanged { snackbarHeight = it.height },
                     )
                 },
+                topBar = {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (page !in compactDestinations) {
+                            TextButton(
+                                onClick = { page = Page.OVERVIEW },
+                                modifier =
+                                    Modifier.testTag("screen-back").semantics {
+                                        contentDescription =
+                                            "Back to portfolio"
+                                    },
+                            ) { Text("‹") }
+                        }
+                        Text(page.label, modifier = Modifier.weight(1f), fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                        TextButton(
+                            onClick = ::refreshPrices,
+                            enabled = pricePhase == PriceRefreshPhase.IDLE,
+                            modifier = Modifier.semantics { contentDescription = "Refresh prices" },
+                        ) {
+                            Text(
+                                if (pricePhase ==
+                                    PriceRefreshPhase.QUEUED
+                                ) {
+                                    "Queued"
+                                } else if (pricePhase ==
+                                    PriceRefreshPhase.RUNNING
+                                ) {
+                                    "Refreshing…"
+                                } else {
+                                    "↻"
+                                },
+                            )
+                        }
+                        Box {
+                            TextButton(
+                                onClick = { menuOpen = true },
+                                modifier =
+                                    Modifier.testTag("workspace-menu").semantics {
+                                        contentDescription =
+                                            "Open menu"
+                                    },
+                            ) {
+                                RevisedIcon("menu", Modifier.size(23.dp))
+                            }
+                            DropdownMenu(menuOpen, { menuOpen = false }) {
+                                listOf(Page.ACCOUNTS, Page.SETTINGS, Page.MORE).forEach { destination ->
+                                    DropdownMenuItem(text = { Text(destination.label) }, onClick = {
+                                        menuOpen = false
+                                        page = destination
+                                    })
+                                }
+                                DropdownMenuItem(text = { Text("Refresh details") }, onClick = {
+                                    menuOpen = false
+                                    showRefreshDetails = true
+                                    refreshDetails =
+                                        app.automaticPriceStatus() ?: "Pull down to refresh saved prices across portfolios."
+                                })
+                            }
+                        }
+                    }
+                },
+                floatingActionButton = {
+                    if (page == Page.OVERVIEW) {
+                        FloatingActionButton(
+                            onClick = { dialog = "add" },
+                            modifier = Modifier.testTag("add-action").semantics { contentDescription = "Add to portfolio" },
+                        ) { Text("+", fontSize = 28.sp) }
+                    }
+                },
                 bottomBar = {
                     if (compact) {
                         CompactNavigation(page, { page = it }, { dialog = "add" })
@@ -315,633 +474,620 @@ private fun Product(
                     remember(data, snapshotFilter) {
                         data?.let { activityAccountScope(it.ownership, snapshotFilter) }.orEmpty()
                     }
-                LazyColumn(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(insets)
-                        .padding(bottom = snackbarInset)
-                        .testTag("page-content"),
-                    state =
-                        when (page) {
-                            Page.HOME -> homeScroll
-                            Page.MORE -> moreScroll
-                            Page.OVERVIEW -> overviewScroll
-                            Page.ACTIVITY -> activityScroll
-                            Page.ACCOUNTS -> accountScroll
-                            Page.REPORTS -> reportScroll
-                            Page.SETTINGS -> settingsScroll
-                        },
-                    contentPadding =
-                        PaddingValues(
-                            horizontal = if (compact) PolionSpacing.compactGutter else PolionSpacing.wideGutter,
-                            vertical = if (compact) 20.dp else 28.dp,
-                        ),
-                    verticalArrangement = Arrangement.spacedBy(22.dp),
+                PullToRefreshBox(
+                    isRefreshing = pricePhase == PriceRefreshPhase.RUNNING,
+                    onRefresh = ::refreshPrices,
+                    modifier = Modifier.padding(insets),
                 ) {
-                    item {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    if (compact) "POLION / YOUR SPACE" else "YOUR FINANCIAL SPACE",
-                                    color = Teal,
-                                    fontSize = 10.sp,
-                                    letterSpacing = 2.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(page.label, fontSize = if (compact) 30.sp else 34.sp, fontWeight = FontWeight.SemiBold, color = Ink)
-                            }
-                            if (page == Page.HOME ||
-                                page == Page.OVERVIEW ||
-                                page == Page.ACTIVITY
-                            ) {
-                                FilledTonalButton(
-                                    onClick = {
-                                        dialog = "sync"
-                                    },
-                                    enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
-                                    colors =
-                                        ButtonDefaults.filledTonalButtonColors(
-                                            containerColor = Mint,
-                                        ),
-                                ) {
-                                    Text(
-                                        if (syncStatus.phase !=
-                                            SyncPhase.SYNCING
-                                        ) {
-                                            "↻  Sync"
-                                        } else if (syncStatus.operation ==
-                                            SyncOperation.HISTORY
-                                        ) {
-                                            "Syncing…"
-                                        } else {
-                                            "Working…"
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    item { SyncBanner(syncStatus, data?.sourceStatus, { dialog = "sync" }) }
-                    if (data?.sampleData == true) item { StatusPill("EXAMPLE DATA · stored only on this device", false) }
-                    if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Teal) }
-                    if (data == null) {
-                        item { EmptyCard("Opening your portfolio", "Your local data stays on this device.") }
-                    } else {
-                        when (page) {
-                            Page.HOME -> {
-                                item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
-                                item {
-                                    Panel {
-                                        Text("Your portfolio", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                                        val pricing = pricingSummary(data.valuations)
-                                        Text("Priced value · ${data.currency.value}", color = Muted)
-                                        Text(pricing.total?.let { money(it, data.currency) } ?: "Unavailable", fontSize = 30.sp)
-                                        Text("${pricing.missing} unpriced assets excluded", color = Muted)
-                                        if (pricing.stale > 0) {
-                                            Text(stalePriceMessage(pricing.stale), color = Orange, fontSize = 12.sp)
+                    LazyColumn(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(bottom = snackbarInset)
+                            .testTag("page-content"),
+                        state =
+                            when (page) {
+                                Page.HOME -> homeScroll
+                                Page.MORE -> moreScroll
+                                Page.OVERVIEW -> overviewScroll
+                                Page.ACTIVITY -> activityScroll
+                                Page.ACCOUNTS -> accountScroll
+                                Page.REPORTS -> reportScroll
+                                Page.SETTINGS -> settingsScroll
+                            },
+                        contentPadding =
+                            PaddingValues(
+                                horizontal = if (compact) PolionSpacing.compactGutter else PolionSpacing.wideGutter,
+                                vertical = if (compact) 20.dp else 28.dp,
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(22.dp),
+                    ) {
+                        if (page == Page.ACCOUNTS) item { SyncBanner(syncStatus, data?.sourceStatus, { dialog = "sync" }) }
+                        if (data?.sampleData == true) item { StatusPill("EXAMPLE DATA · stored only on this device", false) }
+                        if (data == null) {
+                            item { EmptyCard("Opening your portfolio", "Your local data stays on this device.") }
+                        } else {
+                            when (page) {
+                                Page.HOME -> {
+                                    item {
+                                        RevisedMain(app, data) { coin ->
+                                            selectedAsset = data.valuations.find { it.asset == coin.asset } ?: coin.detailValuation()
                                         }
-                                        TextButton(onClick = { page = Page.OVERVIEW }) { Text("Open Portfolio") }
+                                    }
+                                }
+                                Page.MORE -> {
+                                    item {
+                                        Panel {
+                                            Text("Advanced tools", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                                            listOf(Page.ACCOUNTS, Page.ACTIVITY, Page.REPORTS, Page.SETTINGS).forEach { destination ->
+                                                OutlinedButton(
+                                                    onClick = { page = destination },
+                                                    modifier = Modifier.fillMaxWidth().testTag("more-${destination.name}"),
+                                                ) {
+                                                    Text(destination.label)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    item { PrivacyFootnote() }
+                                }
+                                Page.OVERVIEW -> {
+                                    item {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Column(
+                                                Modifier.weight(1f),
+                                            ) { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
+                                            var currencyMenu by remember { mutableStateOf(false) }
+                                            Box {
+                                                TextButton(onClick = { currencyMenu = true }) { Text("${data.currency.value} ⌄") }
+                                                DropdownMenu(currencyMenu, { currencyMenu = false }) {
+                                                    listOf("USD", "EUR", "GBP").forEach { currency ->
+                                                        DropdownMenuItem(text = { Text(currency) }, onClick = {
+                                                            currencyMenu = false
+                                                            execute("Display currency saved") { app.setCurrency(AssetId(currency)) }
+                                                        })
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    item {
                                         OutlinedButton(
                                             onClick = { page = Page.ACCOUNTS },
                                             modifier = Modifier.testTag("manage-accounts"),
                                         ) { Text("Manage accounts") }
                                     }
-                                }
-                                item { HealthCard(data, { dialog = "sync" }, { dialog = "utxo" }) }
-                                item { QuickActions({ dialog = "account" }, { dialog = "activity" }) }
-                                item { SectionTitle("Recent activity", "View all") { page = Page.ACTIVITY } }
-                                if (data.activities.isEmpty()) {
-                                    item {
-                                        EmptyCard("Start your portfolio", "Add a public source or record an activity manually.", "Add") {
-                                            dialog =
-                                                "add"
-                                        }
-                                    }
-                                } else {
-                                    items(data.activities.take(5), key = { it.activity.id.value }) {
-                                        ActivityRow(it, data, compact, activityAccounts) { selectedActivity = it }
-                                    }
-                                }
-                                item { PrivacyFootnote() }
-                            }
-                            Page.MORE -> {
-                                item {
-                                    Panel {
-                                        Text("Your workspace", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-                                        listOf(Page.ACCOUNTS, Page.REPORTS, Page.SETTINGS).forEach { destination ->
-                                            OutlinedButton(
-                                                onClick = { page = destination },
-                                                modifier = Modifier.fillMaxWidth().testTag("more-${destination.name}"),
-                                            ) {
-                                                Text(destination.label)
-                                            }
-                                        }
-                                    }
-                                }
-                                item { PrivacyFootnote() }
-                            }
-                            Page.OVERVIEW -> {
-                                item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
-                                item {
-                                    OutlinedButton(
-                                        onClick = { page = Page.ACCOUNTS },
-                                        modifier = Modifier.testTag("manage-accounts"),
-                                    ) { Text("Manage accounts") }
-                                }
-                                item {
-                                    BalanceHero(data, chart, presenter.state.chartLoading, presenter.state.chartError, compact, period, {
-                                        period =
-                                            it
-                                    }, { dialog = "price" })
-                                }
-                                item {
-                                    TextButton(
-                                        onClick = { widgetDraft = widgets },
-                                        modifier = Modifier.testTag("customize-dashboard"),
-                                    ) { Text("Customize dashboard") }
-                                }
-                                val visibleWidgets = widgets.filter { it.visible }
-                                visibleWidgets.forEachIndexed { index, preference ->
-                                    if (wide &&
-                                        preference.widget == DashboardWidget.HEALTH &&
-                                        index > 0 &&
-                                        visibleWidgets[index - 1].widget == DashboardWidget.ASSETS
-                                    ) {
-                                        return@forEachIndexed
-                                    }
-                                    when (preference.widget) {
-                                        DashboardWidget.ALLOCATION ->
-                                            item(key = "dashboard-allocation") {
-                                                val allocation =
-                                                    remember(data.valuations, data.currency, data.coverage) {
-                                                        AssetAllocation.project(data.valuations, data.currency, data.coverage)
-                                                    }
-                                                AllocationPanel(allocation) { selectedAsset = it }
-                                            }
-                                        DashboardWidget.ASSETS ->
-                                            item(key = "dashboard-assets") {
-                                                if (wide && visibleWidgets.getOrNull(index + 1)?.widget == DashboardWidget.HEALTH) {
-                                                    Row(
-                                                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                    ) {
-                                                        Column(Modifier.weight(1.5f)) {
-                                                            AssetsCard(data, assetPreference, busy, ::saveAssetPreference, {
-                                                                selectedAsset =
-                                                                    it
-                                                            }, { dialog = "price" })
-                                                        }
-                                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                                            HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
-                                                            QuickActions({ dialog = "account" }, { dialog = "activity" })
-                                                        }
-                                                    }
-                                                } else {
-                                                    AssetsCard(data, assetPreference, busy, ::saveAssetPreference, { selectedAsset = it }, {
-                                                        dialog =
-                                                            "price"
-                                                    })
-                                                }
-                                            }
-                                        DashboardWidget.HEALTH ->
-                                            item(key = "dashboard-health") {
-                                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                                    HealthCard(data, { dialog = "sync" }, { dialog = "utxo" })
-                                                    if (wide) QuickActions({ dialog = "account" }, { dialog = "activity" })
-                                                }
-                                            }
-                                        DashboardWidget.ACTIVITY -> {
-                                            item(key = "dashboard-activity-title") {
-                                                SectionTitle("Recent activity", "View all") {
-                                                    page =
-                                                        Page.ACTIVITY
-                                                }
-                                            }
-                                            if (data.activities.isEmpty()) {
-                                                item(key = "dashboard-activity-empty") {
-                                                    EmptyCard(
-                                                        "A clear view starts here",
-                                                        "Add a watch-only account, then sync its public history. You can also record an activity manually.",
-                                                        "Add an account",
-                                                    ) {
-                                                        dialog =
-                                                            "account"
-                                                    }
-                                                }
-                                            } else {
-                                                items(data.activities.take(5), key = { "dashboard:${it.activity.id.value}" }) {
-                                                    ActivityRow(it, data, compact, activityAccounts) { selectedActivity = it }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                item { PrivacyFootnote() }
-                            }
-                            Page.ACTIVITY -> {
-                                item {
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    ) {
-                                        OutlinedTextField(
-                                            search,
-                                            {
-                                                search = it
-                                                offset = 0
-                                            },
-                                            Modifier.weight(
-                                                1f,
-                                            ),
-                                            label = { Text("Search activity") },
-                                            singleLine = true,
-                                            shape = RoundedCornerShape(14.dp),
-                                        )
-                                        Button(
-                                            onClick = { dialog = "activity" },
-                                            enabled = data.ownership.accounts.isNotEmpty(),
-                                        ) { Text("+ Add") }
-                                    }
-                                }
-                                item {
-                                    FilterKinds(kind) {
-                                        kind = it
-                                        offset = 0
-                                    }
-                                }
-                                item {
-                                    AccountSelector(data, selectedAccount) {
-                                        selectedAccount = it
-                                        offset = 0
-                                    }
-                                }
-                                presenter.state.activityAsset?.let { asset ->
-                                    item {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("Asset: ${asset.value}", modifier = Modifier.weight(1f))
-                                            TextButton(
-                                                onClick = { presenter.dispatch(ProductEvent.ClearActivityAsset) },
-                                            ) { Text("Clear asset") }
-                                        }
-                                    }
-                                }
-                                item {
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        FilterActivityStatus(activityStatus) { activityStatus = it }
-                                        FilterActivityNetwork(data.activityNetworks, activityNetwork) { activityNetwork = it }
-                                    }
-                                }
-                                if (snapshotFilter != presenter.state.requestedFilter()) {
-                                    item {
-                                        Text(
-                                            if (presenter.state.snapshotLoading) {
-                                                "Updating activity results…"
-                                            } else {
-                                                "Activity results are unavailable for these filters."
-                                            },
-                                            color = Muted,
+                                    val balance: @Composable () -> Unit = {
+                                        BalanceHero(
+                                            data,
+                                            chart,
+                                            presenter.state.chartLoading,
+                                            presenter.state.chartError,
+                                            compact,
+                                            period,
+                                            { period = it },
+                                            { dialog = "price" },
                                         )
                                     }
-                                } else {
-                                    item {
-                                        Text(
-                                            "${data.activityTotal} activities · matching filters",
-                                            color = Muted,
-                                            style = MaterialTheme.typography.bodySmall,
+                                    val holdings: @Composable () -> Unit = {
+                                        AssetsCard(
+                                            data,
+                                            assetPreference,
+                                            busy,
+                                            ::saveAssetPreference,
+                                            { selectedAsset = it },
+                                            { dialog = "price" },
                                         )
                                     }
-                                    if (data.activities.isEmpty()) {
+                                    if (wide) {
+                                        item(key = "portfolio-grid") {
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                                                Column(Modifier.weight(1f)) { balance() }
+                                                Column(Modifier.weight(1.2f)) { holdings() }
+                                            }
+                                        }
+                                    } else {
+                                        item(key = "portfolio-balance") { balance() }
+                                        item(key = "portfolio-holdings") { holdings() }
+                                    }
+                                    item { Spacer(Modifier.height(64.dp)) }
+                                }
+                                Page.ACTIVITY -> {
+                                    item {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            OutlinedTextField(
+                                                search,
+                                                {
+                                                    search = it
+                                                    offset = 0
+                                                },
+                                                Modifier.weight(
+                                                    1f,
+                                                ),
+                                                label = { Text("Search activity") },
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(14.dp),
+                                            )
+                                            Button(
+                                                onClick = { dialog = "activity" },
+                                                enabled = data.ownership.accounts.isNotEmpty(),
+                                            ) { Text("+ Add") }
+                                        }
+                                    }
+                                    item {
+                                        FilterKinds(kind) {
+                                            kind = it
+                                            offset = 0
+                                        }
+                                    }
+                                    item {
+                                        AccountSelector(data, selectedAccount) {
+                                            selectedAccount = it
+                                            offset = 0
+                                        }
+                                    }
+                                    presenter.state.activityAsset?.let { asset ->
                                         item {
-                                            EmptyCard(
-                                                "No matching activity",
-                                                "Try another filter or sync an account to fetch its history.",
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Asset: ${asset.value}", modifier = Modifier.weight(1f))
+                                                TextButton(
+                                                    onClick = { presenter.dispatch(ProductEvent.ClearActivityAsset) },
+                                                ) { Text("Clear asset") }
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            FilterActivityStatus(activityStatus) { activityStatus = it }
+                                            FilterActivityNetwork(data.activityNetworks, activityNetwork) { activityNetwork = it }
+                                        }
+                                    }
+                                    if (snapshotFilter != presenter.state.requestedFilter()) {
+                                        item {
+                                            Text(
+                                                if (presenter.state.snapshotLoading) {
+                                                    "Updating activity results…"
+                                                } else {
+                                                    "Activity results are unavailable for these filters."
+                                                },
+                                                color = Muted,
                                             )
                                         }
                                     } else {
-                                        items(data.activities, key = { it.activity.id.value }) {
-                                            ActivityRow(it, data, compact, activityAccounts) {
-                                                selectedActivity =
-                                                    it
-                                            }
-                                        }
-                                    }
-                                    item {
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            OutlinedButton(
-                                                onClick = { offset = (offset - 50).coerceAtLeast(0) },
-                                                enabled = offset > 0,
-                                            ) { Text("Previous") }
+                                        item {
                                             Text(
-                                                "${if (data.activityTotal == 0) 0 else offset + 1}–${minOf(
-                                                    offset + 50,
-                                                    data.activityTotal,
-                                                )}",
+                                                "${data.activityTotal} activities · matching filters",
                                                 color = Muted,
-                                                modifier = Modifier.padding(top = 12.dp),
+                                                style = MaterialTheme.typography.bodySmall,
                                             )
-                                            OutlinedButton(
-                                                onClick = { offset += 50 },
-                                                enabled = offset + 50 < data.activityTotal,
-                                            ) { Text("Next") }
                                         }
-                                    }
-                                }
-                            }
-                            Page.ACCOUNTS -> {
-                                item { SectionTitle("Watch-only accounts", "+ Add") { dialog = "add" } }
-                                item {
-                                    Text(
-                                        "Manage accounts and their public sources across all portfolios. Archive an account to pause tracking and hide it from active portfolios; saved history stays on this device.",
-                                        color = Muted,
-                                    )
-                                }
-                                if (data.ownership.accounts.isEmpty()) {
-                                    item {
-                                        EmptyCard(
-                                            "Your keys stay yours",
-                                            "Choose a supported public Bitcoin source. Polion never needs your recovery phrase or private keys.",
-                                            "Add your first source",
-                                        ) {
-                                            dialog =
-                                                "add"
-                                        }
-                                    }
-                                }
-                                items(data.ownership.accounts.filter { "polion:archived" !in it.tags }, key = { it.id.value }) { account ->
-                                    Panel {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            CoinBadge(if (account.kind == AccountKind.GROUP) "▣" else "₿")
-                                            Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                                                Text(account.label, fontWeight = FontWeight.SemiBold)
-                                                Text(
-                                                    "${data.ownership.owners
-                                                        .find { it.id == account.ownerId }
-                                                        ?.label ?: "Owner"} · ${account.kind.name.lowercase()}",
-                                                    color = Muted,
-                                                    fontSize = 12.sp,
+                                        if (data.activities.isEmpty()) {
+                                            item {
+                                                EmptyCard(
+                                                    "No matching activity",
+                                                    "Try another filter or sync an account to fetch its history.",
                                                 )
                                             }
-                                        }
-                                        data.ownership.targets
-                                            .filter { it.accountId == account.id && it.walletId == null }
-                                            .forEach { target ->
-                                                HorizontalDivider(color = Line)
-                                                Text(target.label, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                                TextButton(onClick = { sourceScanTarget = target }) { Text("View scan details") }
-                                                if (target.role ==
-                                                    io.polion.core.ownership.TargetRole.WALLET
-                                                ) {
-                                                    TextButton(onClick = { addressWallet = target }) { Text("View derived addresses") }
-                                                }
-                                                if (target.role ==
-                                                    io.polion.core.ownership.TargetRole.WALLET
-                                                ) {
-                                                    TextButton(onClick = {
-                                                        host.discoverWallet(target.id) {
-                                                            message =
-                                                                it
-                                                            ; revision++
-                                                        }
-                                                    }, enabled = syncStatus.phase != SyncPhase.SYNCING) {
-                                                        Text(
-                                                            "Discover wallet addresses",
-                                                        )
-                                                    }
-                                                }
-                                                Text(target.identity.canonicalKey, color = Muted, fontSize = 12.sp)
-                                                StatusPill(
-                                                    if (target.enabled) "Watching · ${target.identity.kind}" else "Paused",
-                                                    target.enabled,
-                                                )
-                                            }
-                                        TextButton(
-                                            onClick = { removeAccount = account },
-                                            enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
-                                            modifier = Modifier.testTag("archive-account-${account.id.value}"),
-                                        ) { Text("Archive account", fontSize = 12.sp) }
-                                        data.balances.quantities.filterKeys { it.account == account.id }.forEach { (key, units) ->
-                                            Text(
-                                                data.valuations.find { it.asset == key.asset }?.metadata?.let {
-                                                    "${formatUnits(units, it.decimals)} ${it.symbol}"
-                                                } ?: "$units atomic units (${key.asset.value})",
-                                                fontWeight = FontWeight.SemiBold,
-                                            )
-                                        }
-                                    }
-                                }
-                                if (data.ownership.accounts.any { "polion:archived" in it.tags }) {
-                                    item { SectionTitle("Archived accounts") }
-                                    items(
-                                        data.ownership.accounts.filter { "polion:archived" in it.tags },
-                                        key = { "archived:${it.id.value}" },
-                                    ) { archived ->
-                                        Panel {
-                                            Text(archived.label, fontWeight = FontWeight.SemiBold)
-                                            Text(
-                                                "Tracking paused. Saved activity and accounting decisions are retained.",
-                                                fontSize = 12.sp,
-                                                color = Muted,
-                                            )
-                                            OutlinedButton(
-                                                onClick = { execute("Account restored") { app.archiveAccount(archived.id, false) } },
-                                                enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
-                                                modifier = Modifier.testTag("restore-account-${archived.id.value}"),
-                                            ) { Text("Restore account") }
-                                        }
-                                    }
-                                }
-                                item { SectionTitle("Organize your space") }
-                                item {
-                                    WrapActions(
-                                        listOf(
-                                            "Add owner" to { dialog = "owner" },
-                                            "Account group" to { dialog = "group" },
-                                            "New portfolio" to { dialog = "portfolio" },
-                                        ),
-                                    )
-                                }
-                                items(data.ownership.portfolios) { portfolio ->
-                                    Panel {
-                                        Text(portfolio.label, fontWeight = FontWeight.SemiBold)
-                                        Text(
-                                            "${portfolio.valuationCurrency} · ${if (portfolio.accountIds.isEmpty()) "All accounts" else "${portfolio.accountIds.size} accounts"}",
-                                            color = Muted,
-                                        )
-                                    }
-                                }
-                            }
-                            Page.REPORTS -> {
-                                item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
-                                item {
-                                    BalanceHero(data, chart, presenter.state.chartLoading, presenter.state.chartError, compact, period, {
-                                        period =
-                                            it
-                                    }, { dialog = "price" })
-                                }
-                                item { AnalyticsPanel(app, host, selectedPortfolio, revision + hostRevision.toInt()) }
-                                item { AccountingPanel(app, host, selectedPortfolio, revision + hostRevision.toInt()) { revision++ } }
-                                item {
-                                    Panel {
-                                        Text("Understand your cost basis", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                                        Text(
-                                            "FIFO follows the oldest available lots. An incoming transfer does not establish a purchase price. Unknown purchase costs remain unknown, and pending activity is excluded from confirmed reports.",
-                                            color = Muted,
-                                            lineHeight = 22.sp,
-                                        )
-                                        Text(
-                                            "Values use saved price observations at each point in time. Changes in the chart may reflect deposits and withdrawals, not investment performance.",
-                                            color = Muted,
-                                            fontSize = 13.sp,
-                                        )
-                                        OutlinedButton(onClick = {
-                                            execute("Export ready") {
-                                                val csv = app.exportCsv(ActivityFilter(portfolio = selectedPortfolio))
-                                                host.saveFile("polion-activities.csv", csv.encodeToByteArray()) {
-                                                    message =
+                                        } else {
+                                            items(data.activities, key = { it.activity.id.value }) {
+                                                ActivityRow(it, data, compact, activityAccounts) {
+                                                    selectedActivity =
                                                         it
                                                 }
                                             }
-                                        }) {
+                                        }
+                                        item {
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                OutlinedButton(
+                                                    onClick = { offset = (offset - 50).coerceAtLeast(0) },
+                                                    enabled = offset > 0,
+                                                ) { Text("Previous") }
+                                                Text(
+                                                    "${if (data.activityTotal == 0) 0 else offset + 1}–${minOf(
+                                                        offset + 50,
+                                                        data.activityTotal,
+                                                    )}",
+                                                    color = Muted,
+                                                    modifier = Modifier.padding(top = 12.dp),
+                                                )
+                                                OutlinedButton(
+                                                    onClick = { offset += 50 },
+                                                    enabled = offset + 50 < data.activityTotal,
+                                                ) { Text("Next") }
+                                            }
+                                        }
+                                    }
+                                }
+                                Page.ACCOUNTS -> {
+                                    item { HealthCard(data, { dialog = "sync" }, { dialog = "utxo" }) }
+                                    item { OutlinedButton(onClick = { dialog = "sync" }) { Text("Refresh wallet history") } }
+                                    item { SectionTitle("Watch-only accounts", "+ Add") { dialog = "add" } }
+                                    item {
+                                        Text(
+                                            "Manage accounts and their public sources across all portfolios. Archive an " +
+                                                "account to pause tracking and hide it from active portfolios; saved history stays on this device.",
+                                            color = Muted,
+                                        )
+                                    }
+                                    if (data.ownership.accounts.isEmpty()) {
+                                        item {
+                                            EmptyCard(
+                                                "Your keys stay yours",
+                                                "Choose a supported public Bitcoin source. Polion never needs your recovery " +
+                                                    "phrase or private keys.",
+                                                "Add your first source",
+                                            ) {
+                                                dialog =
+                                                    "add"
+                                            }
+                                        }
+                                    }
+                                    items(
+                                        data.ownership.accounts.filter { "polion:archived" !in it.tags },
+                                        key = { it.id.value },
+                                    ) { account ->
+                                        Panel {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                CoinBadge(if (account.kind == AccountKind.GROUP) "▣" else "₿")
+                                                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                                                    Text(account.label, fontWeight = FontWeight.SemiBold)
+                                                    Text(
+                                                        "${data.ownership.owners
+                                                            .find { it.id == account.ownerId }
+                                                            ?.label ?: "Owner"} · ${account.kind.name.lowercase()}",
+                                                        color = Muted,
+                                                        fontSize = 12.sp,
+                                                    )
+                                                }
+                                            }
+                                            data.ownership.targets
+                                                .filter { it.accountId == account.id && it.walletId == null }
+                                                .forEach { target ->
+                                                    HorizontalDivider(color = Line)
+                                                    Text(target.label, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                                    TextButton(onClick = { sourceScanTarget = target }) { Text("View scan details") }
+                                                    if (target.role ==
+                                                        io.polion.core.ownership.TargetRole.WALLET
+                                                    ) {
+                                                        TextButton(onClick = { addressWallet = target }) { Text("View derived addresses") }
+                                                    }
+                                                    if (target.role ==
+                                                        io.polion.core.ownership.TargetRole.WALLET
+                                                    ) {
+                                                        TextButton(onClick = {
+                                                            host.discoverWallet(target.id) {
+                                                                message =
+                                                                    it
+                                                                ; revision++
+                                                            }
+                                                        }, enabled = syncStatus.phase != SyncPhase.SYNCING) {
+                                                            Text(
+                                                                "Discover wallet addresses",
+                                                            )
+                                                        }
+                                                    }
+                                                    Text(target.identity.canonicalKey, color = Muted, fontSize = 12.sp)
+                                                    StatusPill(
+                                                        if (target.enabled) "Watching · ${target.identity.kind}" else "Paused",
+                                                        target.enabled,
+                                                    )
+                                                }
+                                            TextButton(
+                                                onClick = { removeAccount = account },
+                                                enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
+                                                modifier = Modifier.testTag("archive-account-${account.id.value}"),
+                                            ) { Text("Archive account", fontSize = 12.sp) }
+                                            data.balances.quantities.filterKeys { it.account == account.id }.forEach { (key, units) ->
+                                                Text(
+                                                    data.valuations.find { it.asset == key.asset }?.metadata?.let {
+                                                        "${formatUnits(units, it.decimals)} ${it.symbol}"
+                                                    } ?: "$units atomic units (${key.asset.value})",
+                                                    fontWeight = FontWeight.SemiBold,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (data.ownership.accounts.any { "polion:archived" in it.tags }) {
+                                        item { SectionTitle("Archived accounts") }
+                                        items(
+                                            data.ownership.accounts.filter { "polion:archived" in it.tags },
+                                            key = { "archived:${it.id.value}" },
+                                        ) { archived ->
+                                            Panel {
+                                                Text(archived.label, fontWeight = FontWeight.SemiBold)
+                                                Text(
+                                                    "Tracking paused. Saved activity and accounting decisions are retained.",
+                                                    fontSize = 12.sp,
+                                                    color = Muted,
+                                                )
+                                                OutlinedButton(
+                                                    onClick = { execute("Account restored") { app.archiveAccount(archived.id, false) } },
+                                                    enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
+                                                    modifier = Modifier.testTag("restore-account-${archived.id.value}"),
+                                                ) { Text("Restore account") }
+                                            }
+                                        }
+                                    }
+                                    item { SectionTitle("Organize your space") }
+                                    item {
+                                        WrapActions(
+                                            listOf(
+                                                "Add owner" to { dialog = "owner" },
+                                                "Account group" to { dialog = "group" },
+                                                "New portfolio" to { dialog = "portfolio" },
+                                            ),
+                                        )
+                                    }
+                                    items(data.ownership.portfolios) { portfolio ->
+                                        Panel {
+                                            Text(portfolio.label, fontWeight = FontWeight.SemiBold)
                                             Text(
-                                                if (selectedPortfolio ==
-                                                    null
-                                                ) {
-                                                    "↓  Export all active activity CSV"
-                                                } else {
-                                                    "↓  Export selected portfolio CSV"
-                                                },
+                                                "${portfolio.valuationCurrency} · " +
+                                                    if (portfolio.accountIds.isEmpty()) {
+                                                        "All accounts"
+                                                    } else {
+                                                        "${portfolio.accountIds.size} accounts"
+                                                    },
+                                                color = Muted,
                                             )
                                         }
                                     }
                                 }
-                                item { SectionTitle("Reconciliation", "Review") { dialog = "reconcile" } }
-                                item {
-                                    Text(
-                                        "${data.duplicateConflicts.size} unresolved duplicate conflicts. Transfer suggestions always require your review.",
-                                        color = Muted,
-                                    )
-                                }
-                            }
-                            Page.SETTINGS -> {
-                                item {
-                                    Panel {
-                                        Text("Make it yours", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                                        Text("Appearance", color = Muted, fontSize = 12.sp)
-                                        AppearanceSelector(appearance) { selected ->
-                                            execute("Appearance saved") {
-                                                app.setAppearanceTheme(selected.key)
-                                                onAppearance(selected)
+                                Page.REPORTS -> {
+                                    item {
+                                        Panel {
+                                            Text("Investment returns · —", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                                            Text(
+                                                "Money-flow-adjusted performance is unavailable. Portfolio value changes include deposits and withdrawals.",
+                                                color = Muted,
+                                            )
+                                        }
+                                    }
+                                    item { PortfolioSelector(data, selectedPortfolio) { selectedPortfolio = it } }
+                                    item {
+                                        BalanceHero(
+                                            data,
+                                            chart,
+                                            presenter.state.chartLoading,
+                                            presenter.state.chartError,
+                                            compact,
+                                            period,
+                                            {
+                                                period =
+                                                    it
+                                            },
+                                            { dialog = "price" },
+                                        )
+                                    }
+                                    item {
+                                        AllocationPanel(AssetAllocation.project(data.valuations, data.currency, data.coverage)) {
+                                            selectedAsset =
+                                                it
+                                        }
+                                    }
+                                    item { AnalyticsPanel(app, host, selectedPortfolio, revision + hostRevision.toInt()) }
+                                    item { AccountingPanel(app, host, selectedPortfolio, revision + hostRevision.toInt()) { revision++ } }
+                                    item {
+                                        Panel {
+                                            Text("Understand your cost basis", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                            Text(
+                                                "FIFO follows the oldest available lots. An incoming transfer does not " +
+                                                    "establish a purchase price. Unknown purchase costs remain unknown, and pending activity is excluded from confirmed reports.",
+                                                color = Muted,
+                                                lineHeight = 22.sp,
+                                            )
+                                            Text(
+                                                "Values use saved price observations at each point in time. Changes in the " +
+                                                    "chart may reflect deposits and withdrawals, not investment performance.",
+                                                color = Muted,
+                                                fontSize = 13.sp,
+                                            )
+                                            OutlinedButton(onClick = {
+                                                execute("Export ready") {
+                                                    val csv = app.exportCsv(ActivityFilter(portfolio = selectedPortfolio))
+                                                    host.saveFile("polion-activities.csv", csv.encodeToByteArray()) {
+                                                        message =
+                                                            it
+                                                    }
+                                                }
+                                            }) {
+                                                Text(
+                                                    if (selectedPortfolio ==
+                                                        null
+                                                    ) {
+                                                        "↓  Export all active activity CSV"
+                                                    } else {
+                                                        "↓  Export selected portfolio CSV"
+                                                    },
+                                                )
                                             }
                                         }
-                                        Text("System follows your device’s light or dark appearance.", color = Muted, fontSize = 13.sp)
-                                        Text("Display currency", color = Muted, fontSize = 12.sp)
-                                        WrapActions(
-                                            listOf(
-                                                "USD" to { execute { app.setCurrency(AssetId("USD")) } },
-                                                "EUR" to { execute { app.setCurrency(AssetId("EUR")) } },
-                                                "GBP" to { execute { app.setCurrency(AssetId("GBP")) } },
-                                            ),
-                                        )
-                                        Text(
-                                            "Current: ${data.currency.value}. Add a manual quote for each asset and currency you use.",
-                                            color = Muted,
-                                            fontSize = 13.sp,
-                                        )
-                                        TextButton(onClick = { dialog = "price" }) { Text("Manage manual prices →") }
                                     }
-                                }
-                                item {
-                                    Panel {
-                                        Text("Privacy & sync", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                                        Text(
-                                            "Public indexers can associate queried addresses with your IP address. Choose your own endpoint or stay offline.",
-                                            color = Muted,
-                                            lineHeight = 22.sp,
-                                        )
-                                        OutlinedButton(onClick = { dialog = "sync" }) { Text("Source & background updates") }
-                                        OutlinedButton(onClick = { dialog = "lock" }) { Text("Set app lock") }
-                                        TextButton(onClick = host::lock, enabled = host.hasLock) { Text("Lock now") }
-                                        if (host.hasLock) {
-                                            TextButton(onClick = {
-                                                host.removeLockPassword {
-                                                    message = it
-                                                    revision++
-                                                }
-                                            }) { Text("Remove privacy lock") }
-                                        }
-                                        Text(
-                                            "App lock hides the screen. The local database is stored in plaintext in your app data directory; use device or disk encryption for protection at rest.",
-                                            color = Muted,
-                                            fontSize = 12.sp,
-                                        )
-                                    }
-                                }
-                                item {
-                                    Panel {
-                                        Text("Your data, in your hands", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                                        Text(
-                                            "Create an encrypted backup before replacing or removing local data. Your password cannot be recovered.",
-                                            color = Muted,
-                                            lineHeight = 22.sp,
-                                        )
-                                        WrapActions(
-                                            listOf(
-                                                "Encrypted backup" to { dialog = "backup" },
-                                                "Restore backup" to { dialog = "restore" },
-                                                "All active activity CSV" to
-                                                    {
-                                                        execute("Export ready") {
-                                                            host.saveFile("polion-activities.csv", app.exportCsv().encodeToByteArray()) {
-                                                                message =
-                                                                    it
-                                                            }
-                                                        }
-                                                    },
-                                            ),
-                                        )
-                                        TextButton(
-                                            onClick = { dialog = "wipe" },
-                                        ) { Text("Erase local portfolio data", color = MaterialTheme.colorScheme.error) }
-                                    }
-                                }
-                                item {
-                                    Panel {
-                                        Text("Classification rules", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                                        Text(
-                                            "Apply a repeatable classification to matching activity. Per-activity corrections take precedence.",
-                                            color = Muted,
-                                        )
-                                        OutlinedButton(onClick = { dialog = "rule" }) { Text("Manage rules") }
-                                    }
-                                }
-                                item {
-                                    Panel {
-                                        Text("Your setup", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                                        Text("Review your local preferences and supported source guidance.", color = Muted)
-                                        OutlinedButton(onClick = { onSetup(false) }) { Text("Resume setup") }
-                                        TextButton(onClick = { onSetup(true) }) { Text("Restart setup") }
-                                        setupError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                                    }
-                                }
-                                if (data.ownership.owners.isEmpty()) {
+                                    item { SectionTitle("Reconciliation", "Review") { dialog = "reconcile" } }
                                     item {
-                                        TextButton(onClick = {
-                                            execute("Example portfolio loaded. This is sample data.") { app.seedDemo() }
-                                        }) { Text("Explore with sample data") }
+                                        Text(
+                                            "${data.duplicateConflicts.size} unresolved duplicate conflicts. Transfer " +
+                                                "suggestions always require your review.",
+                                            color = Muted,
+                                        )
                                     }
                                 }
-                                item { PrivacyFootnote() }
+                                Page.SETTINGS -> {
+                                    item {
+                                        Panel {
+                                            Text("Sync settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Automatic refresh", Modifier.weight(1f))
+                                                Switch(preferences.automaticRefresh, { enabled ->
+                                                    val updated = preferences.copy(automaticRefresh = enabled)
+                                                    execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
+                                                    preferences = updated
+                                                }, modifier = Modifier.testTag("automatic-refresh"))
+                                            }
+                                            Text(
+                                                "Consented wallet history every 30 minutes and prices hourly, subject to " +
+                                                    "platform scheduling.",
+                                                color = Muted,
+                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("Wi-Fi-only background refresh", Modifier.weight(1f))
+                                                Switch(preferences.wifiOnly, { enabled ->
+                                                    val updated = preferences.copy(wifiOnly = enabled)
+                                                    execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
+                                                    preferences = updated
+                                                }, modifier = Modifier.testTag("wifi-only-refresh"))
+                                            }
+                                            Text(
+                                                if (host.wifiOnlyRefreshSupported) {
+                                                    "Background jobs use an unmetered network. Manual refresh uses the current connection."
+                                                } else {
+                                                    "The Wi-Fi restriction applies to Android background jobs. Desktop " +
+                                                        "refresh uses the current connection."
+                                                },
+                                                color = Muted,
+                                            )
+                                            Text(
+                                                "Pull down to refresh prices across configured portfolios. Wallet history " +
+                                                    "uses the current full scan behavior.",
+                                                color = Muted,
+                                            )
+                                            OutlinedButton(onClick = { dialog = "sync" }) { Text("Refresh wallet history") }
+                                        }
+                                    }
+
+                                    item {
+                                        Panel {
+                                            Text("Make it yours", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                            Text("Appearance", color = Muted, fontSize = 12.sp)
+                                            AppearanceSelector(appearance) { selected ->
+                                                execute("Appearance saved") {
+                                                    app.setAppearanceTheme(selected.key)
+                                                    onAppearance(selected)
+                                                }
+                                            }
+                                            Text("System follows your device’s light or dark appearance.", color = Muted, fontSize = 13.sp)
+                                            Text("Display currency", color = Muted, fontSize = 12.sp)
+                                            WrapActions(
+                                                listOf(
+                                                    "USD" to { execute { app.setCurrency(AssetId("USD")) } },
+                                                    "EUR" to { execute { app.setCurrency(AssetId("EUR")) } },
+                                                    "GBP" to { execute { app.setCurrency(AssetId("GBP")) } },
+                                                ),
+                                            )
+                                            Text(
+                                                "Current: ${data.currency.value}. Add a manual quote for each asset and currency you use.",
+                                                color = Muted,
+                                                fontSize = 13.sp,
+                                            )
+                                            TextButton(onClick = { dialog = "price" }) { Text("Manage manual prices →") }
+                                        }
+                                    }
+                                    item {
+                                        Panel {
+                                            Text("Privacy & sync", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                            Text(
+                                                "Public indexers can associate queried addresses with your IP address. " +
+                                                    "Choose your own endpoint or stay offline.",
+                                                color = Muted,
+                                                lineHeight = 22.sp,
+                                            )
+                                            OutlinedButton(onClick = { dialog = "sync" }) { Text("Source & background updates") }
+                                            OutlinedButton(onClick = { dialog = "lock" }) { Text("Set app lock") }
+                                            TextButton(onClick = host::lock, enabled = host.hasLock) { Text("Lock now") }
+                                            if (host.hasLock) {
+                                                TextButton(onClick = {
+                                                    host.removeLockPassword {
+                                                        message = it
+                                                        revision++
+                                                    }
+                                                }) { Text("Remove privacy lock") }
+                                            }
+                                            Text(
+                                                "App lock hides the screen. The local database is stored in plaintext in " +
+                                                    "your app data directory; use device or disk encryption for protection at rest.",
+                                                color = Muted,
+                                                fontSize = 12.sp,
+                                            )
+                                        }
+                                    }
+                                    item {
+                                        Panel {
+                                            Text("Your data, in your hands", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                            Text(
+                                                "Create an encrypted backup before replacing or removing local data. Your " +
+                                                    "password cannot be recovered.",
+                                                color = Muted,
+                                                lineHeight = 22.sp,
+                                            )
+                                            WrapActions(
+                                                listOf(
+                                                    "Encrypted backup" to { dialog = "backup" },
+                                                    "Restore backup" to { dialog = "restore" },
+                                                    "All active activity CSV" to
+                                                        {
+                                                            execute("Export ready") {
+                                                                host.saveFile(
+                                                                    "polion-activities.csv",
+                                                                    app.exportCsv().encodeToByteArray(),
+                                                                ) {
+                                                                    message =
+                                                                        it
+                                                                }
+                                                            }
+                                                        },
+                                                ),
+                                            )
+                                            TextButton(
+                                                onClick = { dialog = "wipe" },
+                                            ) { Text("Erase local portfolio data", color = MaterialTheme.colorScheme.error) }
+                                        }
+                                    }
+                                    item {
+                                        Panel {
+                                            Text("Classification rules", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                            Text(
+                                                "Apply a repeatable classification to matching activity. Per-activity " +
+                                                    "corrections take precedence.",
+                                                color = Muted,
+                                            )
+                                            OutlinedButton(onClick = { dialog = "rule" }) { Text("Manage rules") }
+                                        }
+                                    }
+                                    item {
+                                        Panel {
+                                            Text("Your setup", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                            Text("Review your local preferences and supported source guidance.", color = Muted)
+                                            OutlinedButton(onClick = { onSetup(false) }) { Text("Resume setup") }
+                                            TextButton(onClick = { onSetup(true) }) { Text("Restart setup") }
+                                            setupError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                        }
+                                    }
+                                    if (data.ownership.owners.isEmpty()) {
+                                        item {
+                                            TextButton(onClick = {
+                                                execute("Example portfolio loaded. This is sample data.") { app.seedDemo() }
+                                            }) { Text("Explore with sample data") }
+                                        }
+                                    }
+                                    item { PrivacyFootnote() }
+                                }
                             }
                         }
+                        item { Spacer(Modifier.height(12.dp)) }
                     }
-                    item { Spacer(Modifier.height(12.dp)) }
                 }
             }
+        }
+        if (refreshDetails != null && showRefreshDetails) {
+            AlertDialog(
+                onDismissRequest = { showRefreshDetails = false },
+                title = { Text("Price refresh") },
+                text = { Text(refreshDetails!!) },
+                confirmButton = { TextButton(onClick = { showRefreshDetails = false }) { Text("Close") } },
+            )
         }
         if (dialog == "utxo") {
             UtxoReviewDialog(app, host) { dialog = null }
@@ -986,6 +1132,7 @@ private fun Product(
                     sourceDraftEndpoint = endpoint
                     sourceDraftConsent = allowed
                 },
+                initialAsset = manualAsset,
             )
         }
         addressWallet?.let { wallet ->
@@ -1005,22 +1152,14 @@ private fun Product(
                 confirmButton = { TextButton(onClick = { addressWallet = null }) { Text("Close") } },
             )
         }
-        widgetDraft?.let { draft ->
-            DashboardWidgetDialog(draft, { widgetDraft = it }, { widgetDraft = null }) { saved ->
-                execute("Dashboard saved") {
-                    app.setDashboardWidgets(saved)
-                    widgets = saved
-                }
-                widgetDraft = null
-            }
-        }
         removeAccount?.let { account ->
             AlertDialog(
                 onDismissRequest = { removeAccount = null },
                 title = { Text("Archive ${account.label}?") },
                 text = {
                     Text(
-                        "The account and its subaccounts will be hidden from active portfolios and their public address queries will stop. Saved addresses, activity, and accounting decisions stay on this device. This does not delete the account or its history. Restore it from Archived accounts on this page.",
+                        "The account and its subaccounts will be hidden from active portfolios and their public address " +
+                            "queries will stop. Saved addresses, activity, and accounting decisions stay on this device. This does not delete the account or its history. Restore it from Archived accounts on this page.",
                     )
                 },
                 confirmButton = {
@@ -1036,26 +1175,51 @@ private fun Product(
             )
         }
         sourceScanTarget?.let { target -> SourceScanDialog(app, host, target) { sourceScanTarget = null } }
+        selectedAsset?.let { asset ->
+            AssetDialog(
+                asset,
+                snapshot!!,
+                app,
+                host,
+                if (page ==
+                    Page.HOME
+                ) {
+                    null
+                } else {
+                    selectedPortfolio
+                },
+                revision,
+                { selectedAsset = null },
+                {
+                    manualAsset = asset.asset
+                    selectedAsset = null
+                    dialog = "price"
+                },
+                {
+                    if (page == Page.HOME) selectedPortfolio = null
+                    presenter.dispatch(ProductEvent.AssetActivity(asset.asset))
+                },
+                { activity -> selectedActivity = activity },
+                {
+                    execute("Provider prices selected; manual history retained") { app.useProviderPrices(asset.asset, snapshot!!.currency) }
+                    selectedAsset = null
+                },
+                onAddTransaction = { assetId ->
+                    manualAsset = assetId
+                    selectedAsset = null
+                    dialog = "activity"
+                },
+                onRefreshPrices = ::refreshPrices,
+            )
+        }
         selectedActivity?.let { item ->
             ActivityDialog(item, snapshot!!, {
-                ActivityEvidence(app, host, item.activity.id, selectedPortfolio)
+                ActivityEvidence(app, host, item.activity.id, if (page == Page.HOME) null else selectedPortfolio)
             }, { selectedActivity = null }) { overlay ->
                 execute("Correction saved; original evidence preserved") { app.saveOverlay(overlay) }
                 selectedActivity =
                     null
             }
-        }
-        selectedAsset?.let { asset ->
-            AssetDialog(asset, snapshot!!, app, host, selectedPortfolio, revision, { selectedAsset = null }, {
-                selectedAsset = null
-                dialog = "price"
-            }, { presenter.dispatch(ProductEvent.AssetActivity(asset.asset)) }, { activity ->
-                selectedAsset = null
-                selectedActivity = activity
-            }, {
-                execute("Provider prices selected; manual history retained") { app.useProviderPrices(asset.asset, snapshot!!.currency) }
-                selectedAsset = null
-            })
         }
     }
 }
@@ -1076,50 +1240,36 @@ private fun BalanceHero(
         Modifier
             .fillMaxWidth()
             .clip(Corners)
-            .background(Hero)
+            .background(MaterialTheme.colorScheme.surface)
             .padding(if (compact) 22.dp else 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("PRICED VALUE", color = Color(0xFFB6CFC2), fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Medium)
-            Text(data.currency.value, color = Color(0xFFB6CFC2), fontSize = 12.sp)
+            Text("PRICED VALUE", color = Muted, fontSize = 10.sp, letterSpacing = 1.8.sp, fontWeight = FontWeight.Medium)
+            Text(data.currency.value, color = Muted, fontSize = 12.sp)
         }
         val pricing = pricingSummary(data.valuations)
         Text(
             pricing.total?.let { money(it, data.currency) } ?: "—",
-            color = Color.White,
+            color = Ink,
             fontSize = if (compact) 34.sp else 44.sp,
             fontWeight = FontWeight.Medium,
             letterSpacing = (-1).sp,
             maxLines = 2,
         )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(6.dp).background(Color(0xFFA9D6B6), CircleShape))
-            Text(
-                if (data.coverage.name ==
-                    "COMPLETE"
-                ) {
-                    "Confirmed history"
-                } else {
-                    "Partial view · history coverage unverified"
-                },
-                color = Color(0xFFC5DCD0),
-                fontSize = 12.sp,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        val staleCount = pricing.stale
-        if (staleCount > 0) {
-            Text(
-                stalePriceMessage(staleCount),
-                color = Color(0xFFE9D3A6),
-                fontSize = 12.sp,
-            )
-        }
+        if (pricing.stale > 0) Text(stalePriceMessage(pricing.stale), color = Muted, fontSize = 12.sp)
+        if (chartLoading && points.isNotEmpty()) Text("Updating history…", color = Muted, fontSize = 12.sp)
+        val firstValue = points.firstOrNull()?.let(::historyTotal)
+        val lastValue = points.lastOrNull()?.let(::historyTotal)
+        Text(
+            "Value change · " + if (firstValue != null && lastValue != null) money(lastValue - firstValue, data.currency) else "—",
+            color = Muted,
+            fontSize = 12.sp,
+        )
         ValueChart(
             points,
             Modifier.fillMaxWidth().height(if (compact) 112.dp else 150.dp),
-            dark = true,
+            dark = false,
             loading = chartLoading,
             error = chartError,
         )
@@ -1131,9 +1281,9 @@ private fun BalanceHero(
                         if (period ==
                             days
                         ) {
-                            Hero
+                            Ink
                         } else {
-                            Color(0xFFB6CFC2)
+                            Muted
                         },
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1144,7 +1294,7 @@ private fun BalanceHero(
                                 if (period ==
                                     days
                                 ) {
-                                    Color(0xFFD6E9DD)
+                                    Mint
                                 } else {
                                     Color.Transparent
                                 },
@@ -1153,15 +1303,17 @@ private fun BalanceHero(
                 )
             }
         }
-        Text("Historical portfolio value · not investment return", color = Color(0xFFB6CFC2), fontSize = 11.sp)
-        if (!chartLoading && !chartError) HistoryInspector(points, data.currency)
+        Text("Historical portfolio value · not investment return", color = Muted, fontSize = 11.sp)
+        var chartDetails by rememberSaveable { mutableStateOf(false) }
+        TextButton(onClick = { chartDetails = !chartDetails }) { Text(if (chartDetails) "Hide chart details" else "Chart details") }
+        if (chartDetails && !chartLoading && !chartError) HistoryInspector(points, data.currency)
         val missing = pricing.missing
         if (missing >
             0
         ) {
             Text(
                 "$missing unpriced asset${if (missing == 1) "" else "s"} excluded · Add a price →",
-                color = Color(0xFFE9D3A6),
+                color = Orange,
                 fontSize = 12.sp,
                 modifier = Modifier.clickable(onClick = onPrice).padding(vertical = 4.dp),
             )
@@ -1184,7 +1336,7 @@ internal fun ValueChart(
                 ?.toString()
                 ?.toDoubleOrNull()
         }
-    if (loading || error || values.none { it != null }) {
+    if (values.none { it != null }) {
         Box(modifier, contentAlignment = Alignment.Center) {
             Text(
                 when {
@@ -1359,7 +1511,8 @@ private fun HealthCard(
         data.sourceStatus.lastSuccessfulRefresh?.let { Text("Last saved sync: ${date(it)} UTC", fontSize = 11.sp, color = Muted) }
         if (data.sourceStatus.utxoMismatchCount > 0) {
             Text(
-                "UTXO comparison needs review: ${data.sourceStatus.utxoMismatchCount} differences or missing parents. History coverage remains partial.",
+                "UTXO comparison needs review: ${data.sourceStatus.utxoMismatchCount} differences or missing parents. " +
+                    "History coverage remains partial.",
                 color = Orange,
                 fontSize = 12.sp,
             )
@@ -1743,7 +1896,7 @@ private fun symbol(
     ?.metadata
     ?.symbol ?: asset.value.substringAfterLast(':').uppercase()
 
-private fun formatUnits(
+internal fun formatUnits(
     units: ExactInteger,
     decimals: Int,
 ): String =
@@ -1757,7 +1910,7 @@ private fun formatUnits(
         }
     }
 
-private fun money(
+internal fun money(
     value: ExactDecimal,
     currency: AssetId,
 ): String {

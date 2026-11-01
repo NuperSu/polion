@@ -66,7 +66,8 @@ class OnboardingHandoffUiTest {
                         onNodeWithText(if (choice.workflow == SourceWorkflow.BITCOIN_PUBLIC_WALLET) "Cancel" else "Close")
                             .performScrollTo()
                             .performClick()
-                        onNodeWithTag("destination-SETTINGS").performClick()
+                        onNodeWithTag("workspace-menu").performClick()
+                        onNodeWithText("Settings").performClick()
                         onNodeWithTag("destination-HOME").performClick()
                         onNodeWithText(title).assertDoesNotExist()
                         assertOfflineAndEmpty(app, host)
@@ -109,7 +110,7 @@ class OnboardingHandoffUiTest {
                         onNodeWithTag("onboarding").performScrollToNode(hasText("Skip setup for now"))
                         onNodeWithText("Skip setup for now").performClick()
                         waitUntil(timeoutMillis = 10_000) {
-                            onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                            onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
                         assertTrue(app.onboardingState()!!.skipped)
                         assertOfflineAndEmpty(app, host)
@@ -122,9 +123,10 @@ class OnboardingHandoffUiTest {
                     runDesktopComposeUiTest(width = 1000, height = 900) {
                         setContent { PolionApp(app, host) }
                         waitUntil(timeoutMillis = 10_000) {
-                            onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                            onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
-                        onNodeWithTag("destination-SETTINGS").performClick()
+                        onNodeWithTag("workspace-menu").performClick()
+                        onNodeWithText("Settings").performClick()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Resume setup"))
                         onNodeWithText("Resume setup").performClick()
                         waitUntil(timeoutMillis = 10_000) {
@@ -144,7 +146,7 @@ class OnboardingHandoffUiTest {
                         onNodeWithTag("onboarding").performScrollToNode(hasTestTag("onboarding-finish"))
                         onNodeWithTag("onboarding-finish").performClick()
                         waitUntil(timeoutMillis = 10_000) {
-                            onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                            onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
                         assertOfflineAndEmpty(app, host)
                     }
@@ -156,7 +158,7 @@ class OnboardingHandoffUiTest {
                     runDesktopComposeUiTest(width = 1000, height = 900) {
                         setContent { PolionApp(app, host) }
                         waitUntil(timeoutMillis = 10_000) {
-                            onAllNodesWithText("Home").fetchSemanticsNodes().isNotEmpty()
+                            onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
                         onNodeWithTag("onboarding").assertDoesNotExist()
                         onNodeWithText("Track a Bitcoin wallet").assertDoesNotExist()

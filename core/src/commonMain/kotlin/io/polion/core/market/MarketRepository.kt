@@ -127,6 +127,19 @@ class MarketRepository(
             )
         }
 
+    /** Candidate non-fiat bases with saved quotes visible at the requested market/knowledge time. */
+    fun savedPricedAssets(
+        quote: AssetId,
+        atMillis: Long,
+        knownAtMillis: Long,
+    ): List<AssetId> =
+        db
+            .query(
+                "SELECT DISTINCT p.base_asset FROM market_prices p JOIN market_assets a ON a.id=p.base_asset " +
+                    "WHERE p.quote_asset=? AND p.valid_at<=? AND p.observed_at<=? AND a.kind<>? ORDER BY p.base_asset",
+                listOf(quote.value, atMillis.toString(), knownAtMillis.toString(), AssetKind.FIAT.name),
+            ).map { AssetId(requireNotNull(it.single())) }
+
     fun metadataAt(
         asset: AssetId,
         atMillis: Long,

@@ -1,6 +1,6 @@
-# Original design direction
+# Design direction
 
-This Phase 1 proposal guides presentation work; it does not describe a completed theme or new metrics. The current application uses a light palette, teal/ink accents, rounded panels and responsive Overview/Activity/Accounts/Reports/Settings pages. See [UI map](ui-map.md) for the migration and [product contract](product-contract.md) for capability claims.
+The production frontend follows the local `uiModel` reference: black backgrounds, charcoal cards, outlined navigation icons and Main/Portfolio/Insights destinations. Light and System appearances use semantic colors. See [UI map](ui-map.md), [frontend behavior](frontend-rewrite.md) and [product contract](product-contract.md) for implemented workflows and capability boundaries.
 
 ## Visual hierarchy
 

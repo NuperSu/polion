@@ -144,7 +144,7 @@ internal class ProductPresenter(
             update { copy(chart = cached.points, chartLoading = false, chartError = false) }
             return
         }
-        update { copy(chart = emptyList(), chartLoading = true, chartError = false) }
+        update { copy(chartLoading = true, chartError = false) }
         try {
             val loaded =
                 withContext(dispatcher) {
@@ -236,6 +236,15 @@ internal fun rememberProductPresenter(
                             it.state.selectedPortfolio
                                 ?.value
                                 .orEmpty(),
+                            it.state.detailAsset
+                                ?.value
+                                .orEmpty(),
+                            it.state.kind
+                                ?.name
+                                .orEmpty(),
+                            it.state.selectedAccount
+                                ?.value
+                                .orEmpty(),
                         )
                     },
                     restore = {
@@ -266,6 +275,22 @@ internal fun rememberProductPresenter(
                                             io.polion.core.model
                                                 .PortfolioId(value)
                                         },
+                                detailAsset =
+                                    (it.getOrNull(9) as? String)?.takeIf(String::isNotEmpty)?.let { value ->
+                                        io.polion.core.model
+                                            .AssetId(value)
+                                    },
+                                kind =
+                                    (
+                                        it.getOrNull(
+                                            10,
+                                        ) as? String
+                                    )?.takeIf(String::isNotEmpty)?.let(io.polion.core.ledger.ActivityKind::valueOf),
+                                selectedAccount =
+                                    (it.getOrNull(11) as? String)?.takeIf(String::isNotEmpty)?.let { value ->
+                                        io.polion.core.model
+                                            .AccountId(value)
+                                    },
                             ),
                             applicationQueries(app),
                             host.dispatcher,

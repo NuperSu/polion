@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -45,7 +46,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import io.polion.core.application.AssetValuation
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.bitcoin.bitcoinMainnetAddress
@@ -85,6 +85,14 @@ import io.polion.core.reconcile.TransferLinkConflict
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import kotlin.time.Instant
+
+private val assetIdSaver = Saver<AssetId, String>(save = { it.value }, restore = { AssetId(it) })
+private val accountIdSaver =
+    Saver<AccountId?, String>(save = { it?.value.orEmpty() }, restore = { it.takeIf(String::isNotEmpty)?.let(::AccountId) })
+private val ownerIdSaver =
+    Saver<OwnerId?, String>(save = { it?.value.orEmpty() }, restore = { it.takeIf(String::isNotEmpty)?.let(::OwnerId) })
+private val activityKindSaver = Saver<ActivityKind, String>(save = { it.name }, restore = ActivityKind::valueOf)
 
 @Composable
 internal fun WorkflowDialog(
@@ -96,34 +104,39 @@ internal fun WorkflowDialog(
     execute: (String, () -> Unit) -> Unit,
     notify: (String) -> Unit,
     sourceSaved: (String, Boolean) -> Unit,
+    initialAsset: AssetId? = null,
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var address by rememberSaveable { mutableStateOf(if (type == "sync") data.sourceEndpoint else "") }
     var amount by rememberSaveable { mutableStateOf("") }
+    var manualFee by rememberSaveable { mutableStateOf("") }
+    var manualTime by rememberSaveable { mutableStateOf("") }
+    var manualAccountName by rememberSaveable { mutableStateOf("Manual account") }
+    var creatingManualAccount by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
-    var owner by remember {
+    var owner by rememberSaveable(stateSaver = ownerIdSaver) {
         mutableStateOf(
             data.ownership.owners
                 .firstOrNull()
                 ?.id,
         )
     }
-    var account by remember {
+    var account by rememberSaveable(stateSaver = accountIdSaver) {
         mutableStateOf(
             data.ownership.accounts
                 .firstOrNull { it.kind != AccountKind.GROUP && "polion:archived" !in it.tags }
                 ?.id,
         )
     }
-    var parent by remember { mutableStateOf<AccountId?>(null) }
-    var selectedKind by remember { mutableStateOf(ActivityKind.DEPOSIT) }
+    var parent by rememberSaveable(stateSaver = accountIdSaver) { mutableStateOf<AccountId?>(null) }
+    var selectedKind by rememberSaveable(stateSaver = activityKindSaver) { mutableStateOf(ActivityKind.DEPOSIT) }
     var rules by remember { mutableStateOf<List<ClassificationRule>>(emptyList()) }
     var rulesLoaded by remember { mutableStateOf(false) }
     var editingRule by remember { mutableStateOf<ClassificationRule?>(null) }
     var showRuleEditor by remember { mutableStateOf(false) }
-    var asset by remember { mutableStateOf(AssetId("bitcoin:btc")) }
+    var asset by rememberSaveable(stateSaver = assetIdSaver) { mutableStateOf(initialAsset ?: AssetId("bitcoin:btc")) }
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
     var priceConsent by rememberSaveable { mutableStateOf(false) }
     var automaticPriceConsent by remember { mutableStateOf(false) }
@@ -302,7 +315,30 @@ internal fun WorkflowDialog(
                     fontSize = 13.sp,
                 )
                 if (data.ownership.accounts.none { it.kind != AccountKind.GROUP && "polion:archived" !in it.tags }) {
-                    Text("Create an account first.")
+                    Text("Create a local account for your manual entries. No provider connection is required.")
+                    Field("Account name", manualAccountName) { manualAccountName = it }
+                    Button(onClick = {
+                        if (manualAccountName.isBlank()) {
+                            error = "Enter an account name."
+                            return@Button
+                        }
+                        creatingManualAccount = true
+                        execute("Manual account created") {
+                            try {
+                                val ownerId =
+                                    data.ownership.owners
+                                        .firstOrNull()
+                                        ?.id ?: OwnerId(uniqueId("owner")).also {
+                                        app.saveOwner(Owner(it, "Personal"))
+                                    }
+                                val accountId = AccountId(uniqueId("manual-account"))
+                                app.saveAccount(Account(accountId, ownerId, manualAccountName.trim(), AccountKind.WALLET))
+                                account = accountId
+                            } finally {
+                                creatingManualAccount = false
+                            }
+                        }
+                    }, enabled = !creatingManualAccount) { Text("Create manual account") }
                 } else {
                     Choice(
                         "Account",
@@ -314,23 +350,75 @@ internal fun WorkflowDialog(
                         account =
                             it
                     }
-                    Choice("Classification", ActivityKind.entries.map { it to it.name.lowercase() }, selectedKind) { selectedKind = it }
-                    Field("Bitcoin quantity (e.g. 0.025 or -0.01)", amount) { amount = it }
+                    val manualKinds = listOf(ActivityKind.DEPOSIT, ActivityKind.PAYMENT, ActivityKind.REWARD)
+                    Choice("Classification", manualKinds.map { it to it.name.lowercase() }, selectedKind) { selectedKind = it }
+                    Text(
+                        "Deposits and rewards use positive quantities; payments use negative quantities. Buy/sell trades and transfers between accounts are unavailable in this form.",
+                        fontSize = 12.sp,
+                    )
+                    val manualAssets =
+                        (data.valuations + data.marketCoins.map { it.detailValuation() })
+                            .distinctBy { it.asset }
+                            .filter { it.metadata != null }
+                    val manualChoices =
+                        (
+                            manualAssets.map { it.asset to (it.metadata?.name ?: it.asset.value) } +
+                                (AssetId("bitcoin:btc") to "Bitcoin")
+                        ).distinctBy { it.first }
+                    Choice("Asset", manualChoices, asset) { asset = it }
+                    val metadata = manualAssets.find { it.asset == asset }?.metadata
+                    val decimals = metadata?.decimals ?: if (asset == AssetId("bitcoin:btc")) 8 else null
+                    val symbol = metadata?.symbol ?: if (asset == AssetId("bitcoin:btc")) "BTC" else asset.value
+                    Field("$symbol quantity (positive or negative)", amount) { amount = it }
+                    Field("Fee in $symbol (optional, positive)", manualFee) { manualFee = it }
+                    Field("Date & time (UTC, ISO 8601; empty = now)", manualTime) { manualTime = it }
                     Field("Label (optional)", name) { name = it }
                     Button(onClick = {
                         val units =
                             runCatching {
                                 AtomicAmount.fromDecimal(
-                                    AssetId("bitcoin:btc"),
+                                    asset,
                                     ExactDecimal.parse(amount),
-                                    8,
+                                    requireNotNull(decimals),
                                 )
                             }.getOrNull()
                         if (units == null ||
                             units.atomicUnits.sign == 0 ||
-                            account == null
+                            account == null ||
+                            data.ownership.accounts.none {
+                                it.id == account && it.kind != AccountKind.GROUP && "polion:archived" !in it.tags
+                            }
                         ) {
-                            error = "Enter a nonzero Bitcoin quantity with up to 8 decimal places."
+                            error = "Enter a nonzero $symbol quantity with up to ${decimals ?: 0} decimal places."
+                            return@Button
+                        }
+                        if (selectedKind !in manualKinds ||
+                            (selectedKind == ActivityKind.PAYMENT && units.atomicUnits.sign >= 0) ||
+                            (selectedKind != ActivityKind.PAYMENT && units.atomicUnits.sign <= 0)
+                        ) {
+                            error = "Use a positive quantity for deposits/rewards or a negative quantity for payments."
+                            return@Button
+                        }
+                        val fee =
+                            if (manualFee.isBlank()) {
+                                null
+                            } else {
+                                runCatching {
+                                    AtomicAmount.fromDecimal(asset, ExactDecimal.parse(manualFee), requireNotNull(decimals))
+                                }.getOrNull()
+                            }
+                        if (manualFee.isNotBlank() && (fee == null || fee.atomicUnits.sign <= 0)) {
+                            error = "Enter a positive fee in $symbol or leave the fee empty."
+                            return@Button
+                        }
+                        val occurredAt =
+                            if (manualTime.isBlank()) {
+                                Clock.System.now().toEpochMilliseconds()
+                            } else {
+                                runCatching { Instant.parse(manualTime.trim()).toEpochMilliseconds() }.getOrNull()
+                            }
+                        if (occurredAt == null || occurredAt < 0) {
+                            error = "Enter a UTC date and time such as 2026-11-01T12:00:00Z."
                             return@Button
                         }
                         execute("Manual activity recorded") {
@@ -338,7 +426,7 @@ internal fun WorkflowDialog(
                             app.saveManualActivity(
                                 Activity(
                                     id,
-                                    Clock.System.now().toEpochMilliseconds(),
+                                    occurredAt,
                                     id.value,
                                     selectedKind,
                                     ActivityStatus.CONFIRMED,
@@ -355,7 +443,17 @@ internal fun WorkflowDialog(
                                                 MovementRole.TRANSFER
                                             },
                                         ),
-                                    ),
+                                    ) +
+                                        listOfNotNull(
+                                            fee?.let {
+                                                Movement(
+                                                    EventId("${id.value}:fee"),
+                                                    account!!,
+                                                    AtomicAmount(asset, -it.atomicUnits),
+                                                    MovementRole.FEE,
+                                                )
+                                            },
+                                        ),
                                     emptySet(),
                                     null,
                                     true,
@@ -374,7 +472,10 @@ internal fun WorkflowDialog(
                 )
                 val assets =
                     (
-                        data.valuations.map { it.asset to (it.metadata?.name ?: it.asset.value) } +
+                        (data.valuations + data.marketCoins.map { it.detailValuation() }).map {
+                            it.asset to
+                                (it.metadata?.name ?: it.asset.value)
+                        } +
                             (AssetId("bitcoin:btc") to "Bitcoin")
                     ).distinctBy { it.first }.filter { it.first != data.currency }
                 Choice("Asset", assets, asset) { asset = it }
@@ -440,7 +541,7 @@ internal fun WorkflowDialog(
                                 withContext(host.dispatcher) { app.setAutomaticPortfolioPriceConsent(accepted) }
                                 host.setAutomaticPriceRefresh(true)
                             }
-                        })
+                        }, modifier = Modifier.testTag("automatic-portfolio-price-consent"))
                         Text("Include other portfolio currencies", modifier = Modifier.padding(top = 12.dp))
                     }
                     Text(
@@ -519,7 +620,7 @@ internal fun WorkflowDialog(
                 Row {
                     Switch(background, { background = it })
                     Text(
-                        "Background refresh (about every 30 minutes)",
+                        "Automatic refresh (history ~30 min, prices hourly)",
                         Modifier.weight(1f).padding(start = 12.dp, top = 8.dp),
                         fontSize = 13.sp,
                     )
@@ -544,7 +645,7 @@ internal fun WorkflowDialog(
                                 app.setSourceEndpoint(address)
                                 app.setSourceConsent(consent)
                                 host.setBackgroundRefresh(
-                                    background && consent,
+                                    background,
                                 )
                             }
                         }.fold({
@@ -988,66 +1089,6 @@ internal fun ActivityDialog(
             save(ActivityOverlay(item.activity.id, label.trim().ifEmpty { null }, note.trim().ifEmpty { null }, kind, amounts))
         }, modifier = Modifier.fillMaxWidth()) { Text("Save correction") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-    }
-}
-
-@Composable
-internal fun AssetDialog(
-    asset: AssetValuation,
-    data: PortfolioSnapshot,
-    app: PortfolioApplication,
-    host: PlatformActions,
-    portfolio: io.polion.core.model.PortfolioId?,
-    revision: Int,
-    close: () -> Unit,
-    price: () -> Unit,
-    activity: () -> Unit,
-    disposalActivity: (EffectiveActivity) -> Unit,
-    useProviderPrices: () -> Unit,
-) {
-    var showAccounting by remember(asset.asset, portfolio) { mutableStateOf(false) }
-    FormDialog(asset.metadata?.name ?: asset.asset.value, close) {
-        Text(asset.asset.value, fontSize = 12.sp)
-        Text(
-            "${asset.metadata?.let { "${asset.amount.decimal(it.decimals)} ${it.symbol}" } ?: "${asset.amount.atomicUnits} atomic units"}",
-            fontSize = 25.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text("Price status: ${asset.priceStatus.name.lowercase()}")
-        asset.price?.let { p ->
-            Text("${p.price.value} ${data.currency.value} per whole coin")
-            Text(
-                "${if (p.manual) "Manual observation" else p.providerId?.value}\nEffective ${kotlin.time.Instant.fromEpochMilliseconds(
-                    p.validAtMillis,
-                )}\nObserved ${kotlin.time.Instant.fromEpochMilliseconds(p.observedAtMillis)}",
-                fontSize = 12.sp,
-            )
-            if (p.manual) {
-                Text(
-                    "Manual prices override provider prices until you switch back. Historical observations stay saved. " +
-                        "If no provider price is available, this asset will be unpriced.",
-                    fontSize = 12.sp,
-                )
-                OutlinedButton(
-                    onClick = useProviderPrices,
-                    modifier = Modifier.testTag("use-provider-prices"),
-                ) { Text("Use provider prices from now") }
-            }
-        }
-        Text(
-            "Confirmed quantities are reconstructed from the same effective ledger as reports. Pending movements are excluded. Missing prices remain unknown.",
-            fontSize = 13.sp,
-        )
-        AssetAccountBreakdown(asset, data.balances, data.ownership.accounts)
-        OutlinedButton(onClick = activity) { Text("View asset activity") }
-        if (showAccounting) {
-            AssetAccountingDetails(app, host, asset, data, portfolio, revision, disposalActivity)
-        } else {
-            OutlinedButton(onClick = { showAccounting = true }, modifier = Modifier.testTag("load-asset-accounting")) {
-                Text("View FIFO lots and disposals")
-            }
-        }
-        Button(onClick = price) { Text("Set a manual price") }
     }
 }
 

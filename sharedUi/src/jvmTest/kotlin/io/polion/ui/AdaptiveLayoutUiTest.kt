@@ -13,10 +13,12 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
@@ -50,7 +52,9 @@ class AdaptiveLayoutUiTest {
                     }
                     onNodeWithTag("compact-navigation").assertIsDisplayed()
                     onNodeWithTag("workspace-rail").assertDoesNotExist()
-                    onNodeWithTag("destination-ACTIVITY").performClick()
+                    onNodeWithTag("workspace-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").performTextInput("demo-deposit")
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("1 activities", substring = true).fetchSemanticsNodes().isNotEmpty()
@@ -59,20 +63,21 @@ class AdaptiveLayoutUiTest {
                         runOnIdle { viewportWidth = width }
                         onNodeWithTag(if (width < 700) "compact-navigation" else "workspace-rail").assertIsDisplayed()
                         onNodeWithTag(if (width < 700) "workspace-rail" else "compact-navigation").assertDoesNotExist()
-                        onNodeWithTag("destination-ACTIVITY").assertIsSelected()
+                        onNodeWithText("Activity").assertIsDisplayed()
                         onNodeWithText("demo-deposit").assertIsDisplayed()
                         onNodeWithTag("page-content").performScrollToNode(hasText("1 activities", substring = true))
                         onNodeWithText("1 activities", substring = true).assertIsDisplayed()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Search activity"))
                     }
-                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("workspace-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
                     runOnIdle { viewportWidth = 700 }
-                    onNodeWithTag("destination-ACCOUNTS").assertIsSelected()
+                    onNodeWithTag("workspace-menu").assertIsDisplayed()
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
                     runOnIdle { viewportWidth = 360 }
-                    onNodeWithTag("destination-MORE").assertIsSelected()
+                    onNodeWithTag("workspace-menu").assertIsDisplayed()
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
                 }
             }
@@ -101,14 +106,22 @@ class AdaptiveLayoutUiTest {
                         val bounds = node.fetchSemanticsNode().boundsInRoot
                         assertTrue(bounds.left >= 0f && bounds.right <= 640f && bounds.top >= 0f && bounds.bottom <= 360f)
                     }
-                    onNodeWithTag("destination-MORE").performClick()
+                    onNodeWithTag("workspace-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("more-SETTINGS"))
                     onNodeWithTag("more-SETTINGS").performClick()
-                    onNodeWithTag("page-content").performScrollToNode(hasTestTag("appearance-dark"))
-                    onNodeWithTag("appearance-dark").assertIsDisplayed().performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.appearanceTheme() == "dark" }
-                    onNodeWithTag("appearance-dark").assertIsSelected()
-                    onNodeWithTag("destination-MORE").performClick()
+                    for (key in listOf("light", "dark")) {
+                        val tag = "appearance-$key"
+                        onNodeWithTag("page-content").performScrollToNode(hasTestTag(tag))
+                        onNodeWithTag(tag).performScrollTo().assertIsDisplayed().performClick()
+                        waitUntil(timeoutMillis = 10_000) {
+                            app.appearanceTheme() == key && onAllNodes(hasTestTag(tag) and isSelected()).fetchSemanticsNodes().isNotEmpty()
+                        }
+                        onNodeWithTag("page-content").performScrollToNode(hasTestTag(tag))
+                        onNodeWithTag(tag).performScrollTo().assertIsSelected()
+                    }
+                    onNodeWithTag("workspace-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("more-REPORTS"))
                     onNodeWithTag("more-REPORTS").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("↓  Export all active activity CSV"))
@@ -117,8 +130,8 @@ class AdaptiveLayoutUiTest {
                     assertTrue(host.exportedName == "polion-activities.csv")
                     onNodeWithTag("destination-HOME").performClick()
                     onNodeWithTag("destination-HOME").assertIsSelected()
-                    onNodeWithTag("page-content").performScrollToNode(hasText("Your portfolio"))
-                    onNodeWithText("Your portfolio").assertIsDisplayed()
+                    onNodeWithTag("page-content").performScrollToNode(hasText("Market"))
+                    onNodeWithText("Market").assertIsDisplayed()
                 }
             }
         }

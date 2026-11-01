@@ -29,7 +29,7 @@ internal enum class AppearanceTheme(
     ;
 
     companion object {
-        fun fromKey(key: String): AppearanceTheme = entries.firstOrNull { it.key == key } ?: SYSTEM
+        fun fromKey(key: String): AppearanceTheme = entries.firstOrNull { it.key == key } ?: DARK
     }
 }
 
@@ -65,16 +65,27 @@ private val lightColors =
     )
 private val darkColors =
     darkColorScheme(
-        primary = Color(0xFF85D5BC),
+        primary = Color(0xFF27D569),
         onPrimary = Color(0xFF073A2D),
-        background = Color(0xFF101C19),
-        surface = Color(0xFF192A25),
-        onSurface = Color(0xFFE0EEE7),
-        onBackground = Color(0xFFE0EEE7),
-        onSurfaceVariant = Color(0xFFB3C7BC),
-        outline = Color(0xFF425B50),
-        primaryContainer = Color(0xFF294C40),
-        onPrimaryContainer = Color(0xFFD2F2E2),
+        background = Color(0xFF000000),
+        surface = Color(0xFF171717),
+        onSurface = Color(0xFFF5F5F5),
+        onBackground = Color(0xFFF5F5F5),
+        onSurfaceVariant = Color(0xFF969696),
+        outline = Color(0xFF303030),
+        primaryContainer = Color(0xFF252525),
+        onPrimaryContainer = Color(0xFFF5F5F5),
+        secondary = Color(0xFFF5F5F5),
+        onSecondary = Color(0xFF171717),
+        secondaryContainer = Color(0xFF252525),
+        onSecondaryContainer = Color(0xFFF5F5F5),
+        surfaceVariant = Color(0xFF252525),
+        surfaceContainer = Color(0xFF171717),
+        surfaceContainerHigh = Color(0xFF252525),
+        surfaceContainerHighest = Color(0xFF303030),
+        outlineVariant = Color(0xFF303030),
+        inverseSurface = Color(0xFF303030),
+        inverseOnSurface = Color(0xFFF5F5F5),
     )
 private val localFinancialColors =
     staticCompositionLocalOf {
@@ -89,7 +100,7 @@ internal fun PolionTheme(
     val dark = appearance == AppearanceTheme.DARK || (appearance == AppearanceTheme.SYSTEM && isSystemInDarkTheme())
     val financial =
         if (dark) {
-            FinancialColors(Color(0xFF85D5BC), Color(0xFFFFB4AB), Color(0xFFF0BD80), Color(0xFF49341F))
+            FinancialColors(Color(0xFF27D569), Color(0xFFFFB4AB), Color(0xFFF0BD80), Color(0xFF49341F))
         } else {
             FinancialColors(Color(0xFF267969), Color(0xFFAD342D), Color(0xFF87521C), Color(0xFFFFF0DE))
         }
@@ -108,7 +119,6 @@ internal val Orange: Color @Composable get() = localFinancialColors.current.warn
 internal val WarningSurface: Color @Composable get() = localFinancialColors.current.warningSurface
 internal val FinancialGain: Color @Composable get() = localFinancialColors.current.gain
 internal val FinancialLoss: Color @Composable get() = localFinancialColors.current.loss
-internal val Hero = Color(0xFF183A36)
 internal val Corners = RoundedCornerShape(22.dp)
 
 @OptIn(ExperimentalLayoutApi::class)

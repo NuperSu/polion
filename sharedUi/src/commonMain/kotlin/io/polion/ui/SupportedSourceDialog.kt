@@ -36,6 +36,7 @@ internal fun SupportedSourceDialog(
         title = { Text("Add to your portfolio") },
         text = {
             LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item { Text("Choose how to add transactions", style = MaterialTheme.typography.titleMedium) }
                 items(SupportedSources.choices, key = { it.id }) { choice ->
                     OutlinedButton(
                         onClick = { onSelect(choice) },
@@ -49,6 +50,13 @@ internal fun SupportedSourceDialog(
                             }
                         }
                     }
+                }
+                item {
+                    Text("Import CSV · unavailable", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "File import is not connected. Add a manual transaction or connect a supported public Bitcoin source.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         },
