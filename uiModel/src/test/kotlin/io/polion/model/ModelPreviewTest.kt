@@ -123,6 +123,7 @@ class ModelPreviewTest {
                         capture("manual-scrolled")
                         onNodeWithTag("preview-save-transaction").performClick()
                         onNodeWithTag("model-menu").performClick()
+                        capture("menu")
                         onNodeWithText("Settings").performClick()
                         onNodeWithTag("automatic-refresh").assertIsDisplayed().performClick()
                         capture("settings")

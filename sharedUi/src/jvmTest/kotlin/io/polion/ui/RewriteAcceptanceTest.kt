@@ -126,6 +126,7 @@ class RewriteAcceptanceTest {
                         assertEquals("polion-activities.csv", host.exportedName)
                         assertTrue(host.exported!!.isNotEmpty())
                         onNodeWithTag("workspace-menu").performClick()
+                        capture("menu")
                         onNodeWithText("Accounts").performClick()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Watch-only accounts"))
                         onNodeWithText("Watch-only accounts").assertIsDisplayed()
