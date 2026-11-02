@@ -9,3 +9,7 @@ Create explicit states for Main, Portfolio, Coin detail, Transactions, Insights,
 Render the shared production components with the same deterministic fixture used by the reference preview. This proves composition before backend availability becomes an excuse to substitute older panels. Integrations then supply the same typed contracts.
 
 **Exit:** side-by-side visual review passes for every modeled screen at the three target sizes and enlarged text. No unexplained structural differences remain. This is a presentation milestone, not a fully functional release.
+
+## Current acceptance status
+
+The shared presentation implementation and nonvisual JVM checks are ready for visual review at source commit `75378c3`. The [evidence record](phase-1-evidence.md) lists the tested controls, recreation and keyboard coverage, builds and remaining device evidence. The user-owned side-by-side review remains the Phase 1 exit gate. Later services and financial correctness remain separate roadmap work.

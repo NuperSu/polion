@@ -1,6 +1,8 @@
 # UI model parity inventory
 
-Source inventory at revision `80169eb` (2 November 2026). This is a code inspection baseline, not a visual or functional acceptance result. The model is an independent sample-data preview; its `remember` state and preview-only actions are not production behavior. Source line numbers below identify the inspected entry points. Update this inventory and record the tested revision when gates change.
+The fixture host and production workspace use shared typed presentation renderers for the model screens. Fixture financial values remain illustrative; production adapters supply real data where available and expose unavailable states for unsupported capabilities. The visual gate remains pending user review. See [Phase 1 evidence](ui-model-phases/phase-1-evidence.md) for current test and capture status.
+
+The inventory below records the source inspection baseline at revision `80169eb` (2 November 2026). Its source line numbers and production descriptions identify that historical inspection, not the current implementation or an acceptance result.
 
 ## Evidence and status
 
@@ -92,5 +94,3 @@ These are proposed presentation contracts. Loading retains eligible saved conten
 - [ ] Test all controls, navigation, sorting, ranges, keyboard focus and recreation/draft state on both hosts.
 - [ ] Establish independent financial examples for each calculation, including flows, transfers, fees, missing basis/prices and ordering; reconcile exports.
 - [ ] Record separate Android and desktop build, launch and journey evidence at the tested revision. Review hosted CI separately.
-
-A bounded first extraction is the Portfolio headline/chart frame and range row: the model composition is localized at `PortfolioModel.kt:568`, while existing balance/history inputs and callbacks are assembled at `PolionApp.kt:560`. Extract presentation with typed state and injected range/action callbacks, render the same fixture in the preview, then compare at all target sizes. Keep the existing valuation/history semantics and show change as unavailable until the defined calculation is implemented and independently verified; holdings and other screens remain separate work.
