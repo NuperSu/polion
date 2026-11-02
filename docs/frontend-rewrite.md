@@ -1,23 +1,25 @@
 # Frontend and refresh behavior
 
-The production interface follows the local `uiModel` visual reference using semantic black/charcoal surfaces in dark mode. Explicit Light and System preferences remain available. Production components use saved application projections; design fixtures are confined to `uiModel`.
+The production default renders the shared `ModelShell` and typed shared screen components in `sharedUi`. `ModelWorkspace` adapts saved application data to each screen's typed state and sends actions to application workflows. The `uiModel` host supplies illustrative fixture data to the same presentation components. Dark, Light and System appearances are available.
 
 ## Destinations and action map
 
 | Destination | Content and actions |
 | --- | --- |
-| Main | Saved unit prices, persisted asset favorites, labeled unavailable global rankings, trending, gainers and losers. No portfolio summary. |
-| Portfolio | Portfolio and quote selection, priced value, historical value chart/ranges, sortable/filterable holdings, floating add action. Chart values are distinguished from investment returns. |
-| Coin detail | Quantity, saved unit price, evidence-dependent FIFO basis/gains, General saved-price chart, scoped Transactions search/type filters/pagination/details/manual entry. Alerts and Order book disclose unavailable services. |
-| Insights | Portfolio scope, historical value, allocation, analytics, FIFO treatments/reports, ordering verification, reconciliation and scoped CSV. Unsupported performance calculations remain unavailable. |
-| Menu → Accounts | Owners, groups, portfolios, public addresses, descriptor/xpub wallets, address discovery/scan details, UTXO comparison, archive/restore, explicit wallet-history refresh. |
-| Menu → Settings | Appearance, currency, manual/provider prices and consent, automatic refresh and Android background network preference, privacy lock, backup/restore, erasure, rule management and setup. |
-| Menu → Advanced tools → Activity | Ledger search, account/asset/type/status/network filters, pagination, manual entry, provenance and corrections. |
-| Portfolio + | Supported Bitcoin source methods and real manual entry. CSV import is explicitly unavailable. |
+| Main | Saved market prices and persisted favorites are bound. Global discovery, trending and rankings are not supplied to this screen. Portfolio totals are shown on Portfolio. |
+| Portfolio | Portfolio selection, priced balance, saved historical-value chart/ranges, and holdings are bound. Current saved hide-empty, hide-small and sort preferences apply to holdings; the visible Sort / filter controls open Advanced tools. Quote/currency changes are in contextual Portfolio tools. Value change and gain columns are unavailable here. The floating Add action opens a full-screen shared form. |
+| Coin detail | Owned quantity, market value and saved quote are bound. Cost basis/gain metrics, transaction summaries, price-chart observations, and coin-level transaction search/type filters are unavailable in this screen. The Back action returns to the previous screen. Transactions link to the contextual activity workflow, where ledger search and filters remain available. Alerts and Order book are unavailable in production. Order-book rows use compact alternating bands when supplied by a host. |
+| Insights | Portfolio and priced balance are bound. History series, performance, allocation, gains and other analytics are shown as unavailable until supported data is supplied. Reporting and accounting tools remain in Advanced tools. |
+| Menu → Accounts | The shared screen lists saved accounts. Account ownership, public addresses, descriptor/xpub wallets, discovery/scan details, UTXO comparison, archive/restore and wallet-history refresh are available through contextual account tools. |
+| Menu → Settings | Automatic refresh and network preference are bound. Appearance, currency, price sources and consent, privacy lock, backup/restore, erasure, rule management and setup remain in contextual settings workflows. |
+| Menu → Advanced tools | Opens the full activity, account, portfolio, reporting and settings workflows, including saved transaction records, search/filters, provenance, corrections and accounting tools. These workflows remain the source for records and cost-basis review. |
+| Portfolio + | Opens the full-screen shared Add flow. Supported wallet and manual-entry actions hand off to their existing workflows; unsupported exchange and import choices are disabled and muted. |
 
-Compact layouts use three bottom destinations; desktop uses the same sidebar destinations. Auxiliary screens have a back action. Coin details and workflow forms have close actions. Presenter state saves portfolio, screen, activity filters, period and the selected coin identity across recreation. Coin tabs, search/type filters and chart range use saveable state.
+Compact layouts use three bottom destinations; desktop uses the same sidebar destinations. Coin detail and auxiliary screens return via Back; workflow forms use Close. Presenter state saves portfolio, screen, activity filters, period and the selected coin identity across recreation. Coin tabs and chart range use saveable state; activity search and filters are handled in Advanced tools.
 
-Manual entry can create a local account without a provider. It supports deposits, payments and rewards, with exact asset quantity, optional same-asset fee, UTC timestamp and label. Deposits/rewards require positive quantities; payments require negative quantities. Unsupported trades and account-to-account transfers cannot submit through this form. Fees are separate fee movements. Accounting treatments remain explicit in Insights. Asset, account, classification and entered fields survive recreation.
+Manual entry can create a local account without a provider. It supports deposits, payments and rewards, with exact asset quantity, optional same-asset fee, UTC timestamp and label. Deposits/rewards require positive quantities; payments require negative quantities. Unsupported trades and account-to-account transfers cannot submit through this form. Fees are separate fee movements. Accounting treatments remain available in Advanced tools. Asset, account, classification and entered fields survive recreation.
+
+The inline alert editor is fixture-only and previews local threshold state. Production price alerts are unavailable; delivery notifications are planned for Phase 7.
 
 ## Refresh contract
 

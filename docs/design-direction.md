@@ -1,6 +1,6 @@
 # Design direction
 
-The production frontend follows the local `uiModel` reference: black backgrounds, charcoal cards, outlined navigation icons and Main/Portfolio/Insights destinations. Light and System appearances use semantic colors. See [UI map](ui-map.md), [frontend behavior](frontend-rewrite.md) and [product contract](product-contract.md) for implemented workflows and capability boundaries.
+The production default uses the shared typed `ModelShell` and screen renderers, with Main/Portfolio/Insights destinations and semantic colors for Dark, Light and System appearances. Host adapters bind saved data where available and pass unavailable values for unsupported calculations or services. See [UI map](ui-map.md), [frontend behavior](frontend-rewrite.md) and [product contract](product-contract.md) for current workflows and capability boundaries.
 
 ## Visual hierarchy
 
@@ -46,12 +46,10 @@ Do not use “P&L ready,” “all history found” or “fully connected” as 
 
 ## Reusable surfaces
 
-Build status rows, coverage explanations, priced-value summaries, exact-quantity rows, source progress, empty states, retry actions and provenance detail before composing larger dashboards. Saved data remains readable during refresh and failure. Distinguish skeleton/loading state from known empty state and failed load.
+The shared presentation includes status rows, priced-value summaries, quantity and holdings rows, empty states, retry actions and provenance detail. Keep saved data readable during refresh and failure, and distinguish loading from known empty and failed states. Shared screen values come from typed host state; keep unavailable calculations visibly unavailable until their data is connected.
 
-Compact layouts prioritize the headline, attention items and core assets; contextual detail opens as a screen or dialog with accessible back/dismiss behavior. Wide layouts place tables and detail panes side by side. Supported analytical cards can later gain saved show/hide/order controls without changing their projection definitions.
+Compact layouts prioritize the headline and core assets; contextual detail opens as a screen or dialog with back and dismiss behavior. Wide layouts use a desktop sidebar and a width-bounded content column. Add analytical views only when their supporting projections are available.
 
 ## Verification for implementation phases
 
-Static previews must use labeled synthetic fixtures covering priced, unpriced, stale, partial, offline, rate-limited, denied, error and empty states. Add screenshot/semantics tests when the components are implemented. Check dark/light contrast, text scaling, 320 dp width, landscape, long names/quantities, keyboard focus, screen-reader labels and reduced motion. Financial values remain exact in domain/state; conversion to drawing coordinates is permitted only at the chart boundary.
-
-The reference screenshots are available here only through their roadmap descriptions. These examples are original proposals based on that description and the current Polion product; they do not certify pixel comparison or final visual approval.
+Use labeled synthetic fixtures to preview priced, unpriced, stale, partial, offline, rate-limited, denied, error and empty states. Review dark/light contrast, text scaling, narrow widths, landscape, long names/quantities, keyboard focus, screen-reader labels and reduced motion. Financial values remain exact in domain/state; conversion to drawing coordinates is permitted only at the chart boundary. Visual acceptance remains subject to user review.

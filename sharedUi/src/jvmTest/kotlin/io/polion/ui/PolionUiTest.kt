@@ -16,6 +16,7 @@ import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -85,6 +86,8 @@ class PolionUiTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Bitcoin"))
@@ -117,6 +120,8 @@ class PolionUiTest {
                 clock += 3 * 3_600_000L
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("1 asset uses stale prices").fetchSemanticsNodes().isNotEmpty() }
@@ -169,6 +174,8 @@ class PolionUiTest {
                         .acquisitionActivityId!!
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Bitcoin"))
@@ -212,9 +219,11 @@ class PolionUiTest {
                 )
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Accounts").performClick()
+                    onAllNodesWithText("Accounts").onLast().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("View scan details"))
                     onNodeWithText("View scan details").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("No saved fetch job").fetchSemanticsNodes().isNotEmpty() }
@@ -233,6 +242,8 @@ class PolionUiTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Bitcoin"))
@@ -259,6 +270,8 @@ class PolionUiTest {
                 val expected = app.snapshot(ActivityFilter(asset = asset.asset)).activityTotal
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     val name = asset.metadata?.name ?: asset.asset.value
@@ -399,6 +412,8 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
                     }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Manage accounts"))
                     onNodeWithTag("manage-accounts").assertIsDisplayed().performClick()
@@ -460,7 +475,7 @@ class PolionUiTest {
                     assertEquals(original.ownership, app.snapshot().ownership)
                     assertEquals(originalRows, db.query("SELECT COUNT(*) FROM ledger_activities").single().single())
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACCOUNTS").assertIsDisplayed().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Watch-only accounts"))
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
@@ -520,9 +535,11 @@ class PolionUiTest {
                 app.reload()
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("activity-network-filter"))
                     onNodeWithTag("activity-network-filter").performScrollTo().performClick()
@@ -553,9 +570,11 @@ class PolionUiTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("activity-status-filter"))
                     onNodeWithTag("activity-status-filter").performScrollTo().performClick()
@@ -579,6 +598,8 @@ class PolionUiTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("hide-empty-assets"))
@@ -622,8 +643,10 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                     }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Settings").performClick()
+                    onAllNodesWithText("Settings").onLast().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Erase local portfolio data"))
                     onNodeWithText("Erase local portfolio data").performScrollTo().performClick()
                     onNodeWithText("Type ERASE to confirm").performTextInput("ERASE")
@@ -706,8 +729,10 @@ class PolionUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                     }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Settings").performClick()
+                    onAllNodesWithText("Settings").onLast().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Resume setup"))
                     onNodeWithText("Resume setup").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) {
@@ -737,8 +762,10 @@ class PolionUiTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 800, height = 900) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Accounts").performClick()
+                    onAllNodesWithText("Accounts").onLast().performClick()
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Review UTXO comparison →").fetchSemanticsNodes().isNotEmpty()
                     }
@@ -769,15 +796,18 @@ class PolionUiTest {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() &&
                             onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                     }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("destination-HOME").performClick()
                     onNodeWithTag("main-market").assertIsDisplayed()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").assertIsDisplayed()
                     val searchBounds = onNodeWithText("Search activity").fetchSemanticsNode().boundsInRoot
                     assertTrue(searchBounds.left >= 0f && searchBounds.right <= 360f && searchBounds.bottom <= 800f)
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Watch-only accounts"))
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
@@ -804,12 +834,14 @@ class PolionUiTest {
                         }
                     }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
-                    onNodeWithTag("workspace-menu").performClick()
+                    onNodeWithTag("model-menu").performClick()
                     onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("workspace-menu").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").assertIsDisplayed()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Watch-only accounts"))
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
@@ -833,8 +865,10 @@ class PolionUiTest {
                         waitUntil(timeoutMillis = 10_000) {
                             onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
                         }
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Advanced tools").performClick()
                         onNodeWithTag("workspace-menu").performClick()
-                        onNodeWithText("Accounts").performClick()
+                        onAllNodesWithText("Accounts").onLast().performClick()
                         onNodeWithText("Not synced yet").assertIsDisplayed()
                         host.dispatcher.dispatch(
                             EmptyCoroutineContext,
@@ -1056,9 +1090,12 @@ class PolionUiTest {
                             onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() &&
                                 onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Advanced tools").performClick()
+                        onNodeWithTag("destination-HOME").performClick()
                         onNodeWithTag("main-market").assertIsDisplayed()
                         onNodeWithTag("workspace-menu").performClick()
-                        onNodeWithText("Advanced tools").performClick()
+                        onAllNodesWithText("Advanced tools").onLast().performClick()
                         onNodeWithTag("more-ACTIVITY").performClick()
                         onNodeWithTag("workspace-add-action").performClick()
                         onNodeWithTag("source-choice-manual-activity").performScrollTo().performClick()
@@ -1068,7 +1105,7 @@ class PolionUiTest {
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("UI deposit").fetchSemanticsNodes().isNotEmpty() }
                         onNodeWithText("UI deposit").assertIsDisplayed()
                         onNodeWithTag("workspace-menu").performClick()
-                        onNodeWithText("Settings").performClick()
+                        onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Manage manual prices →"))
                         onNodeWithText("Manage manual prices →").performClick()
                         onNodeWithText("Price per whole coin in USD").performTextInput("70000")
@@ -1115,8 +1152,10 @@ class PolionUiTest {
                 app.updateOnboarding(OnboardingAction.Skip)
                 runDesktopComposeUiTest(width = 800, height = 360) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Settings").performClick()
+                    onAllNodesWithText("Settings").onLast().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Make it yours"))
                     onNodeWithText("Make it yours").performScrollTo().assertIsDisplayed()
                     onAllNodesWithText("Portfolio")
@@ -1166,9 +1205,11 @@ class PolionUiTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("Archive account"))
                     onNodeWithText("Archive account").performScrollTo().performClick()
@@ -1224,9 +1265,11 @@ class PolionUiTest {
                 }
                 runDesktopComposeUiTest(width = 1440, height = 1000) {
                     setContent { PolionApp(app, host) }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     waitUntil(timeoutMillis = 30_000) { onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     waitUntil(
                         timeoutMillis = 30_000,
@@ -1256,8 +1299,10 @@ class PolionUiTest {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty() &&
                             onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                     }
-                    onNodeWithTag("workspace-menu").performClick()
+                    onNodeWithTag("model-menu").performClick()
                     onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("workspace-menu").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").performTextInput("demo-deposit")
                     waitUntil(
@@ -1296,6 +1341,8 @@ class PolionUiTest {
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("compact-navigation").assertIsDisplayed()
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("add-action").performClick()
@@ -1307,7 +1354,7 @@ class PolionUiTest {
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithText("PRICED VALUE").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-SETTINGS").performClick()
                     for (key in listOf("light", "dark", "system")) {
                         val tag = "appearance-$key"

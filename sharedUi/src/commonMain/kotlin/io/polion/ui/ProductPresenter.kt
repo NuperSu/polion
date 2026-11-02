@@ -13,6 +13,7 @@ import io.polion.core.application.ActivityFilter
 import io.polion.core.application.HistoryPoint
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
+import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -58,6 +59,7 @@ internal class ProductPresenter(
     private data class ChartKey(
         val portfolio: PortfolioId?,
         val period: Int,
+        val currency: AssetId?,
         val revision: Int,
         val hostRevision: Long,
     )
@@ -65,11 +67,18 @@ internal class ProductPresenter(
     private data class CachedChart(
         val at: Long,
         val points: List<HistoryPoint>,
+        val currency: AssetId,
     )
 
     private val charts = mutableMapOf<ChartKey, CachedChart>()
 
     fun dispatch(event: ProductEvent) {
+        if ((event is ProductEvent.Portfolio && event.value != state.selectedPortfolio) ||
+            (event is ProductEvent.Period && event.days != state.period)
+        ) {
+            chartRequest++
+        }
+        if (event is ProductEvent.Portfolio && event.value != state.selectedPortfolio) snapshotRequest++
         state = state.reduce(event)
     }
 
@@ -137,11 +146,15 @@ internal class ProductPresenter(
             update { copy(chartLoading = false) }
             return
         }
-        val key = ChartKey(selected.selectedPortfolio, selected.period, selected.revision, hostRevision)
+        val key = ChartKey(selected.selectedPortfolio, selected.period, selected.snapshot?.currency, selected.revision, hostRevision)
         val currentTime = now()
         val cached = charts[key]
-        if (cached != null && currentTime >= cached.at && currentTime - cached.at < 60_000L) {
-            update { copy(chart = cached.points, chartLoading = false, chartError = false) }
+        if (cached != null &&
+            cached.currency == selected.snapshot?.currency &&
+            currentTime >= cached.at &&
+            currentTime - cached.at < 60_000L
+        ) {
+            update { copy(chart = cached.points, chartCurrency = cached.currency, chartLoading = false, chartError = false) }
             return
         }
         update { copy(chartLoading = true, chartError = false) }
@@ -164,15 +177,17 @@ internal class ProductPresenter(
                             90 -> 45
                             else -> 52
                         }
-                    queries.history(
-                        (0..intervals).map { start + (end - start) / intervals * it + ((end - start) % intervals) * it / intervals },
-                        selected.selectedPortfolio,
-                    )
+                    val currency = queries.snapshot(ActivityFilter(portfolio = selected.selectedPortfolio)).currency
+                    currency to
+                        queries.history(
+                            (0..intervals).map { start + (end - start) / intervals * it + ((end - start) % intervals) * it / intervals },
+                            selected.selectedPortfolio,
+                        )
                 }
             if (request == chartRequest) {
                 if (charts.size >= 12) charts.remove(charts.keys.first())
-                charts[key] = CachedChart(now(), loaded)
-                update { copy(chart = loaded) }
+                charts[key] = CachedChart(now(), loaded.second, loaded.first)
+                update { copy(chart = loaded.second, chartCurrency = loaded.first) }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -305,7 +320,7 @@ internal fun rememberProductPresenter(
     LaunchedEffect(presenter, state.page, state.revision, hostRevision, filter) {
         presenter.loadSnapshot(hostRevision)
     }
-    LaunchedEffect(presenter, state.page, state.revision, hostRevision, state.selectedPortfolio, state.period) {
+    LaunchedEffect(presenter, state.page, state.revision, hostRevision, state.selectedPortfolio, state.period, state.snapshot?.currency) {
         presenter.loadChart(hostRevision)
     }
     return presenter

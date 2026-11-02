@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -66,8 +67,10 @@ class OnboardingHandoffUiTest {
                         onNodeWithText(if (choice.workflow == SourceWorkflow.BITCOIN_PUBLIC_WALLET) "Cancel" else "Close")
                             .performScrollTo()
                             .performClick()
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Advanced tools").performClick()
                         onNodeWithTag("workspace-menu").performClick()
-                        onNodeWithText("Settings").performClick()
+                        onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("destination-HOME").performClick()
                         onNodeWithText(title).assertDoesNotExist()
                         assertOfflineAndEmpty(app, host)
@@ -125,8 +128,10 @@ class OnboardingHandoffUiTest {
                         waitUntil(timeoutMillis = 10_000) {
                             onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Advanced tools").performClick()
                         onNodeWithTag("workspace-menu").performClick()
-                        onNodeWithText("Settings").performClick()
+                        onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Resume setup"))
                         onNodeWithText("Resume setup").performClick()
                         waitUntil(timeoutMillis = 10_000) {

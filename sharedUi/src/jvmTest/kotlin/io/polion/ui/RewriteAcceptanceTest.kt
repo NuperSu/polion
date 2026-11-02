@@ -59,13 +59,17 @@ class RewriteAcceptanceTest {
                         }
 
                         fun capture(page: String) {
-                            val folder = File("build/rewrite-previews").apply { mkdirs() }
+                            val folder = File("build/phase1-production-previews").apply { mkdirs() }
                             ImageIO.write(
                                 onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(),
                                 "png",
                                 File(folder, "${width}x$height-$fontScale-$page.png"),
                             )
                         }
+                        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
+                        onNodeWithTag("model-menu").performClick()
+                        onNodeWithText("Advanced tools").performClick()
+                        onNodeWithTag("destination-HOME").performClick()
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                         onNodeWithText("Saved coins").assertIsDisplayed()
                         onNodeWithText("PRICED VALUE").assertDoesNotExist()
@@ -132,7 +136,7 @@ class RewriteAcceptanceTest {
                         onNodeWithText("Watch-only accounts").assertIsDisplayed()
                         capture("accounts")
                         onNodeWithTag("workspace-menu").performClick()
-                        onNodeWithText("Settings").performClick()
+                        onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("automatic-refresh").performScrollTo().performClick()
                         onNodeWithTag("wifi-only-refresh").performScrollTo().performClick()
                         waitUntil(timeoutMillis = 10_000) { host.preferences == RefreshPreferences(true, true) }
@@ -155,6 +159,10 @@ class RewriteAcceptanceTest {
                 val before = app.snapshot().activityTotal
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("add-action").performClick()
@@ -205,6 +213,10 @@ class RewriteAcceptanceTest {
                 assertTrue(app.snapshot().valuations.isEmpty())
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("market-bitcoin:btc").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("market-bitcoin:btc").performClick()
                     onNodeWithText("Market data only · no tracked holding").assertIsDisplayed()
@@ -244,6 +256,10 @@ class RewriteAcceptanceTest {
                 )
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
                     onNodeWithTag("add-action").performClick()
@@ -314,6 +330,10 @@ class RewriteAcceptanceTest {
                 assertEquals(listOf(AssetId("USD")), app.automaticPriceCurrencies())
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("↻").performClick()
                     onNodeWithTag("automatic-portfolio-price-consent").assertExists()
@@ -340,6 +360,10 @@ class RewriteAcceptanceTest {
                 val before = app.snapshot().valuations
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
+                    onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("↻").performClick()
                     onNodeWithTag("automatic-price-consent").assertExists()

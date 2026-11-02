@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -50,10 +51,12 @@ class AdaptiveLayoutUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
                     }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     onNodeWithTag("compact-navigation").assertIsDisplayed()
                     onNodeWithTag("workspace-rail").assertDoesNotExist()
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").performTextInput("demo-deposit")
                     waitUntil(timeoutMillis = 10_000) {
@@ -70,7 +73,7 @@ class AdaptiveLayoutUiTest {
                         onNodeWithTag("page-content").performScrollToNode(hasText("Search activity"))
                     }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("more-ACCOUNTS").performClick()
                     onNodeWithText("Watch-only accounts").assertIsDisplayed()
                     runOnIdle { viewportWidth = 700 }
@@ -100,6 +103,8 @@ class AdaptiveLayoutUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
                     }
+                    onNodeWithTag("model-menu").performClick()
+                    onNodeWithText("Advanced tools").performClick()
                     for (destination in compactDestinations) {
                         val node = onNodeWithTag("destination-${destination.name}")
                         node.assertIsDisplayed()
@@ -107,7 +112,7 @@ class AdaptiveLayoutUiTest {
                         assertTrue(bounds.left >= 0f && bounds.right <= 640f && bounds.top >= 0f && bounds.bottom <= 360f)
                     }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("more-SETTINGS"))
                     onNodeWithTag("more-SETTINGS").performClick()
                     for (key in listOf("light", "dark")) {
@@ -121,7 +126,7 @@ class AdaptiveLayoutUiTest {
                         onNodeWithTag(tag).performScrollTo().assertIsSelected()
                     }
                     onNodeWithTag("workspace-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    onAllNodesWithText("Advanced tools").onLast().performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("more-REPORTS"))
                     onNodeWithTag("more-REPORTS").performClick()
                     onNodeWithTag("page-content").performScrollToNode(hasText("↓  Export all active activity CSV"))

@@ -66,6 +66,7 @@ internal data class ProductPresentation(
     val snapshot: PortfolioSnapshot? = null,
     val snapshotFilter: ActivityFilter = ActivityFilter(),
     val chart: List<HistoryPoint> = emptyList(),
+    val chartCurrency: AssetId? = null,
     val snapshotLoading: Boolean = false,
     val chartLoading: Boolean = true,
     val chartError: Boolean = false,
@@ -152,7 +153,6 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Navigate ->
             copy(
                 page = event.page,
-                offset = 0,
                 chartLoading =
                     if (event.page !=
                         page
@@ -192,6 +192,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Portfolio ->
             copy(
                 selectedPortfolio = event.value,
+                chart = if (selectedPortfolio != event.value) emptyList() else chart,
                 chartLoading =
                     if (selectedPortfolio !=
                         event.value
@@ -206,6 +207,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Period ->
             copy(
                 period = event.days.also { require(it in setOf(0, 1, 7, 30, 90, 365)) },
+                chart = if (period != event.days) emptyList() else chart,
                 chartLoading =
                     if (period !=
                         event.days

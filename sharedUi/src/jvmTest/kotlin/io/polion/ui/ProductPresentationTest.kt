@@ -28,11 +28,18 @@ class ProductPresentationTest {
         runBlocking {
             var time = 100_000_000L
             var calls = 0
+            var snapshot = JvmSqliteDatabase(":memory:").use { PortfolioApplication(it) { time }.snapshot() }
+            var failSnapshot = false
+            val requestedScopes = mutableListOf<PortfolioId?>()
             val queries =
                 object : ProductQueries {
                     override fun reload() = Unit
 
-                    override fun snapshot(filter: ActivityFilter): PortfolioSnapshot = error("not requested")
+                    override fun snapshot(filter: ActivityFilter): PortfolioSnapshot {
+                        check(!failSnapshot)
+                        requestedScopes += filter.portfolio
+                        return snapshot
+                    }
 
                     override fun history(
                         times: List<Long>,
@@ -44,7 +51,7 @@ class ProductPresentationTest {
                 }
             val presenter =
                 ProductPresenter(
-                    ProductPresentation(page = Page.OVERVIEW),
+                    ProductPresentation(page = Page.OVERVIEW, snapshot = snapshot),
                     queries,
                     kotlinx.coroutines.Dispatchers.Unconfined,
                     this,
@@ -66,6 +73,7 @@ class ProductPresentationTest {
             presenter.dispatch(ProductEvent.Portfolio(PortfolioId("other")))
             presenter.loadChart(1)
             assertEquals(3, calls)
+            assertEquals(PortfolioId("other"), requestedScopes.last())
             presenter.update { copy(revision = revision + 1) }
             presenter.loadChart(1)
             presenter.loadChart(2)
@@ -76,6 +84,17 @@ class ProductPresentationTest {
             time -= 120_000
             presenter.loadChart(2)
             assertEquals(7, calls)
+            snapshot = snapshot.copy(currency = AssetId("EUR"))
+            presenter.update { copy(snapshot = snapshot) }
+            presenter.loadChart(2)
+            assertEquals(8, calls)
+            assertEquals(AssetId("EUR"), presenter.state.chartCurrency)
+            val retained = presenter.state.chart
+            failSnapshot = true
+            presenter.loadChart(3)
+            assertTrue(presenter.state.chartError)
+            assertEquals(retained, presenter.state.chart)
+            assertEquals(AssetId("EUR"), presenter.state.chartCurrency)
         }
 
     @Test
@@ -103,11 +122,15 @@ class ProductPresentationTest {
             var scope: PortfolioId? = null
             val first = 1_000L
             val end = 200_000_000L
+            val snapshot = JvmSqliteDatabase(":memory:").use { PortfolioApplication(it) { end }.snapshot() }
             val queries =
                 object : ProductQueries {
                     override fun reload() = Unit
 
-                    override fun snapshot(filter: ActivityFilter): PortfolioSnapshot = error("not requested")
+                    override fun snapshot(filter: ActivityFilter): PortfolioSnapshot {
+                        assertEquals(PortfolioId("selected"), filter.portfolio)
+                        return snapshot
+                    }
 
                     override fun firstHistoryActivity(portfolio: PortfolioId?): Long? {
                         scope = portfolio
@@ -159,7 +182,6 @@ class ProductPresentationTest {
             )
         val events =
             listOf(
-                ProductEvent.Navigate(Page.ACCOUNTS),
                 ProductEvent.Search("new"),
                 ProductEvent.Kind(null),
                 ProductEvent.Account(AccountId("account")),
@@ -171,6 +193,7 @@ class ProductPresentationTest {
             assertEquals(initial.period, state.period)
             assertEquals(ProductDialog.SYNC, state.dialog)
         }
+        assertEquals(100, initial.reduce(ProductEvent.Navigate(Page.ACCOUNTS)).offset)
         assertEquals(100, initial.reduce(ProductEvent.Period(7)).offset)
         val filtered = initial.reduce(ProductEvent.Status(io.polion.core.ledger.ActivityStatus.PENDING))
         assertEquals(0, filtered.offset)
