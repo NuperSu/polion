@@ -1,6 +1,6 @@
 # Polion UI model
 
-Standalone Kotlin Compose model inspired by the supplied reference screenshots. Black backgrounds, charcoal cards, outline icons, and crypto-only illustrative content.
+A deterministic Compose fixture host for the shared production presentation layer. It supplies illustrative crypto-only data and preview actions to the same typed renderers used by the application.
 
 ## Navigation and preview interactions
 
@@ -8,12 +8,12 @@ Standalone Kotlin Compose model inspired by the supplied reference screenshots. 
 - **Portfolio:** portfolio selector, balance, chart, holdings, and floating wallet/add controls. Coin rows open details.
 - **Insights:** portfolio history, performance, diversity, gains, locations, and fees.
 - **Coin details:** cost/gains breakdown and General, Transactions, Alerts, and Order book tabs. No analysis/discussion tab or paid badges.
-- **Add:** the Portfolio + opens method selection (wallet, manual entry, CSV placeholders). Manual entry opens a buy/sell/transfer form. New Transaction inside a coin opens the form directly.
+- **Add:** the Portfolio + opens method selection (wallet, exchange, manual entry and CSV). Manual entry opens a buy/sell/transfer form. New Transaction inside a coin opens the form directly.
 - **Menu:** Accounts and Settings. Settings demonstrate Automatic refresh and Wi-Fi-only background refresh.
 
-All financial figures, charts, transactions, alerts and order-book rows are fixed samples. Navigation, scrolling, tabs, breakdown visibility, text fields, switches and range-chip selection work locally for reviewing the design. The form's Done action closes the preview without saving. Connection/import controls are placeholders.
+All financial figures, charts, transactions, alerts and order-book rows are fixed samples. Navigation, scrolling, tabs, breakdown visibility, text fields, switches and range-chip selection work locally for reviewing the design. The form's Done action closes the preview without saving. Disabled connection and import choices are shown in gray. The alert editor is inline; system notification delivery belongs to a later phase.
 
-Pull down at the top of a page or use the header refresh button to simulate refresh progress. No database or provider requests occur. The intended future backend behavior is incremental refresh across all portfolios with a small overlap; that behavior is not implemented by this design module.
+Pull down at the top of a page or use the header refresh button to simulate refresh progress. No database or provider requests occur. The sample text about incremental refresh is illustrative and is not a claim about production synchronization.
 
 ## Run
 
@@ -34,4 +34,4 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk SKIKO_RENDER_API=SOFTWARE \
 
 PNG previews are generated in `uiModel/build/previews/` at **390×844**, **360×800**, and **1440×900**. Lower sections have separate `scrolled` captures at the same viewport sizes. The harness removes obsolete PNGs from that output directory when regenerating previews. It checks navigation, detail tabs, transaction form and settings. Use `:uiModel:ktlintCheck` for formatting checks.
 
-This module is independent of the financial core and application hosts. It uses no real wallet data or network integration. Coin marks and charts are drawn in Compose. Brokerage/eToro sections and stock/fund/index content are excluded.
+The fixture depends on `sharedUi`, which transitively depends on `core`, but does not read a real ledger or call a provider. Coin marks and charts are drawn in Compose. Production adapters supply actual state and actions to the shared renderers; unsupported data and operations remain unavailable. Visual comparison with the frozen reference remains pending.

@@ -106,8 +106,9 @@ class ModelPreviewTest {
                             }
                             if (tab == "Alerts") {
                                 onNodeWithText("＋  Add New Alert").performScrollTo().performClick()
-                                capture("coin-alert-dialog")
-                                onNodeWithText("Done").performClick()
+                                onNodeWithText("New price alert").performScrollTo()
+                                capture("coin-alert-editor")
+                                onNodeWithText("Done").performScrollTo().performClick()
                             }
                         }
                         onNodeWithTag("model-back").performClick()

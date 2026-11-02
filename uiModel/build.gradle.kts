@@ -5,6 +5,7 @@ plugins {
 }
 kotlin { jvmToolchain(25) }
 dependencies {
+    implementation(project(":sharedUi"))
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)
     testImplementation(kotlin("test"))
