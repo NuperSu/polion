@@ -1,6 +1,7 @@
 package io.polion.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -128,6 +129,13 @@ internal fun ModelWorkspace(
         onAdd = if (page == Page.OVERVIEW && selectedAsset == null) onAdd else null,
     ) { wide, short ->
         val data = snapshot
+        if (data?.sampleData == true) {
+            Text(
+                "EXAMPLE DATA · stored only on this device",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
         if (page == Page.ACCOUNTS || syncStatus.phase != SyncPhase.IDLE || data?.sourceStatus?.interrupted == true) {
             SyncBanner(syncStatus, data?.sourceStatus, onSyncDetails)
         }

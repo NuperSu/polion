@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
@@ -57,6 +58,7 @@ class ModelProductionCaptureTest {
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-MAIN").fetchSemanticsNodes().isNotEmpty() }
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-refresh").fetchSemanticsNodes().isNotEmpty() }
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Saved prices").fetchSemanticsNodes().isNotEmpty() }
+                        onNodeWithText("EXAMPLE DATA · stored only on this device").assertIsDisplayed()
                         capture("main")
                         for (heading in listOf("Favorites", "Trending", "Top Gainers", "Top Losers")) {
                             onNodeWithTag("model-content").performScrollToNode(hasText(heading))
