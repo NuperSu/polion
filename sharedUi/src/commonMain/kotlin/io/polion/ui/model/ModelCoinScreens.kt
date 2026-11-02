@@ -275,11 +275,10 @@ fun ColumnScope.ModelCoinDetail(
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 transaction.kind,
-                                color = c.tertiary,
+                                color = c.onSurface,
                                 fontSize = 12.sp,
                                 modifier =
                                     Modifier
-                                        .background(c.tertiary.copy(alpha = .12f), CircleShape)
                                         .border(1.dp, c.tertiary, CircleShape)
                                         .padding(horizontal = 13.dp, vertical = 7.dp),
                             )

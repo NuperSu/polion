@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,9 +25,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -99,6 +104,8 @@ private fun FormCapsule(
     onClick: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
     Text(
         label,
         color = if (selected) c.onSurface else c.onSurfaceVariant,
@@ -107,15 +114,20 @@ private fun FormCapsule(
         modifier =
             Modifier
                 .background(
-                    if (selected) c.surfaceVariant else c.background,
+                    if (selected) c.surfaceVariant else Color.Transparent,
                     CircleShape,
                 ).border(
                     1.dp,
-                    c.surfaceVariant,
+                    if (focused) c.outline else c.surfaceVariant,
                     CircleShape,
                 ).clip(CircleShape)
-                .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-                .padding(horizontal = 13.dp, vertical = 9.dp),
+                .selectable(
+                    selected = selected,
+                    interactionSource = interactionSource,
+                    indication = null,
+                    role = Role.RadioButton,
+                    onClick = onClick,
+                ).padding(horizontal = 13.dp, vertical = 9.dp),
     )
 }
 
