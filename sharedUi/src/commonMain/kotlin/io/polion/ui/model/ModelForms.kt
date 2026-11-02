@@ -25,6 +25,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -112,7 +113,8 @@ private fun FormCapsule(
                     1.dp,
                     c.surfaceVariant,
                     CircleShape,
-                ).selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+                ).clip(CircleShape)
+                .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
                 .padding(horizontal = 13.dp, vertical = 9.dp),
     )
 }

@@ -87,7 +87,7 @@ fun ColumnScope.ModelPortfolioHoldings(
                 .clip(RoundedCornerShape(14.dp))
                 .background(colors.surface)
                 .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             state.holdings.forEach { holding ->
                 val tint =

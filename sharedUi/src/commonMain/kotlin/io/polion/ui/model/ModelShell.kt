@@ -172,7 +172,7 @@ fun ModelShell(
                                         .testTag("model-content")
                                         .padding(horizontal = if (wide) 32.dp else 16.dp)
                                         .padding(top = 12.dp, bottom = 100.dp),
-                                    verticalArrangement = Arrangement.spacedBy(28.dp),
+                                    verticalArrangement = Arrangement.spacedBy(22.dp),
                                 ) { content(wide, short) }
                             }
                             if (onAdd != null) {
@@ -220,11 +220,11 @@ private fun ModelHeader(
                     .size(40.dp)
                     .clickable {
                         if (back) onBack() else expanded = true
-                    }.semantics { contentDescription = if (back) "Back" else "Menu" }
+                    }.semantics { contentDescription = if (back) "Back" else "Settings and tools" }
                     .testTag(if (back) "model-back" else "model-menu"),
                 contentAlignment = Alignment.Center,
             ) {
-                if (back) Text("‹", fontSize = 32.sp) else ModelIcon("menu", Modifier.size(24.dp), MaterialTheme.colorScheme.onSurface)
+                if (back) Text("‹", fontSize = 32.sp) else ModelIcon("settings", Modifier.size(24.dp), MaterialTheme.colorScheme.onSurface)
             }
             DropdownMenu(expanded, { expanded = false }) {
                 menuItems.forEach { name ->
@@ -375,7 +375,23 @@ private fun ModelIcon(
                 )
                 drawCircle(tint, w * .09f, Offset(w * .5f, h * .86f))
             }
-            "menu" -> repeat(3) { line(.08f, .22f + it * .27f, .9f, .22f + it * .27f) }
+            "settings" -> {
+                val center = Offset(w * .5f, h * .5f)
+                val tooth = Path()
+                repeat(32) { index ->
+                    val angle = -PI / 2 + index * PI / 16
+                    val radius = if (index % 4 < 2) .36f else .49f
+                    val point =
+                        Offset(
+                            center.x + cos(angle).toFloat() * w * radius,
+                            center.y + sin(angle).toFloat() * h * radius,
+                        )
+                    if (index == 0) tooth.moveTo(point.x, point.y) else tooth.lineTo(point.x, point.y)
+                }
+                tooth.close()
+                drawPath(tooth, tint, style = Stroke(s))
+                drawCircle(tint, w * .14f, center, style = Stroke(s))
+            }
             "search" -> {
                 drawCircle(tint, w * .3f, Offset(w * .4f, h * .4f), style = Stroke(s))
                 line(.63f, .64f, .95f, .97f)

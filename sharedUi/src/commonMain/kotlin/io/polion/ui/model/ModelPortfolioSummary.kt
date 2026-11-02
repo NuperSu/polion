@@ -106,7 +106,7 @@ fun ModelPortfolioSummary(
                         .padding(horizontal = 3.dp, vertical = 1.dp),
             )
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(12.dp))
         Box(
             Modifier.fillMaxWidth().height(
                 if (wide) {

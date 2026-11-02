@@ -173,37 +173,26 @@ fun ColumnScope.ModelCoinDetail(
     TextButton(onClick = {
         actions.onBreakdown(!state.breakdownExpanded)
     }) { Text(if (state.breakdownExpanded) "Hide cost & gains breakdown  ⌃" else "Show cost & gains breakdown  ⌄", color = c.onSurface) }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ModelCoinTab.entries.forEach { tab ->
-            Column(
+            val selected = state.tab == tab
+            Box(
                 Modifier
-                    .selectable(selected = state.tab == tab, role = Role.Tab) {
+                    .clip(CircleShape)
+                    .background(if (selected) c.surfaceVariant else Color.Transparent)
+                    .border(1.dp, c.surfaceVariant, CircleShape)
+                    .selectable(selected = selected, role = Role.Tab) {
                         actions.onTab(tab)
                     }.testTag("detail-${tab.label}")
-                    .padding(vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     tab.label,
-                    color =
-                        if (state.tab ==
-                            tab
-                        ) {
-                            c.onSurface
-                        } else {
-                            c.onSurfaceVariant
-                        },
+                    color = if (selected) c.onSurface else c.onSurfaceVariant,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                 )
-                if (state.tab == tab) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .height(2.dp)
-                            .background(c.onSurface),
-                    )
-                }
             }
         }
     }
@@ -280,36 +269,41 @@ fun ColumnScope.ModelCoinDetail(
                 )
             }
             if (state.transactions.isEmpty()) Text(state.transactionEmpty, color = c.onSurfaceVariant)
-            state.transactions.forEach { transaction ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        transaction.kind,
-                        color = c.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        modifier = Modifier.border(1.dp, c.surfaceVariant, CircleShape).padding(horizontal = 13.dp, vertical = 9.dp),
-                    )
-                    Text(transaction.dateAndSource, color = c.onSurfaceVariant, fontSize = 12.sp)
-                }
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(c.surface, RoundedCornerShape(14.dp))
-                        .clickable {
-                            actions.onTransaction(transaction.id)
-                        }.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    listOf(
-                        listOf("From" to transaction.from, "Amount" to transaction.amount),
-                        listOf(
-                            "To" to transaction.to,
-                            "Fee" to transaction.fee,
-                        ),
-                        listOf("Worth Now" to transaction.worthNow, "Worth Then" to transaction.worthThen),
-                    ).forEach { pair ->
-                        Row(Modifier.fillMaxWidth()) {
-                            pair.forEach { (label, value) ->
-                                DetailMetric(ModelMetric(label, value), Modifier.weight(1f))
+            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                state.transactions.forEach { transaction ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                transaction.kind,
+                                color = c.tertiary,
+                                fontSize = 12.sp,
+                                modifier =
+                                    Modifier
+                                        .background(c.tertiary.copy(alpha = .12f), CircleShape)
+                                        .border(1.dp, c.tertiary, CircleShape)
+                                        .padding(horizontal = 13.dp, vertical = 7.dp),
+                            )
+                            Text(transaction.dateAndSource, color = c.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(c.surface, RoundedCornerShape(14.dp))
+                                .clickable {
+                                    actions.onTransaction(transaction.id)
+                                }.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            listOf(
+                                listOf("From" to transaction.from, "Amount" to transaction.amount),
+                                listOf("To" to transaction.to, "Fee" to transaction.fee),
+                                listOf("Worth Now" to transaction.worthNow, "Worth Then" to transaction.worthThen),
+                            ).forEach { pair ->
+                                Row(Modifier.fillMaxWidth()) {
+                                    pair.forEach { (label, value) ->
+                                        DetailMetric(ModelMetric(label, value), Modifier.weight(1f))
+                                    }
+                                }
                             }
                         }
                     }

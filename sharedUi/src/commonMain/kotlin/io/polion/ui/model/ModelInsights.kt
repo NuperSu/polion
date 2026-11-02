@@ -88,123 +88,128 @@ fun ModelInsights(
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val purple = MaterialTheme.colorScheme.tertiary
-    Column(verticalArrangement = Arrangement.spacedBy(28.dp)) {
-        MarketHeading("History")
-        MarketCard {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("Balance", color = muted, fontSize = 12.sp)
-                    Text(state.balance, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        MarketSection("History") {
+            MarketCard {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("Balance", color = muted, fontSize = 12.sp)
+                        Text(state.balance, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    }
+                    Text(
+                        "${state.historyRange}  ⌄",
+                        color = muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier =
+                            Modifier
+                                .clip(
+                                    CircleShape,
+                                ).border(1.dp, MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                                .padding(horizontal = 13.dp, vertical = 9.dp),
+                    )
                 }
-                Text(
-                    "${state.historyRange}  ⌄",
-                    color = muted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier =
-                        Modifier
-                            .clip(
-                                CircleShape,
-                            ).border(1.dp, MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                            .padding(horizontal = 13.dp, vertical = 9.dp),
+                MarketChart(
+                    state.history,
+                    Modifier.fillMaxWidth().height(180.dp),
+                    MaterialTheme.colorScheme.error,
+                    topLabel = state.historyTopLabel,
+                    bottomLabel = state.historyBottomLabel,
+                    smooth = state.smoothChart,
                 )
             }
-            MarketChart(
-                state.history,
-                Modifier.fillMaxWidth().height(180.dp),
-                MaterialTheme.colorScheme.error,
-                topLabel = state.historyTopLabel,
-                bottomLabel = state.historyBottomLabel,
-                smooth = state.smoothChart,
-            )
         }
-        MarketHeading("Portfolio Performance")
-        MarketCard {
-            val colors = listOf(purple, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.tertiaryContainer)
-            Canvas(Modifier.fillMaxWidth().height(150.dp)) {
-                val baseline = size.height * .55f
-                if (state.performance.isNotEmpty()) {
-                    drawLine(Color.Gray, Offset(0f, baseline), Offset(size.width, baseline), 1f)
-                    state.performance.forEachIndexed { group, item ->
-                        item.values.take(3).forEachIndexed { bar, value ->
-                            val x = size.width * (.07f + group * .25f) + bar * 12.dp.toPx()
-                            drawRoundRect(
-                                colors[bar],
-                                Offset(
-                                    x,
-                                    if (value >
-                                        0
-                                    ) {
-                                        baseline - value * size.height
-                                    } else {
-                                        baseline
-                                    },
-                                ),
-                                Size(9.dp.toPx(), abs(value) * size.height),
-                                CornerRadius(3.dp.toPx()),
-                            )
+        MarketSection("Portfolio Performance") {
+            MarketCard {
+                val colors = listOf(purple, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.tertiaryContainer)
+                Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+                    val baseline = size.height * .55f
+                    if (state.performance.isNotEmpty()) {
+                        drawLine(Color.Gray, Offset(0f, baseline), Offset(size.width, baseline), 1f)
+                        state.performance.forEachIndexed { group, item ->
+                            item.values.take(3).forEachIndexed { bar, value ->
+                                val x = size.width * (.07f + group * .25f) + bar * 12.dp.toPx()
+                                drawRoundRect(
+                                    colors[bar],
+                                    Offset(
+                                        x,
+                                        if (value >
+                                            0
+                                        ) {
+                                            baseline - value * size.height
+                                        } else {
+                                            baseline
+                                        },
+                                    ),
+                                    Size(9.dp.toPx(), abs(value) * size.height),
+                                    CornerRadius(3.dp.toPx()),
+                                )
+                            }
                         }
                     }
                 }
-            }
-            if (state.performance.isEmpty()) {
-                Text(
-                    "Unavailable",
-                    color = muted,
-                    fontSize = 12.sp,
-                )
-            } else {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                    state.performance.forEach { Text(it.label, color = muted, fontSize = 11.sp) }
-                }
-            }
-            Text(state.performanceLegend, color = muted, fontSize = 11.sp)
-        }
-        MarketHeading("Decisions")
-        MarketCard(color = MaterialTheme.colorScheme.secondaryContainer) {
-            Text("Decisions", color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            Text(state.portfolio, fontSize = 14.sp)
-            if (state.decisionsAvailable) {
-                Row(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("↗  Good\n    decisions", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-                    Text("Bad  ↘\ndecisions", color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
-                }
-            } else {
-                Text("Unavailable", color = muted, modifier = Modifier.padding(vertical = 24.dp))
-            }
-        }
-        MarketHeading("Portfolio Diversity")
-        MarketCard {
-            InsightDonut(state.diversity, Modifier.align(Alignment.CenterHorizontally).size(if (wide) 280.dp else 220.dp))
-            Text(state.diversity.legend, color = muted, modifier = Modifier.align(Alignment.CenterHorizontally))
-        }
-        MarketHeading("Gains Reporting")
-        MarketCard {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                listOf("Asset", "Owned", "Realized", "Unrealized").forEach { Text(it, color = muted) }
-            }
-            if (state.gains.isEmpty()) Text("Unavailable", color = muted, fontSize = 12.sp)
-            state.gains.forEach { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(row.asset, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                    Text(row.owned, fontSize = 11.sp, modifier = Modifier.weight(1.1f), textAlign = TextAlign.End)
-                    Text(row.realized, fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                if (state.performance.isEmpty()) {
                     Text(
-                        row.unrealized,
-                        color = MaterialTheme.colorScheme.primary,
+                        "Unavailable",
+                        color = muted,
                         fontSize = 12.sp,
-                        modifier = Modifier.weight(1.1f),
-                        textAlign = TextAlign.End,
                     )
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                        state.performance.forEach { Text(it.label, color = muted, fontSize = 11.sp) }
+                    }
+                }
+                Text(state.performanceLegend, color = muted, fontSize = 11.sp)
+            }
+        }
+        MarketSection("Decisions") {
+            MarketCard(color = MaterialTheme.colorScheme.secondaryContainer) {
+                Text("Decisions", color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text(state.portfolio, fontSize = 14.sp)
+                if (state.decisionsAvailable) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("↗  Good\n    decisions", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
+                        Text("Bad  ↘\ndecisions", color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
+                    }
+                } else {
+                    Text("Unavailable", color = muted, modifier = Modifier.padding(vertical = 14.dp))
+                }
+            }
+        }
+        MarketSection("Portfolio Diversity") {
+            MarketCard {
+                InsightDonut(state.diversity, Modifier.align(Alignment.CenterHorizontally).size(if (wide) 280.dp else 220.dp))
+                Text(state.diversity.legend, color = muted, modifier = Modifier.align(Alignment.CenterHorizontally))
+            }
+        }
+        MarketSection("Gains Reporting") {
+            MarketCard {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("Asset", "Owned", "Realized", "Unrealized").forEach { Text(it, color = muted) }
+                }
+                if (state.gains.isEmpty()) Text("Unavailable", color = muted, fontSize = 12.sp)
+                state.gains.forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(row.asset, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text(row.owned, fontSize = 11.sp, modifier = Modifier.weight(1.1f), textAlign = TextAlign.End)
+                        Text(row.realized, fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                        Text(
+                            row.unrealized,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1.1f),
+                            textAlign = TextAlign.End,
+                        )
+                    }
                 }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MarketCard(Modifier.weight(1f)) {
                 Text("Most Used\nExchanges", fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(55.dp))
+                Spacer(Modifier.height(24.dp))
                 Text(state.exchange, color = muted)
-                Spacer(Modifier.height(55.dp))
+                Spacer(Modifier.height(24.dp))
             }
             MarketCard(Modifier.weight(1f)) {
                 Text("Asset Location", fontWeight = FontWeight.Bold)
@@ -223,17 +228,18 @@ fun ModelInsights(
                 Text(state.feesPeriod, color = muted, fontSize = 12.sp)
             }
         }
-        MarketHeading("Asset Worth")
-        MarketCard {
-            MarketChart(
-                state.assetWorth,
-                Modifier.fillMaxWidth().height(160.dp),
-                purple,
-                topLabel = state.assetWorthTopLabel,
-                bottomLabel = state.assetWorthBottomLabel,
-                smooth = state.smoothChart,
-            )
-            Text(state.assetWorthLegend, color = muted, modifier = Modifier.align(Alignment.CenterHorizontally))
+        MarketSection("Asset Worth") {
+            MarketCard {
+                MarketChart(
+                    state.assetWorth,
+                    Modifier.fillMaxWidth().height(160.dp),
+                    purple,
+                    topLabel = state.assetWorthTopLabel,
+                    bottomLabel = state.assetWorthBottomLabel,
+                    smooth = state.smoothChart,
+                )
+                Text(state.assetWorthLegend, color = muted, modifier = Modifier.align(Alignment.CenterHorizontally))
+            }
         }
     }
 }
@@ -252,7 +258,7 @@ private fun InsightDonut(
             ) {
                 drawArc(
                     purple,
-                    .5f,
+                    -90f,
                     359f * state.fraction.coerceIn(0f, 1f),
                     false,
                     Offset(

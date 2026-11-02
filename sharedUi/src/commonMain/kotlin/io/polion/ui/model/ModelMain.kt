@@ -69,70 +69,87 @@ fun ModelMain(
     wide: Boolean,
     onAction: (ModelMainAction) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(28.dp)) {
-        MarketHeading(state.topCoinsTitle, state.topCoinsEyebrow)
-        if (state.topCoins.isEmpty()) {
-            MarketEmpty(state.topCoinsEmptyMessage)
-        } else {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.topCoins.forEach { coin ->
-                    MarketCard(
-                        Modifier.width(if (wide) 210.dp else 142.dp).clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) },
-                    ) {
-                        ModelCoinLogo(coin.identity)
-                        Text(coin.identity.ticker, fontWeight = FontWeight.Bold)
-                        Text(coin.price, fontWeight = FontWeight.Bold)
-                        MarketChange(coin.change)
-                        MarketChart(
-                            coin.sparkline,
-                            Modifier.fillMaxWidth().height(38.dp),
-                            MaterialTheme.colorScheme.primary,
-                            labels = false,
-                            smooth = coin.smoothChart,
-                        )
-                    }
-                }
-            }
-        }
-        MarketHeading("Favorites")
-        MarketCoinList(state.favorites, state.favoritesEmptyMessage, onAction)
-        MarketHeading("Trending", "DISCOVER WHAT'S HOT")
-        if (state.trending.isEmpty()) {
-            MarketEmpty(state.trendingEmptyMessage)
-        } else {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.trending.forEach { coin ->
-                    MarketCard(Modifier.width(156.dp).clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) }) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        MarketSection(state.topCoinsTitle, state.topCoinsEyebrow) {
+            if (state.topCoins.isEmpty()) {
+                MarketEmpty(state.topCoinsEmptyMessage)
+            } else {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.topCoins.forEach { coin ->
+                        MarketCard(
+                            Modifier.width(if (wide) 210.dp else 142.dp).clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) },
+                        ) {
                             ModelCoinLogo(coin.identity)
-                            Text(
-                                "☆",
-                                fontSize = 24.sp,
-                                modifier =
-                                    if (state.canToggleFavorites) {
-                                        Modifier.semantics { contentDescription = "Favorite ${coin.identity.name}" }.clickable(
-                                            role = Role.Button,
-                                            onClickLabel = "Toggle favorite ${coin.identity.name}",
-                                        ) { onAction(ModelMainAction.ToggleFavorite(coin.identity)) }
-                                    } else {
-                                        Modifier
-                                    },
+                            Text(coin.identity.ticker, fontWeight = FontWeight.Bold)
+                            Text(coin.price, fontWeight = FontWeight.Bold)
+                            MarketChange(coin.change)
+                            MarketChart(
+                                coin.sparkline,
+                                Modifier.fillMaxWidth().height(38.dp),
+                                MaterialTheme.colorScheme.primary,
+                                labels = false,
+                                smooth = coin.smoothChart,
                             )
                         }
-                        Spacer(Modifier.height(4.dp))
-                        Column {
-                            Text(coin.identity.ticker, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            Text(coin.identity.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                        }
-                        MarketChange(coin.change, false)
                     }
                 }
             }
         }
-        MarketHeading("Top Gainers")
-        MarketCoinList(state.gainers, state.gainersEmptyMessage, onAction)
-        MarketHeading("Top Losers")
-        MarketCoinList(state.losers, state.losersEmptyMessage, onAction)
+        MarketSection("Favorites") {
+            MarketCoinList(state.favorites, state.favoritesEmptyMessage, onAction)
+        }
+        MarketSection("Trending", "DISCOVER WHAT'S HOT") {
+            if (state.trending.isEmpty()) {
+                MarketEmpty(state.trendingEmptyMessage)
+            } else {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.trending.forEach { coin ->
+                        MarketCard(Modifier.width(156.dp).clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) }) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                ModelCoinLogo(coin.identity)
+                                Text(
+                                    "☆",
+                                    fontSize = 24.sp,
+                                    modifier =
+                                        if (state.canToggleFavorites) {
+                                            Modifier.semantics { contentDescription = "Favorite ${coin.identity.name}" }.clickable(
+                                                role = Role.Button,
+                                                onClickLabel = "Toggle favorite ${coin.identity.name}",
+                                            ) { onAction(ModelMainAction.ToggleFavorite(coin.identity)) }
+                                        } else {
+                                            Modifier
+                                        },
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Column {
+                                Text(coin.identity.ticker, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                Text(coin.identity.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            }
+                            MarketChange(coin.change, false)
+                        }
+                    }
+                }
+            }
+        }
+        MarketSection("Top Gainers") {
+            MarketCoinList(state.gainers, state.gainersEmptyMessage, onAction)
+        }
+        MarketSection("Top Losers") {
+            MarketCoinList(state.losers, state.losersEmptyMessage, onAction)
+        }
+    }
+}
+
+@Composable
+internal fun MarketSection(
+    title: String,
+    eyebrow: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        MarketHeading(title, eyebrow)
+        content()
     }
 }
 
