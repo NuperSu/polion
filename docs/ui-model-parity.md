@@ -98,3 +98,5 @@ These are proposed presentation contracts. Loading retains eligible saved conten
 Phase 2 bindings and financial definitions are recorded in [Phase 2 evidence](ui-model-phases/phase-2-evidence.md); the earlier source inventory remains a baseline rather than the current binding status.
 
 Phase 3 transactions are implemented and verified at `f0163f6`; see [transaction definitions and evidence](ui-model-phases/phase-3-evidence.md) for domain oracles, shared workflow coverage, native Android checks and visual review artifacts. Global market feeds, Insights bindings and alert/order-book/import services remain open.
+
+Phase 4 account/source/history workflows and consent-gated scheduling are implemented and verified at `1e8eebe`; see [Phase 4 evidence](ui-model-phases/phase-4-evidence.md). Incremental fetching remains a separate disabled backend project with [explicit acceptance requirements](incremental-bitcoin-history.md). User visual approval and broader chain/release gates remain open.

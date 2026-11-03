@@ -1,0 +1,31 @@
+# Phase 4 — Accounts, history refresh and recovery
+
+## Account and source presentation
+
+Production Accounts uses the shared model cards with actual source identities, configured portfolio membership and per-account accepted history evidence. Account details contain full copyable public expressions, recorded holdings, the accepted provider/time and direct actions for rediscovery, archive/restore, rules, reconciliation and UTXO review. Owner/group/derived-address management and accounting/order verification remain in the existing advanced workflows.
+
+Accepted refresh evidence comes from persisted graph headers and source membership, not a completed fetch page or the global refresh timestamp. The projection reads headers and address mappings without materializing transaction graph bodies. A changed endpoint, changed active address set or an undiscovered wallet prevents the current configuration from appearing accepted. Historical acceptance remains visible after failure or archive. Portfolio membership describes saved configuration; archived holdings remain excluded from active scopes.
+
+The full-screen Bitcoin connection flow accepts a validated mainnet address, supported descriptor or xpub, with explicit provider consent and review. Address input becomes an `addr` descriptor. Creating owner/account/source records, including a selected portfolio membership and provider configuration, is atomic. Portfolio owner restrictions are enforced. The host performs discovery followed by history refresh; acknowledgements may describe queued work and do not create accepted balances. A saved source with failed discovery remains available for retry. Discovery retains the existing gap and source-completeness assumptions.
+
+## Refresh and recovery
+
+Pull/header refresh still requests prices only, across the existing configured consented currency scope. Wallet history is explicit in Accounts and Settings. The history flow retains saved configuration while loading, exposes persisted failures after recreation, and offers retry. It can save consent changes while a worker runs; provider workers check consent through their existing cancellation path. Full recovery requires a separate confirmation and keeps accepted records until replacement acceptance succeeds.
+
+Both hosts use one consent-gated scheduling plan. Automatic refresh enables only consented sources; disabling it disables both periodic jobs. Cadences remain 30 minutes for wallet history and hourly for prices. Android periodic requests use UNMETERED for Wi-Fi-only and CONNECTED otherwise; manual work retains its current-connection behavior. Startup and backup restore use host scheduling reconciliation. Desktop scheduling requires the app to remain open and its UI explains that the network restriction applies to Android.
+
+Incremental network fetching is not enabled. The separate [incremental history project](../incremental-bitcoin-history.md) defines provider capabilities, overlap, mempool/replacement/reorg reconciliation, invalidation, fallback and full-replay equivalence gates. Current scans may re-fetch saved history. Existing large-wallet memory/provider limits and broader chain-verification gates remain open.
+
+## Financial and reliability evidence
+
+The [public block 800000 fixture](../phase4-public-fixture.md) cross-checks raw transaction/header data and shared fields from two independent public API hosts. A binary oracle checks header/transaction identity, output amounts and fee arithmetic. Its bounded transport is a single-observation scenario, not the real address's full balance/history. The same scan/account oracle runs against desktop JDBC and native Android SQLite: connection, exact 143,332-satoshi ownership projection, failed scan preservation, retry, stable IDs/CSV, archive/restore, confirmed recovery, source-change status and encrypted restore. Synthetic adversarial chain fixtures remain responsible for fork/replacement and incomplete-history cases.
+
+Shared UI tests cover connection review at 360×800, 390×844 and 1440×900 plus enlarged text; request acknowledgement versus acceptance; archive/restore; direct UTXO access; explicit recovery confirmation; and persisted retry/consent state. Preference backup/reopen and scheduling consent gates have independent checks. Native scheduling tests use unique temporary job names, defer first execution, inspect persisted constraints/cadences and cancel both jobs in cleanup, without running a personal wallet refresh.
+
+Verified source: core `539c328`, shared UI `0cd403c`, platforms `1e8eebe`. The requested pending chart fix was committed first as `d12456c` after focused checks.
+
+Final checks passed **467 tests** with zero failures, errors or skips: 280 core JVM, 47 Android host, 111 shared UI, 28 desktop and one model capture test. Strict core/shared/desktop/model formatting, affected Android source formatting, Android lint/debug/test APK builds and desktop packaging passed. Logs: `/tmp/phase4-final-{lint,full,model,platform}.log`; final preview call-site formatting is in `/tmp/phase4-model-format.log`.
+
+The connected Pixel 8 Pro was checked for current Android user 10 and idle services before updating both APKs with `-r`. No app data was cleared. Native instrumentation passed **20 checks, zero failures**, including `accountHistoryWorkflow` and `refreshSchedulingConstraints` (`/tmp/phase4-final-native.log`). The app was launched in user 10 and MainActivity was confirmed resumed. No personal wallet scan or financial database inspection was requested by the agent. Native job tests inspect queued persistence/reopen and cancellation; this run does not claim a new forced-process-death OS scheduling certification.
+
+The [review gallery](/tmp/polion-phase4-review/index.html) and [ZIP](/tmp/polion-phase4-review.zip) contain **118 seeded captures**: 112 production screens plus six account/connection/recovery captures, including all requested viewports and enlarged text. These are test data, not personal-wallet screenshots. User visual approval and independent full-wallet/provider acceptance remain separate from the deterministic checks.

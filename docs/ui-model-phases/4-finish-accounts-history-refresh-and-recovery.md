@@ -11,3 +11,5 @@ Preserve the agreed immediate behavior: pull refreshes prices across configured 
 Treat incremental wallet history as a separate backend project: define provider-supported change discovery, overlapping fetch windows, mempool reconciliation, reorg/RBF handling, cursor invalidation and full-rescan fallback. Compare incremental results against a full-replay oracle before enabling it. Preserve atomic acceptance and never replace good saved state with a partial failed scan.
 
 **Exit:** connect, refresh, interrupted refresh, retry, archive, restore and confirmed recovery work end to end. Independently sourced Bitcoin fixtures cover financial and chain behavior. Incremental behavior is advertised only after equivalence and recovery tests pass. Large-wallet limits remain explicit until independently resolved.
+
+See [Phase 4 implementation and evidence](phase-4-evidence.md), the [public fixture provenance](../phase4-public-fixture.md), and the separate [incremental history design](../incremental-bitcoin-history.md). Visual approval remains user-owned.
