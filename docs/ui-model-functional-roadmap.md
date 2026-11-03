@@ -8,16 +8,16 @@ Deliver the application shown in `uiModel`, with its actual screen composition, 
 
 The initial tracking release remains Bitcoin-first. Multiple coins in market discovery do not imply that their wallets or chains are supported. Additional chain integrations require their own authorized scope and acceptance gates. Cloud accounts, subscriptions and AI must not be prerequisites for the local application.
 
-## Current gaps established from the source
+## Surface delivery status
 
-| Surface | Model contract | Current gap to close |
+| Surface | Model contract | Current implementation and remaining work |
 | --- | --- | --- |
-| Shell | Centered title, menu/back at left, refresh at right, restrained outlined navigation | Production shell and Material defaults differ in composition, sizing and interaction styling. |
+| Shell | Centered title, menu/back at left, refresh at right, restrained outlined navigation | Production uses the shared model renderers. Visual approval remains user-owned. |
 | Main | Top Coins with changes/sparklines, Favorites, Trending, Top Gainers, Top Losers | Saved-price cards and unavailable discovery blocks provide only a subset of the content and layout. |
-| Portfolio | Unboxed headline balance/change, prominent chart, model range controls, holdings toolbar and compact holding rows | Production still composes `BalanceHero` and `AssetsCard`, including the earlier dashboard's hierarchy and controls. |
-| Coin detail | Centered identity, six-metric breakdown, model tab treatment, price chart and transaction summary/cards | Tabs exist, but production presentation and transaction content differ materially. |
-| Manual entry | Buy/Sell/Transfer, account/venue, trading pair, time, unit price, amount, fee and notes | Current form supports deposits/payments/rewards. It does not implement the model's trade workflow. |
-| Insights | History, Portfolio Performance, Decisions, Diversity, Gains Reporting, locations, statistics, fees and Asset Worth | Production reuses the earlier value hero and analytics/accounting panels instead of reproducing these sections. Several required calculations/services are missing. |
+| Portfolio | Unboxed headline balance/change, prominent chart, model range controls, holdings toolbar and compact holding rows | Phase 2 binds portfolio controls, saved history and value changes. Investment return remains distinct and requires supported evidence. |
+| Coin detail | Centered identity, six-metric breakdown, model tab treatment, price chart and transaction summary/cards | General and Transactions use the shared composition with scoped price, accounting and ledger evidence. Alerts and Order book await Phase 7. |
+| Manual entry | Buy/Sell/Transfer, account/venue, trading pair, time, unit price, amount, fee and notes | Phase 3 binds linked trades, transfers, deposits, withdrawals, rewards and fees, with review, correction, reversal and saved drafts. Unsupported exchange connections and imports stay disabled. |
+| Insights | History, Portfolio Performance, Decisions, Diversity, Gains Reporting, locations, statistics, fees and Asset Worth | The shared section composition contains unavailable states; supported reporting tools remain contextual. Section bindings and additional calculations await Phase 6. |
 | Alerts and Order book | Working alert management and market-depth display | Unavailable states are honest interim states, but do not fulfill the final functionality. |
 | Accounts and Settings | Focused model-style account cards and concise controls | Existing management capabilities need to be organized into these flows, with detailed tools behind contextual actions. |
 
@@ -40,7 +40,7 @@ Each phase is separately executable; its exit gate is defined in its document. P
 - **Complete (baseline)** · [Phase 0 — Establish the exact contract and honest baseline](ui-model-phases/0-establish-the-exact-contract-and-honest-baseline.md)
 - **Ready for user visual review** · [Phase 1 — Build one faithful presentation layer](ui-model-phases/1-build-one-faithful-presentation-layer.md)
 - **Implemented and verified; user visual review pending** · [Phase 2 — Finish Portfolio and coin General with existing data](ui-model-phases/2-finish-portfolio-and-coin-general-with-existing-data.md)
-- **Not started** · [Phase 3 — Implement the model's transaction system](ui-model-phases/3-implement-the-model-s-transaction-system.md)
+- **Implemented and verified; user visual review pending** · [Phase 3 — Implement the model's transaction system](ui-model-phases/3-implement-the-model-s-transaction-system.md)
 - **Not started** · [Phase 4 — Finish Accounts, history refresh and recovery](ui-model-phases/4-finish-accounts-history-refresh-and-recovery.md)
 - **Not started** · [Phase 5 — Make Main a real market-discovery screen](ui-model-phases/5-make-main-a-real-market-discovery-screen.md)
 - **Not started** · [Phase 6 — Implement Insights in the model's composition](ui-model-phases/6-implement-insights-in-the-model-s-composition.md)

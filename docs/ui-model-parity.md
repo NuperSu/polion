@@ -96,3 +96,5 @@ These are proposed presentation contracts. Loading retains eligible saved conten
 - [ ] Record separate Android and desktop build, launch and journey evidence at the tested revision. Review hosted CI separately.
 
 Phase 2 bindings and financial definitions are recorded in [Phase 2 evidence](ui-model-phases/phase-2-evidence.md); the earlier source inventory remains a baseline rather than the current binding status.
+
+Phase 3 transactions are implemented and verified at `f0163f6`; see [transaction definitions and evidence](ui-model-phases/phase-3-evidence.md) for domain oracles, shared workflow coverage, native Android checks and visual review artifacts. Global market feeds, Insights bindings and alert/order-book/import services remain open.

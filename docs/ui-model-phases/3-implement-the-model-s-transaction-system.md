@@ -11,3 +11,5 @@ Reproduce the model's form composition with sensible defaults, coin preselection
 Build the modeled transaction timeline and cards: type/date grouping, From, To, Amount, Fee, Worth Now and Worth Then, plus average buy/sell price and transaction count. Missing counterparties, historic quotes or purchase evidence remain unknown. Define quantity-weighted averages and fee treatment explicitly. Provide filters, pagination, correction, provenance and scoped export through contextual actions.
 
 **Exit:** independent examples for buy, sell, internal/external transfer, reward, withdrawal and multi-asset fees yield exact movements, balances and accounting results. Invalid combinations cannot submit; saved/reopened/restored records match; timeline fields trace to their evidence. The same workflows pass on Android and desktop.
+
+Implementation definitions and platform evidence are tracked in [Phase 3 evidence](phase-3-evidence.md). Final visual review is user-owned.
