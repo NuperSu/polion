@@ -448,6 +448,9 @@ class PortfolioApplication(
         )
     }
 
+    /** Evaluation instant shared by financial projections and their presentation. */
+    fun evaluationTimeMillis(): Long = now()
+
     /** Saved per-unit observations; missing points stay missing and carry no holdings or returns. */
     fun priceSeries(
         asset: AssetId,

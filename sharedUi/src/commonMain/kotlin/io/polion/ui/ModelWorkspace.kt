@@ -1,18 +1,35 @@
 package io.polion.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import io.polion.core.application.AccountingView
+import io.polion.core.application.AssetListPreference
+import io.polion.core.application.AssetSort
 import io.polion.core.application.AssetValuation
 import io.polion.core.application.HistoryPoint
+import io.polion.core.application.MarketPricePoint
+import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
+import io.polion.core.market.PriceStatus
+import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import io.polion.ui.model.ModelAccountRow
 import io.polion.ui.model.ModelAccounts
@@ -46,9 +63,14 @@ import io.polion.ui.model.ModelTransactionDialog
 import io.polion.ui.model.ModelTransactionDialogActions
 import io.polion.ui.model.ModelTransactionDialogState
 import io.polion.ui.model.ModelTransactionType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun ModelWorkspace(
+    app: PortfolioApplication,
+    host: PlatformActions,
+    dataRevision: Long,
     page: Page,
     snapshot: PortfolioSnapshot?,
     selectedPortfolio: PortfolioId?,
@@ -71,6 +93,8 @@ internal fun ModelWorkspace(
     onPortfolio: (PortfolioId?) -> Unit,
     onAsset: (AssetValuation?) -> Unit,
     onPeriod: (Int) -> Unit,
+    onCurrency: (AssetId) -> Unit,
+    onAssetPreference: (AssetListPreference) -> Unit,
     onRefresh: () -> Unit,
     onAdd: () -> Unit,
     onAdvanced: (Page) -> Unit,
@@ -80,9 +104,147 @@ internal fun ModelWorkspace(
     onWifi: (Boolean) -> Unit,
     onManual: (AssetValuation?) -> Unit,
 ) {
+    var priceDetails by rememberSaveable { mutableStateOf(false) }
+    var priceLoading by remember { mutableStateOf(false) }
+    var priceError by remember { mutableStateOf(false) }
+    var priceRetry by remember { mutableStateOf(0) }
+    var accountingLoading by remember { mutableStateOf(false) }
+    var accountingError by remember { mutableStateOf(false) }
+    var explain by rememberSaveable { mutableStateOf(false) }
+    var currencyMenu by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var filterMenu by remember { mutableStateOf(false) }
+    var movementSummary by remember(app, selectedPortfolio, period) { mutableStateOf("Loading accepted movements…") }
+    LaunchedEffect(explain, app, selectedPortfolio, period, dataRevision, chart) {
+        val start = chart.firstOrNull()?.atMillis
+        val end = chart.lastOrNull()?.atMillis
+        if (explain && (start == null || end == null)) {
+            movementSummary = "History boundaries are unavailable; contribution details cannot be established."
+        }
+        if (explain && start != null && end != null) {
+            try {
+                movementSummary =
+                    withContext(host.dispatcher) {
+                        portfolioMovementSummary(app.analytics(start, selectedPortfolio), app.analytics(end, selectedPortfolio))
+                    }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                movementSummary = "Movement details could not be loaded."
+            }
+        }
+    }
+    if (explain && snapshot != null) {
+        AlertDialog(onDismissRequest = { explain = false }, title = { Text("Portfolio value") }, text = {
+            Text(
+                portfolioValueChange(chart, snapshot.currency, "Selected period") +
+                    "\nValue changes include contributions, withdrawals and price movements; they are not investment returns." +
+                    "\n${pricingSummary(
+                        snapshot.valuations,
+                    ).missing} unpriced positions are excluded. Saved history gaps remain unavailable." +
+                    "\n$movementSummary\nAccepted local records · history coverage ${snapshot.coverage.name.lowercase()}",
+            )
+        }, confirmButton = { TextButton(onClick = { explain = false }) { Text("Close") } })
+    }
     var tab by rememberSaveable { mutableStateOf(ModelCoinTab.GENERAL.name) }
     var expanded by rememberSaveable { mutableStateOf(true) }
     var coinRange by rememberSaveable { mutableStateOf("1D") }
+    var accounting by remember(app, selectedPortfolio, snapshot?.currency) { mutableStateOf<AccountingView?>(null) }
+    LaunchedEffect(app, selectedPortfolio, snapshot?.currency, selectedAsset?.asset, dataRevision) {
+        if (selectedAsset != null && snapshot?.valuations?.any { it.asset == selectedAsset.asset } == true) {
+            accountingLoading = true
+            accountingError = false
+            try {
+                accounting = withContext(host.dispatcher) { app.accountingReport(selectedPortfolio) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                accountingError = true
+            } finally {
+                accountingLoading = false
+            }
+        }
+    }
+    var prices by remember(app, selectedAsset?.asset, snapshot?.currency, coinRange) {
+        mutableStateOf<List<MarketPricePoint>>(emptyList())
+    }
+    LaunchedEffect(app, selectedAsset?.asset, snapshot?.currency, coinRange, dataRevision, priceRetry) {
+        val asset = selectedAsset?.asset
+        val quote = snapshot?.currency
+        if (asset != null && quote != null) {
+            val duration =
+                when (coinRange) {
+                    "1H" -> 3_600_000L
+                    "1D" -> 86_400_000L
+                    "1W" -> 7 * 86_400_000L
+                    "3M" -> 90 * 86_400_000L
+                    "1Y" -> 365 * 86_400_000L
+                    else -> 30 * 86_400_000L
+                }
+            val end = app.evaluationTimeMillis()
+            val start = (end - duration).coerceAtLeast(0)
+            val span = end - start
+            priceLoading = true
+            priceError = false
+            try {
+                prices =
+                    withContext(host.dispatcher) {
+                        app.priceSeries(asset, quote, (0..60).map { start + span * it / 60 })
+                    }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                priceError = true
+            } finally {
+                priceLoading = false
+            }
+        }
+    }
+    if (priceDetails) {
+        AlertDialog(onDismissRequest = { priceDetails = false }, title = { Text("Saved unit-price observations") }, text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                prices.mapNotNull { it.price }.distinctBy { it.id }.sortedByDescending { it.validAtMillis }.forEach { observation ->
+                    Text("${observation.price.value} ${observation.price.quoteAssetId.value} per unit")
+                    val valid = kotlin.time.Instant.fromEpochMilliseconds(observation.validAtMillis)
+                    val observedAt = kotlin.time.Instant.fromEpochMilliseconds(observation.observedAtMillis)
+                    Text("${observation.providerId?.value ?: "Manual"} · valid $valid")
+                    Text("Observed $observedAt · ${observation.id}")
+                }
+                if (prices.none { it.price != null }) Text("No eligible saved observations in this range.")
+            }
+        }, confirmButton = { TextButton(onClick = { priceDetails = false }) { Text("Close") } })
+    }
+    val observed =
+        prices.map { point ->
+            point
+                .takeIf { it.priceStatus == PriceStatus.FRESH }
+                ?.price
+                ?.price
+                ?.value
+        }
+    val observationCount =
+        prices
+            .filter { it.priceStatus == PriceStatus.FRESH }
+            .mapNotNull { it.price?.id }
+            .distinct()
+            .size
+    val observedNumbers = observed.map { it?.toString()?.toDoubleOrNull()?.takeIf(Double::isFinite) }
+    val lowest = observedNumbers.filterNotNull().minOrNull()
+    val highest = observedNumbers.filterNotNull().maxOrNull()
+    val priceCoordinates =
+        if (observationCount < 2) {
+            emptyList()
+        } else {
+            observedNumbers.map { value ->
+                if (value == null || lowest == null || highest == null) {
+                    null
+                } else if (lowest == highest) {
+                    .5f
+                } else {
+                    ((value - lowest) / (highest - lowest)).toFloat()
+                }
+            }
+        }
     val modelPage =
         when (page) {
             Page.HOME -> ModelPage.MAIN
@@ -168,28 +330,39 @@ internal fun ModelWorkspace(
                                 "Market Value",
                                 if (tracked) asset.value?.let { money(it, data.currency) } ?: "—" else "—",
                             ),
-                            ModelMetric("Total Gains", "—"),
-                            ModelMetric("Total Cost Basis", "—"),
-                            ModelMetric("Unrealized Gain", "—"),
-                            ModelMetric("Realized Gain", "—"),
-                        ),
+                        ) +
+                            if (tracked) {
+                                coinAccountingMetrics(accounting, asset)
+                            } else {
+                                listOf(
+                                    ModelMetric("Total Gains", "—"),
+                                    ModelMetric("Total Cost Basis", "—"),
+                                    ModelMetric("Unrealized Gain", "—"),
+                                    ModelMetric("Realized Gain", "—"),
+                                )
+                            },
                     breakdownExpanded = expanded,
                     tab = ModelCoinTab.valueOf(tab),
                     price = asset.price?.let { "${it.price.value} ${it.price.quoteAssetId.value}" } ?: "—",
-                    change = "—",
+                    change =
+                        if (observationCount >= 2) {
+                            unitPriceChange(observed.firstOrNull(), observed.lastOrNull(), coinRange)
+                        } else {
+                            "Price change · $coinRange · —"
+                        },
                     priceSource =
                         asset.price?.let {
-                            if (it.manual) {
-                                "Manual quote"
-                            } else {
-                                "${it.providerId?.value ?: "Provider"} · ${asset.priceStatus.name.lowercase()}"
-                            }
-                        }
-                            ?: "Price unavailable",
+                            val observedAt =
+                                kotlin.time.Instant
+                                    .fromEpochMilliseconds(it.observedAtMillis)
+                                    .toString()
+                            val provider = if (it.manual) "Manual quote" else it.providerId?.value ?: "Provider"
+                            "$provider · ${asset.priceStatus.name.lowercase()} · observed $observedAt"
+                        } ?: "Price unavailable",
                     selectedRange = coinRange,
-                    chartPoints = emptyList(),
-                    chartTopLabel = "—",
-                    chartBottomLabel = "—",
+                    chartPoints = priceCoordinates,
+                    chartTopLabel = observed.filterNotNull().maxOrNull()?.toString() ?: "—",
+                    chartBottomLabel = observed.filterNotNull().minOrNull()?.toString() ?: "—",
                     transactionMetrics =
                         listOf(
                             ModelMetric("Avg. Buy Price", "—"),
@@ -200,7 +373,7 @@ internal fun ModelWorkspace(
                     alerts = emptyList(),
                     orderSource = "Unavailable",
                     orderRows = emptyList(),
-                    enabledRanges = emptySet(),
+                    enabledRanges = setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
                     transactionEmpty = "Open activity to review this asset's records.",
                     alertsUnavailable = "Price alerts are unavailable.",
                     orderUnavailable = "Order book data is unavailable.",
@@ -213,6 +386,45 @@ internal fun ModelWorkspace(
                     onAddTransaction = { onManual(asset) },
                 ),
             )
+            if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL) {
+                Text(
+                    "Saved as-of unit prices · ${prices.mapNotNull { it.price?.id }.distinct().size} observations",
+                    modifier =
+                        Modifier.testTag(
+                            if (!priceLoading &&
+                                prices.isNotEmpty()
+                            ) {
+                                "coin-price-history-ready"
+                            } else {
+                                "coin-price-history-loading"
+                            },
+                        ),
+                )
+                Text("Missing or stale prices remain gaps.")
+                if (observationCount < 2) Text("At least two saved observations are needed to resolve movement in this range.")
+                if (priceLoading) Text("Loading saved price history…")
+                if (priceError) TextButton(onClick = { priceRetry++ }) { Text("Retry saved price history") }
+                TextButton(onClick = { priceDetails = true }) { Text("Price observations") }
+                if (tracked && accountingLoading) Text("Updating cost basis and gains…")
+                if (tracked && accountingError) Text("Accounting refresh failed; saved figures are retained.")
+                if (tracked) {
+                    TextButton(
+                        onClick = { onAdvanced(Page.REPORTS) },
+                        modifier =
+                            Modifier.testTag(
+                                if (accounting != null &&
+                                    !accountingLoading
+                                ) {
+                                    "coin-accounting-ready"
+                                } else {
+                                    "coin-accounting-loading"
+                                },
+                            ),
+                    ) {
+                        Text("Accounting evidence")
+                    }
+                }
+            }
             TextButton(onClick = { onAdvanced(Page.ACTIVITY) }) { Text("Review activity and corrections") }
             TextButton(onClick = { onAdvanced(Page.OVERVIEW) }) { Text("Asset details and price tools") }
         } else {
@@ -284,23 +496,37 @@ internal fun ModelWorkspace(
                                 }
                             }
                         }
-                    val labels = mapOf(1 to "1D", 7 to "1W", 30 to "1M", 365 to "1Y", 0 to "ALL")
+                    val labels = mapOf(-1 to "1H", 1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", -2 to "YTD", 365 to "1Y", 0 to "ALL")
                     ModelPortfolioSummary(
                         ModelPortfolioSummaryState(
                             balance = summary.total?.let { money(it, data.currency) } ?: "—",
                             currency = data.currency.value,
-                            change = "Value change —",
-                            percentChange = "—",
+                            change = portfolioValueChange(chart, data.currency, labels[period] ?: "Selected period"),
+                            percentChange = portfolioValuePercent(chart),
                             selectedRange = labels[period] ?: "",
                             chartPoints = points,
                             enabledRanges = labels.values.toSet(),
+                            ranges = labels.values.toList(),
                             chartTopLabel = exactValues.filterNotNull().maxOrNull()?.let { money(it, data.currency) } ?: "—",
                             chartBottomLabel = exactValues.filterNotNull().minOrNull()?.let { money(it, data.currency) } ?: "—",
                         ),
                         wide,
                         short,
                         { label -> labels.entries.find { it.value == label }?.let { onPeriod(it.key) } },
+                        onExplain = { explain = true },
+                        onCurrency = { currencyMenu = true },
+                        currencyMenuContent = {
+                            DropdownMenu(currencyMenu, { currencyMenu = false }) {
+                                listOf("USD", "EUR", "GBP").forEach { code ->
+                                    DropdownMenuItem(text = { Text(code) }, onClick = {
+                                        currencyMenu = false
+                                        onCurrency(AssetId(code))
+                                    })
+                                }
+                            }
+                        },
                     )
+                    Text("Portfolio value change includes deposits and withdrawals; it is not investment return.")
                     if (chartLoading) {
                         Text("Updating history…")
                     } else if (chartError) {
@@ -315,19 +541,55 @@ internal fun ModelWorkspace(
                                 val quantity =
                                     asset.metadata?.let { formatUnits(asset.amount.atomicUnits, it.decimals) }
                                         ?: "${asset.amount.atomicUnits} atomic units"
+                                val assetHistory =
+                                    chart.map { point ->
+                                        point.copy(
+                                            valuations =
+                                                point.valuations.filter {
+                                                    it.asset ==
+                                                        asset.asset
+                                                },
+                                        )
+                                    }
                                 ModelHoldingRow(
                                     identity(asset.asset.value, symbol, asset.metadata?.name),
                                     "$quantity $symbol · ${asset.price?.price?.value ?: "—"} ${data.currency.value}",
                                     asset.value?.let { money(it, data.currency) } ?: "—",
-                                    "—",
-                                    "—",
+                                    portfolioValueDelta(assetHistory, data.currency),
+                                    portfolioValuePercent(assetHistory),
                                 )
                             },
-                            "Sort / filter",
+                            if (assetPreference.sort == AssetSort.VALUE) "Highest Holdings" else "Name",
                         ),
                         onHolding = { coin -> onAsset(data.valuations.find { it.asset.value == coin.id }) },
-                        onSort = { onAdvanced(Page.OVERVIEW) },
-                        onView = { onAdvanced(Page.OVERVIEW) },
+                        onSort = { sortMenu = true },
+                        onView = { filterMenu = true },
+                        viewMenuContent = {
+                            DropdownMenu(filterMenu, { filterMenu = false }) {
+                                DropdownMenuItem(text = { Text("Hide empty: ${assetPreference.hideEmpty}") }, onClick = {
+                                    onAssetPreference(assetPreference.copy(hideEmpty = !assetPreference.hideEmpty))
+                                    filterMenu = false
+                                })
+                                DropdownMenuItem(text = {
+                                    Text(
+                                        "Hide under 1 ${data.currency.value}: ${assetPreference.hideSmall}",
+                                    )
+                                }, onClick = {
+                                    onAssetPreference(assetPreference.copy(hideSmall = !assetPreference.hideSmall))
+                                    filterMenu = false
+                                })
+                            }
+                        },
+                        sortMenuContent = {
+                            DropdownMenu(sortMenu, { sortMenu = false }) {
+                                AssetSort.entries.forEach { sort ->
+                                    DropdownMenuItem(text = { Text(sort.name.lowercase()) }, onClick = {
+                                        sortMenu = false
+                                        onAssetPreference(assetPreference.copy(sort = sort))
+                                    })
+                                }
+                            }
+                        },
                     )
                     TextButton(onClick = { onAdvanced(Page.OVERVIEW) }) { Text("Portfolio tools and currency") }
                 }

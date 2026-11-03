@@ -70,6 +70,10 @@ class ModelProductionCaptureTest {
                         onNodeWithTag("coin-BTC").performScrollTo()
                         capture("portfolio-holdings")
                         onNodeWithTag("coin-BTC").performClick()
+                        waitUntil(
+                            timeoutMillis = 10_000,
+                        ) { onAllNodesWithTag("coin-price-history-ready").fetchSemanticsNodes().isNotEmpty() }
+                        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("coin-accounting-ready").fetchSemanticsNodes().isNotEmpty() }
                         capture("coin-general")
                         for (tab in listOf("Transactions", "Alerts", "Order book")) {
                             onNodeWithTag("detail-$tab").performScrollTo().performClick()

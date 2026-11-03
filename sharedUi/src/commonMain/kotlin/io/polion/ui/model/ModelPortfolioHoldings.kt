@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -46,37 +47,45 @@ fun ColumnScope.ModelPortfolioHoldings(
     onHolding: (ModelCoinIdentity) -> Unit,
     onSort: () -> Unit,
     onView: () -> Unit,
+    viewMenuContent: @Composable () -> Unit = {},
+    sortMenuContent: @Composable () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            "☷",
-            color = colors.onSurface,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier =
-                Modifier
-                    .clip(
-                        CircleShape,
-                    ).background(
-                        colors.surfaceVariant,
-                    ).border(1.dp, colors.surfaceVariant, CircleShape)
-                    .clickable(onClick = onView)
-                    .padding(horizontal = 13.dp, vertical = 9.dp),
-        )
-        Text(
-            state.sortLabel,
-            color = colors.onSurfaceVariant,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier =
-                Modifier
-                    .clip(
-                        CircleShape,
-                    ).border(1.dp, colors.surfaceVariant, CircleShape)
-                    .clickable(onClick = onSort)
-                    .padding(horizontal = 13.dp, vertical = 9.dp),
-        )
+        Box {
+            Text(
+                "☷",
+                color = colors.onSurface,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier =
+                    Modifier
+                        .clip(
+                            CircleShape,
+                        ).background(
+                            colors.surfaceVariant,
+                        ).border(1.dp, colors.surfaceVariant, CircleShape)
+                        .clickable(onClick = onView)
+                        .padding(horizontal = 13.dp, vertical = 9.dp),
+            )
+            viewMenuContent()
+        }
+        Box {
+            Text(
+                state.sortLabel,
+                color = colors.onSurfaceVariant,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier =
+                    Modifier
+                        .clip(
+                            CircleShape,
+                        ).border(1.dp, colors.surfaceVariant, CircleShape)
+                        .clickable(onClick = onSort)
+                        .padding(horizontal = 13.dp, vertical = 9.dp),
+            )
+            sortMenuContent()
+        }
     }
     if (state.holdings.isEmpty()) {
         Text(state.emptyMessage, color = colors.onSurfaceVariant)

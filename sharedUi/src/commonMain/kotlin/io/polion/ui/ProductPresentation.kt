@@ -206,7 +206,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Offset -> copy(offset = event.value.also { require(it >= 0) })
         is ProductEvent.Period ->
             copy(
-                period = event.days.also { require(it in setOf(0, 1, 7, 30, 90, 365)) },
+                period = event.days.also { require(it in setOf(-2, -1, 0, 1, 7, 30, 90, 365)) },
                 chart = if (period != event.days) emptyList() else chart,
                 chartLoading =
                     if (period !=

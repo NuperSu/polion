@@ -164,13 +164,15 @@ internal class ProductPresenter(
                     invalidate(hostRevision)
                     val end = now()
                     val start =
-                        if (selected.period == 0) {
-                            (queries.firstHistoryActivity(selected.selectedPortfolio) ?: end).coerceIn(0, end)
-                        } else {
-                            (end - selected.period.toLong() * 86_400_000L).coerceAtLeast(0)
-                        }
+                        historyRangeStart(
+                            selected.period,
+                            end,
+                            if (selected.period == 0) queries.firstHistoryActivity(selected.selectedPortfolio) else null,
+                        )
                     val intervals =
                         when (selected.period) {
+                            -1 -> 60
+                            -2 -> 52
                             1 -> 24
                             7 -> 28
                             30 -> 30
@@ -310,10 +312,11 @@ internal fun rememberProductPresenter(
                             applicationQueries(app),
                             host.dispatcher,
                             scope,
+                            now = app::evaluationTimeMillis,
                         )
                     },
                 ),
-        ) { ProductPresenter(ProductPresentation(), applicationQueries(app), host.dispatcher, scope) }
+        ) { ProductPresenter(ProductPresentation(), applicationQueries(app), host.dispatcher, scope, now = app::evaluationTimeMillis) }
     val hostRevision by host.dataRevision.collectAsState()
     val state = presenter.state
     val filter = state.requestedFilter()

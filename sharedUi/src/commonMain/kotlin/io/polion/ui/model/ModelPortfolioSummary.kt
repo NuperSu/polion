@@ -3,6 +3,8 @@ package io.polion.ui.model
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +31,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,6 +50,7 @@ data class ModelPortfolioSummaryState(
     val enabledRanges: Set<String> = setOf("1H", "1D", "1W", "1M", "YTD", "1Y", "ALL"),
     val chartTopLabel: String,
     val chartBottomLabel: String,
+    val ranges: List<String> = listOf("1H", "1D", "1W", "1M", "YTD", "1Y", "ALL"),
 )
 
 enum class ModelChangeTone { POSITIVE, NEGATIVE, NEUTRAL }
@@ -64,6 +69,9 @@ fun ModelPortfolioSummary(
     wide: Boolean,
     short: Boolean,
     onRangeSelected: (String) -> Unit,
+    onExplain: (() -> Unit)? = null,
+    onCurrency: (() -> Unit)? = null,
+    currencyMenuContent: @Composable () -> Unit = {},
     colors: ModelSummaryColors =
         ModelSummaryColors(
             foreground = MaterialTheme.colorScheme.onSurface,
@@ -85,11 +93,41 @@ fun ModelPortfolioSummary(
             color = colors.muted,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.clip(CircleShape).border(1.dp, colors.capsule, CircleShape).padding(horizontal = 13.dp, vertical = 9.dp),
+            modifier =
+                Modifier
+                    .then(
+                        if (onExplain !=
+                            null
+                        ) {
+                            Modifier.clickable(onClick = onExplain)
+                        } else {
+                            Modifier
+                        },
+                    ).clip(CircleShape)
+                    .border(1.dp, colors.capsule, CircleShape)
+                    .padding(horizontal = 13.dp, vertical = 9.dp),
         )
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(state.balance, fontSize = 48.sp, fontWeight = FontWeight.Bold, color = colors.foreground, letterSpacing = (-1).sp)
-            Text(state.currency, color = colors.muted, fontSize = 17.sp, modifier = Modifier.padding(bottom = 10.dp))
+            Box {
+                Text(
+                    state.currency,
+                    color = colors.muted,
+                    fontSize = 17.sp,
+                    modifier =
+                        Modifier
+                            .then(
+                                if (onCurrency !=
+                                    null
+                                ) {
+                                    Modifier.clickable(onClick = onCurrency)
+                                } else {
+                                    Modifier
+                                },
+                            ).padding(bottom = 10.dp),
+                )
+                currencyMenuContent()
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(state.change, color = changeColor, fontSize = 17.sp)
@@ -167,8 +205,13 @@ fun ModelPortfolioSummary(
             Text(state.chartTopLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd))
             Text(state.chartBottomLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            listOf("1H", "1D", "1W", "1M", "YTD", "1Y", "ALL").forEach { label ->
+        Row(
+            Modifier.fillMaxWidth().then(
+                if (!wide && LocalDensity.current.fontScale > 1f) Modifier.horizontalScroll(rememberScrollState()) else Modifier,
+            ),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            state.ranges.forEach { label ->
                 Text(
                     label,
                     color = if (label in state.enabledRanges && label == state.selectedRange) colors.foreground else colors.muted,

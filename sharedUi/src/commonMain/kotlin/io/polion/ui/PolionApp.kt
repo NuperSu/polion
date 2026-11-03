@@ -459,6 +459,9 @@ private fun Product(
         if (modelMode) {
             modelWorkspaceState.SaveableStateProvider("workspace") {
                 ModelWorkspace(
+                    app = app,
+                    host = host,
+                    dataRevision = dashboardRevision + revision,
                     page = page,
                     snapshot =
                         snapshot?.takeIf {
@@ -497,6 +500,17 @@ private fun Product(
                     onPortfolio = { selectedPortfolio = it },
                     onAsset = { selectedAsset = it },
                     onPeriod = { period = it },
+                    onAssetPreference = ::saveAssetPreference,
+                    onCurrency = { currency ->
+                        val portfolio = snapshot?.ownership?.portfolios?.find { it.id == selectedPortfolio }
+                        execute("Display currency saved") {
+                            if (portfolio == null) {
+                                app.setCurrency(currency)
+                            } else {
+                                app.savePortfolio(portfolio.copy(valuationCurrency = currency.value))
+                            }
+                        }
+                    },
                     onRefresh = ::refreshPrices,
                     onAdd = {
                         modelManual = false
