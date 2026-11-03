@@ -1184,7 +1184,7 @@ class PolionUiTest {
             val item = base.copy(original = source, activity = source)
             var saved: ActivityOverlay? = null
             runDesktopComposeUiTest(width = 360, height = 800) {
-                setContent { ActivityDialog(item, data, {}, {}, { saved = it }) }
+                setContent { ActivityDialog(item, data, {}, {}, save = { saved = it }) }
                 onNodeWithText("Correct quantity 2 (atomic units; empty = keep)").performScrollTo().performTextInput("123")
                 onNodeWithText("Save correction").performScrollTo().performClick()
                 assertEquals(ExactInteger.parse("123"), saved?.amounts?.get(second.id)?.atomicUnits)

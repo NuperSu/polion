@@ -78,6 +78,13 @@ class ModelProductionCaptureTest {
                         for (tab in listOf("Transactions", "Alerts", "Order book")) {
                             onNodeWithTag("detail-$tab").performScrollTo().performClick()
                             capture("coin-${tab.lowercase().replace(' ', '-')}")
+                            if (tab == "Transactions") {
+                                waitUntil(
+                                    timeoutMillis = 10000,
+                                ) { onAllNodesWithTag("transaction-card-demo-pending").fetchSemanticsNodes().isNotEmpty() }
+                                onNodeWithTag("transaction-card-demo-pending").performScrollTo()
+                                capture("coin-transaction-cards")
+                            }
                         }
                         onNodeWithTag("model-back").performClick()
                         onNodeWithTag("add-transaction").performClick()

@@ -52,6 +52,10 @@ enum class ModelTransactionType(
     BUY("Buy"),
     SELL("Sell"),
     TRANSFER("Transfer"),
+    DEPOSIT("Deposit"),
+    WITHDRAWAL("Withdrawal"),
+    REWARD("Reward"),
+    FEE("Fee"),
 }
 
 enum class ModelDraftField { DATE, PRICE, AMOUNT, FEE, NOTES }
@@ -78,7 +82,10 @@ data class ModelTransactionDialogState(
     val canManual: Boolean = true,
     val canImport: Boolean = false,
     val canSave: Boolean = false,
+    val showPrice: Boolean = true,
+    val showFee: Boolean = true,
     val saving: Boolean = false,
+    val types: List<ModelTransactionType> = listOf(ModelTransactionType.BUY, ModelTransactionType.SELL, ModelTransactionType.TRANSFER),
     val message: String? = null,
     val saveLabel: String = "Done",
     val priceLabel: String = "Price per coin",
@@ -165,6 +172,7 @@ private fun MethodCard(
 fun ModelTransactionDialog(
     state: ModelTransactionDialogState,
     actions: ModelTransactionDialogActions,
+    controls: @Composable () -> Unit = {},
 ) {
     val c = MaterialTheme.colorScheme
     val selected = state.assets.firstOrNull { it.id == state.selectedAsset }
@@ -242,8 +250,8 @@ fun ModelTransactionDialog(
                                 ) { actions.onAsset(asset.id) }
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ModelTransactionType.entries.forEach { type ->
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            state.types.forEach { type ->
                                 FormCapsule(
                                     type.label,
                                     type == state.type,
@@ -253,18 +261,23 @@ fun ModelTransactionDialog(
                         Text("Exchange\n${state.exchange}", fontSize = 14.sp)
                         HorizontalDivider(color = c.surfaceVariant)
                         Text("Trading pair\n${state.pair}", fontSize = 14.sp)
+                        controls()
                         OutlinedTextField(state.date, {
                             actions.onField(ModelDraftField.DATE, it)
                         }, label = { Text("Date & time") }, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(state.price, {
-                            actions.onField(ModelDraftField.PRICE, it)
-                        }, label = { Text(state.priceLabel) }, modifier = Modifier.fillMaxWidth())
+                        if (state.showPrice) {
+                            OutlinedTextField(state.price, {
+                                actions.onField(ModelDraftField.PRICE, it)
+                            }, label = { Text(state.priceLabel) }, modifier = Modifier.fillMaxWidth())
+                        }
                         OutlinedTextField(state.amount, {
                             actions.onField(ModelDraftField.AMOUNT, it)
                         }, label = { Text("Amount (${state.type.label})") }, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(state.fee, {
-                            actions.onField(ModelDraftField.FEE, it)
-                        }, label = { Text(state.feeLabel) }, modifier = Modifier.fillMaxWidth())
+                        if (state.showFee) {
+                            OutlinedTextField(state.fee, {
+                                actions.onField(ModelDraftField.FEE, it)
+                            }, label = { Text(state.feeLabel) }, modifier = Modifier.fillMaxWidth())
+                        }
                         actions.onSupportedManual?.let { open -> TextButton(onClick = open) { Text("Record deposit, payment or reward") } }
                         OutlinedTextField(state.notes, {
                             actions.onField(ModelDraftField.NOTES, it)

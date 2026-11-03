@@ -2,12 +2,14 @@ package io.polion.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -15,12 +17,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import io.polion.core.application.AccountingView
+import io.polion.core.application.ActivityFilter
 import io.polion.core.application.AssetListPreference
 import io.polion.core.application.AssetSort
 import io.polion.core.application.AssetValuation
@@ -28,20 +32,20 @@ import io.polion.core.application.HistoryPoint
 import io.polion.core.application.MarketPricePoint
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
+import io.polion.core.ledger.ActivityStatus
 import io.polion.core.market.PriceStatus
 import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
+import io.polion.core.reconcile.EffectiveActivity
 import io.polion.ui.model.ModelAccountRow
 import io.polion.ui.model.ModelAccounts
 import io.polion.ui.model.ModelAccountsState
-import io.polion.ui.model.ModelAssetOption
 import io.polion.ui.model.ModelChangeTone
 import io.polion.ui.model.ModelCoinDetail
 import io.polion.ui.model.ModelCoinDetailActions
 import io.polion.ui.model.ModelCoinDetailState
 import io.polion.ui.model.ModelCoinIdentity
 import io.polion.ui.model.ModelCoinTab
-import io.polion.ui.model.ModelDraftField
 import io.polion.ui.model.ModelHoldingRow
 import io.polion.ui.model.ModelInsights
 import io.polion.ui.model.ModelInsightsState
@@ -59,11 +63,8 @@ import io.polion.ui.model.ModelSettings
 import io.polion.ui.model.ModelSettingsState
 import io.polion.ui.model.ModelShell
 import io.polion.ui.model.ModelShellState
-import io.polion.ui.model.ModelTransactionDialog
-import io.polion.ui.model.ModelTransactionDialogActions
-import io.polion.ui.model.ModelTransactionDialogState
-import io.polion.ui.model.ModelTransactionType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -103,8 +104,83 @@ internal fun ModelWorkspace(
     onAutomatic: (Boolean) -> Unit,
     onWifi: (Boolean) -> Unit,
     onManual: (AssetValuation?) -> Unit,
+    onTransaction: (EffectiveActivity) -> Unit = {},
     statusContent: @Composable () -> Unit = {},
 ) {
+    val transactionScope = rememberCoroutineScope()
+    var transactionSearch by rememberSaveable { mutableStateOf("") }
+    var transactionType by rememberSaveable { mutableStateOf("All") }
+    var transactionStatus by rememberSaveable { mutableStateOf("All") }
+    var transactionOffset by rememberSaveable { mutableStateOf(0) }
+    var savedTransactionScope by rememberSaveable { mutableStateOf<List<String>?>(null) }
+    val activeTransactionScope = selectedAsset?.let { listOf(it.asset.value, selectedPortfolio?.value.orEmpty()) }
+    LaunchedEffect(activeTransactionScope) {
+        if (activeTransactionScope != null) {
+            if (savedTransactionScope != null && savedTransactionScope != activeTransactionScope) {
+                transactionSearch = ""
+                transactionType = "All"
+                transactionStatus = "All"
+                transactionOffset = 0
+            }
+            savedTransactionScope = activeTransactionScope
+        }
+    }
+    val timelineFilter =
+        ActivityFilter(
+            search = transactionSearch,
+            portfolio = selectedPortfolio,
+            asset = selectedAsset?.asset,
+            offset = transactionOffset,
+            limit = 20,
+            status =
+                transactionStatus
+                    .takeIf {
+                        it !=
+                            "All"
+                    }?.let(ActivityStatus::valueOf),
+        )
+    var timeline by remember(
+        app,
+        selectedAsset?.asset,
+        selectedPortfolio,
+        snapshot?.currency,
+        transactionSearch,
+        transactionType,
+        transactionStatus,
+        transactionOffset,
+    ) {
+        mutableStateOf<TransactionTimeline?>(null)
+    }
+    var timelineError by remember { mutableStateOf(false) }
+    var timelineRetry by remember { mutableStateOf(0) }
+    var timelineLoading by remember { mutableStateOf(false) }
+    var transactionExplanation by rememberSaveable { mutableStateOf(false) }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(app, timelineFilter, transactionType, dataRevision, snapshot, timelineRetry) {
+        val data = snapshot
+        if (selectedAsset != null && data != null) {
+            timelineLoading = true
+            timelineError = false
+            try {
+                timeline = withContext(host.dispatcher) { transactionTimeline(app, data, timelineFilter, transactionType) }
+            } catch (
+                cancelled: CancellationException,
+            ) {
+                throw cancelled
+            } catch (_: Exception) {
+                timelineError = true
+            } finally {
+                timelineLoading = false
+            }
+        }
+    }
+    if (transactionExplanation) {
+        AlertDialog(onDismissRequest = { transactionExplanation = false }, title = { Text("Transaction values") }, text = {
+            Text(
+                "Buy and sell averages divide explicit total consideration by executed base quantity. They exclude separate fees and unconfirmed/reversed records. Only trades with valid evidence in the selected quote qualify; partial coverage is labeled. Worth Now uses fresh current quotes; Worth Then uses retained execution evidence or fresh saved historical quotes. Both value the displayed gross transaction quantity, not investment return. Missing counterparties, acquisition costs or quotes remain unknown.",
+            )
+        }, confirmButton = { TextButton(onClick = { transactionExplanation = false }) { Text("Close") } })
+    }
     var priceDetails by rememberSaveable { mutableStateOf(false) }
     var priceLoading by remember { mutableStateOf(false) }
     var priceError by remember { mutableStateOf(false) }
@@ -366,17 +442,18 @@ internal fun ModelWorkspace(
                     chartTopLabel = observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—",
                     chartBottomLabel = observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—",
                     transactionMetrics =
-                        listOf(
-                            ModelMetric("Avg. Buy Price", "—"),
-                            ModelMetric("Avg. Sell Price", "—"),
-                            ModelMetric("Transactions", "—"),
-                        ),
-                    transactions = emptyList(),
+                        timeline?.metrics
+                            ?: listOf(
+                                ModelMetric("Avg. Buy Price", "—"),
+                                ModelMetric("Avg. Sell Price", "—"),
+                                ModelMetric("Transactions", "—"),
+                            ),
+                    transactions = timeline?.cards.orEmpty(),
                     alerts = emptyList(),
                     orderSource = "Unavailable",
                     orderRows = emptyList(),
                     enabledRanges = setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
-                    transactionEmpty = "Open activity to review this asset's records.",
+                    transactionEmpty = if (timelineLoading) "Loading saved transactions…" else "No matching transactions",
                     alertsUnavailable = "Price alerts are unavailable.",
                     orderUnavailable = "Order book data is unavailable.",
                     changeTone = ModelChangeTone.NEUTRAL,
@@ -386,7 +463,83 @@ internal fun ModelWorkspace(
                     onTab = { tab = it.name },
                     onRange = { coinRange = it },
                     onAddTransaction = { onManual(asset) },
+                    onTransaction = { id -> timeline?.entries?.find { it.activity.id.value == id }?.let(onTransaction) },
                 ),
+                transactionControls = {
+                    OutlinedTextField(transactionSearch, {
+                        transactionSearch = it
+                        transactionOffset = 0
+                    }, label = { Text("Search transactions") }, modifier = Modifier.fillMaxWidth().testTag("coin-transaction-search"))
+                    TransactionChoice(
+                        "Transaction type",
+                        listOf("All", "Buy", "Sell", "Transfer", "Deposit", "Withdrawal", "Reward", "Fee", "Other").map {
+                            it to
+                                it
+                        },
+                        transactionType,
+                    ) {
+                        transactionType = it
+                        transactionOffset = 0
+                    }
+                    TransactionChoice(
+                        "Status",
+                        listOf("All" to "All") + ActivityStatus.entries.map { it.name to it.name.lowercase() },
+                        transactionStatus,
+                    ) {
+                        transactionStatus =
+                            it
+                        ; transactionOffset = 0
+                    }
+                    TextButton(onClick = { transactionExplanation = true }) { Text("How transaction values are calculated") }
+                    if (timelineLoading) Text("Updating saved transactions…")
+                    if (timelineError) TextButton(onClick = { timelineRetry++ }) { Text("Retry transactions") }
+                    TextButton(onClick = {
+                        val exportFilter = timelineFilter
+                        val exportType = transactionType
+                        transactionScope.launch {
+                            try {
+                                withContext(host.dispatcher) {
+                                    val accounts = app.transactionAccounts(exportFilter.portfolio)
+                                    val ids =
+                                        app
+                                            .transactionEntries(exportFilter)
+                                            .filter {
+                                                exportType == "All" ||
+                                                    transactionKind(it, asset.asset, accounts) == exportType
+                                            }.map { it.activity.id }
+                                            .toSet()
+                                    val csv = app.exportCsv(exportFilter, ids)
+                                    host.saveFile("polion-${asset.asset.value}-transactions.csv", csv.encodeToByteArray()) {
+                                        exportMessage =
+                                            it
+                                    }
+                                }
+                            } catch (
+                                cancelled: CancellationException,
+                            ) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                exportMessage = "Could not export transactions. Try again."
+                            }
+                        }
+                    }) { Text("Export matching transactions") }
+                    exportMessage?.let { Text(it) }
+                },
+                transactionFooter = {
+                    Text(
+                        "${if (timeline?.total == 0) 0 else transactionOffset + 1}–${minOf(
+                            transactionOffset + (timeline?.cards?.size ?: 0),
+                            timeline?.total ?: 0,
+                        )} of ${timeline?.total ?: 0}",
+                    )
+                    TextButton(enabled = transactionOffset > 0, onClick = {
+                        transactionOffset = maxOf(0, transactionOffset - 20)
+                    }) { Text("Previous transactions") }
+                    TextButton(
+                        enabled = transactionOffset + 20 < (timeline?.total ?: 0),
+                        onClick = { transactionOffset += 20 },
+                    ) { Text("More transactions") }
+                },
             )
             if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL) {
                 Text(
@@ -664,64 +817,3 @@ private fun identity(
     ).take(1),
     id,
 )
-
-@Composable
-internal fun ModelAddDialog(
-    data: PortfolioSnapshot,
-    manual: Boolean,
-    initialAsset: io.polion.core.model.AssetId?,
-    onManual: () -> Unit,
-    onClose: () -> Unit,
-    onWallet: () -> Unit,
-    onSupportedManual: (String) -> Unit,
-) {
-    val assets = (data.valuations + data.marketCoins.map { it.detailValuation() }).distinctBy { it.asset }
-    var selected by rememberSaveable {
-        mutableStateOf(
-            initialAsset?.value ?: assets
-                .firstOrNull()
-                ?.asset
-                ?.value
-                .orEmpty(),
-        )
-    }
-    var type by rememberSaveable { mutableStateOf(ModelTransactionType.BUY.name) }
-    var date by rememberSaveable { mutableStateOf("") }
-    var price by rememberSaveable { mutableStateOf("") }
-    var amount by rememberSaveable { mutableStateOf("") }
-    var fee by rememberSaveable { mutableStateOf("") }
-    var notes by rememberSaveable { mutableStateOf("") }
-    ModelTransactionDialog(
-        ModelTransactionDialogState(
-            manual,
-            assets.map {
-                ModelAssetOption(
-                    it.asset.value,
-                    it.metadata?.symbol ?: it.asset.value,
-                    it.metadata?.name ?: it.asset.value,
-                )
-            },
-            selected,
-            ModelTransactionType.valueOf(type),
-            "Unavailable",
-            "Unavailable",
-            date,
-            price,
-            amount,
-            fee,
-            notes,
-            canSave = false,
-        ),
-        ModelTransactionDialogActions(onClose, onWallet, onManual, {}, { selected = it }, { type = it.name }, { field, value ->
-            when (field) {
-                ModelDraftField.DATE -> date = value
-                ModelDraftField.PRICE -> price = value
-                ModelDraftField.AMOUNT ->
-                    amount =
-                        value
-                ; ModelDraftField.FEE -> fee = value
-                ModelDraftField.NOTES -> notes = value
-            }
-        }, {}, onSupportedManual = { onSupportedManual(selected) }),
-    )
-}

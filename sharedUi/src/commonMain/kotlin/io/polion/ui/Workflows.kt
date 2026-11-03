@@ -995,6 +995,8 @@ internal fun ActivityDialog(
     data: PortfolioSnapshot,
     evidence: @Composable () -> Unit,
     close: () -> Unit,
+    edit: (() -> Unit)? = null,
+    reverse: (() -> Unit)? = null,
     save: (ActivityOverlay) -> Unit,
 ) {
     var label by remember { mutableStateOf(item.label.orEmpty()) }
@@ -1002,7 +1004,22 @@ internal fun ActivityDialog(
     var kind by remember { mutableStateOf(item.activity.kind) }
     val corrections = remember(item.activity.id) { mutableStateMapOf<EventId, String>() }
     var error by remember { mutableStateOf<String?>(null) }
+    var confirmReverse by remember { mutableStateOf(false) }
     FormDialog("Activity details", close) {
+        if (item.original.manual && item.activity.status == ActivityStatus.CONFIRMED) {
+            edit?.let { action ->
+                TextButton(onClick = action, modifier = Modifier.testTag("edit-manual-transaction")) { Text("Edit manual transaction") }
+            }
+            reverse?.let { action ->
+                if (confirmReverse) {
+                    Text("Reverse this entry? Its movements stop affecting balances; its history is retained.")
+                    TextButton(onClick = action) { Text("Confirm reversal") }
+                    TextButton(onClick = { confirmReverse = false }) { Text("Keep entry") }
+                } else {
+                    TextButton(onClick = { confirmReverse = true }) { Text("Reverse manual transaction") }
+                }
+            }
+        }
         Text(item.activity.id.value, fontSize = 11.sp)
         Text("${item.activity.status.name} · ${item.activity.kind.name}", fontWeight = FontWeight.SemiBold)
         Text(
@@ -1034,7 +1051,7 @@ internal fun ActivityDialog(
             "Original quantities: ${item.original.movements.joinToString { it.amount.atomicUnits.toString() }} atomic units",
             fontSize = 11.sp,
         )
-        if (!item.original.manual) evidence()
+        evidence()
         if (item.unresolvedMovementIds.isNotEmpty()) {
             Text(
                 "Correction conflict: some original movement IDs could not be matched.",

@@ -228,6 +228,19 @@ private fun Product(
     var manualAsset by remember { mutableStateOf<AssetId?>(null) }
     var advancedMode by rememberSaveable { mutableStateOf(false) }
     var modelAdd by rememberSaveable { mutableStateOf(false) }
+    var modelEditingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var modelEditingDraft by remember { mutableStateOf<io.polion.core.application.TransactionDraft?>(null) }
+    LaunchedEffect(modelEditingId) {
+        modelEditingDraft =
+            modelEditingId?.let { id ->
+                withContext(host.dispatcher) {
+                    app.transactionDraft(
+                        io.polion.core.model
+                            .ActivityId(id),
+                    )
+                }
+            }
+    }
     var modelManual by rememberSaveable { mutableStateOf(false) }
     val modelDraftState = rememberSaveableStateHolder()
     val modelWorkspaceState = rememberSaveableStateHolder()
@@ -264,6 +277,17 @@ private fun Product(
     var sourceDraftConsent by presenter.field({ it.sourceDraftConsent }) { presenter.update { copy(sourceDraftConsent = it) } }
     val busy = presenter.state.busy
     var selectedActivity by presenter.field({ it.selectedActivity }) { presenter.update { copy(selectedActivity = it) } }
+    var selectedManualDraft by remember { mutableStateOf<io.polion.core.application.TransactionDraft?>(null) }
+    var selectedManualCanEdit by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedActivity?.activity?.id) {
+        selectedManualDraft = null
+        selectedManualCanEdit = false
+        selectedActivity?.takeIf { it.original.manual }?.let { item ->
+            val (draft, overlay) = withContext(host.dispatcher) { app.transactionDraft(item.activity.id) to app.overlay(item.activity.id) }
+            selectedManualDraft = draft
+            selectedManualCanEdit = draft != null && (overlay == null || overlay.amounts.isEmpty() && overlay.kind == null)
+        }
+    }
     var addressWallet by presenter.field({ it.addressWallet }) { presenter.update { copy(addressWallet = it) } }
     var sourceScanTarget by remember { mutableStateOf<io.polion.core.ownership.TrackingTarget?>(null) }
     var removeAccount by presenter.field({ it.removeAccount }) { presenter.update { copy(removeAccount = it) } }
@@ -521,6 +545,7 @@ private fun Product(
                     },
                     onRefresh = ::refreshPrices,
                     onAdd = {
+                        modelEditingId = null
                         modelManual = false
                         modelAdd = true
                     },
@@ -563,8 +588,10 @@ private fun Product(
                         execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
                         preferences = updated
                     },
+                    onTransaction = { selectedActivity = it },
                     statusContent = { SnackbarHost(snackbar, Modifier.testTag("status-message")) },
                     onManual = { asset ->
+                        modelEditingId = null
                         manualAsset = asset?.asset
                         modelManual = true
                         modelAdd = true
@@ -1298,23 +1325,29 @@ private fun Product(
                 }
             }
         }
-        if (modelAdd && snapshot != null) {
-            modelDraftState.SaveableStateProvider("manual-draft") {
-                ModelAddDialog(
+        if (modelAdd && snapshot != null && (modelEditingId == null || modelEditingDraft?.id?.value == modelEditingId)) {
+            modelDraftState.SaveableStateProvider(modelEditingId ?: "manual-draft") {
+                TransactionEntry(
+                    app,
+                    host,
                     snapshot!!,
                     modelManual,
                     manualAsset,
+                    modelEditingDraft.takeIf { modelEditingId != null },
                     onManual = { modelManual = true },
                     onClose = { modelAdd = false },
                     onWallet = {
                         modelAdd = false
                         dialog = "add"
                     },
-                    onSupportedManual = { selected ->
-                        manualAsset = selected.takeIf { it.isNotBlank() }?.let(::AssetId)
+                    onSaved = {
                         modelAdd = false
-                        dialog = "activity"
+                        modelDraftState.removeState(modelEditingId ?: "manual-draft")
+                        modelEditingId = null
+                        modelEditingDraft = null
+                        execute("Transaction saved on this device") {}
                     },
+                    onAccountCreated = { execute("Local account created") {} },
                 )
             }
         }
@@ -1455,9 +1488,49 @@ private fun Product(
             }
         }
         selectedActivity?.let { item ->
-            ActivityDialog(item, snapshot!!, {
-                ActivityEvidence(app, host, item.activity.id, if (page == Page.HOME) null else selectedPortfolio)
-            }, { selectedActivity = null }) { overlay ->
+            ActivityDialog(
+                item,
+                snapshot!!,
+                {
+                    if (item.original.manual) {
+                        selectedManualDraft?.let { draft ->
+                            val executionTime = kotlin.time.Instant.fromEpochMilliseconds(draft.atMillis)
+                            Text("${draft.type.name} · ${draft.asset.value}/${draft.quote.value} · $executionTime")
+                            draft.unitPrice?.let { Text("Execution / acquisition evidence: ${quotePrice(it, draft.quote)} per unit") }
+                            draft.feeUnitPrice?.let {
+                                Text(
+                                    "Fee conversion evidence: ${quotePrice(it, draft.quote)} per ${draft.feeAsset?.value}",
+                                )
+                            }
+                            Text("Fees are separate expense disposals at zero proceeds. Trade consideration excludes fees.")
+                        }
+                    } else {
+                        ActivityEvidence(app, host, item.activity.id, if (page == Page.HOME) null else selectedPortfolio)
+                    }
+                },
+                { selectedActivity = null },
+                edit =
+                    if (item.original.manual && selectedManualCanEdit && selectedManualDraft?.id == item.activity.id) {
+                        {
+                            modelEditingId = item.activity.id.value
+                            modelEditingDraft = null
+                            modelManual = true
+                            modelAdd = true
+                            selectedActivity = null
+                        }
+                    } else {
+                        null
+                    },
+                reverse =
+                    if (item.original.manual) {
+                        {
+                            execute("Manual transaction reversed; history retained") { app.reverseManualTransaction(item.activity.id) }
+                            selectedActivity = null
+                        }
+                    } else {
+                        null
+                    },
+            ) { overlay ->
                 execute("Correction saved; original evidence preserved") { app.saveOverlay(overlay) }
                 selectedActivity =
                     null

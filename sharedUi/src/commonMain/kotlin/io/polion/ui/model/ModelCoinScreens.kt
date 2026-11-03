@@ -162,6 +162,8 @@ private fun MetricRows(metrics: List<ModelMetric>) {
 fun ColumnScope.ModelCoinDetail(
     state: ModelCoinDetailState,
     actions: ModelCoinDetailActions,
+    transactionControls: @Composable () -> Unit = {},
+    transactionFooter: @Composable () -> Unit = {},
 ) {
     val c = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -257,6 +259,7 @@ fun ColumnScope.ModelCoinDetail(
         }
         ModelCoinTab.TRANSACTIONS -> {
             MetricRows(state.transactionMetrics)
+            transactionControls()
             TextButton(
                 onClick = actions.onAddTransaction,
                 enabled = state.canAddTransaction,
@@ -290,7 +293,8 @@ fun ColumnScope.ModelCoinDetail(
                                 .background(c.surface, RoundedCornerShape(14.dp))
                                 .clickable {
                                     actions.onTransaction(transaction.id)
-                                }.padding(16.dp),
+                                }.testTag("transaction-card-${transaction.id}")
+                                .padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
                             listOf(
@@ -308,6 +312,7 @@ fun ColumnScope.ModelCoinDetail(
                     }
                 }
             }
+            transactionFooter()
         }
         ModelCoinTab.ALERTS -> {
             TextButton(onClick = actions.onAddAlert, enabled = state.canAddAlert) {

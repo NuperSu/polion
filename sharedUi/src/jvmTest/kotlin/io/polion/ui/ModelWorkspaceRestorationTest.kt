@@ -59,7 +59,7 @@ class ModelWorkspaceRestorationTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("coin-BTC").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("coin-BTC").performScrollTo().performClick()
                     onNodeWithTag("detail-Transactions").performScrollTo().performClick()
-                    onNodeWithText("Open activity to review this asset's records.").performScrollTo().assertIsDisplayed()
+                    onNodeWithTag("coin-transaction-search").performScrollTo().performTextInput("demo-payment")
                     var saved = emptyMap<String, List<Any?>>()
                     runOnIdle {
                         saved = registry.performSave()
@@ -70,7 +70,7 @@ class ModelWorkspaceRestorationTest {
                         visible.value = true
                     }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("detail-Transactions").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithText("Open activity to review this asset's records.").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("demo-payment").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("model-back").performClick()
                     onNodeWithTag("coin-BTC").performScrollTo().assertIsDisplayed()
                 }
@@ -79,7 +79,7 @@ class ModelWorkspaceRestorationTest {
     }
 
     @Test
-    fun unsupportedTradeDraftSurvivesCloseAndHostRecreationWithoutSubmission() {
+    fun incompleteTradeDraftSurvivesCloseAndHostRecreationWithoutSubmission() {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
@@ -191,7 +191,7 @@ class ModelWorkspaceRestorationTest {
                     onNodeWithTag("detail-Transactions").performScrollTo().performClick()
                     onNodeWithText("Review activity and corrections").performScrollTo().performClick()
                     onNodeWithText("Back").performClick()
-                    onNodeWithText("Open activity to review this asset's records.").performScrollTo().assertIsDisplayed()
+                    onNodeWithText("Search transactions").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("model-back").performClick()
                     onNodeWithTag("model-menu").performClick()
                     onNodeWithText("Advanced tools").performClick()
