@@ -1994,6 +1994,100 @@ class PortfolioApplication(
 
     private fun updateOwnership(change: (OwnershipSnapshot) -> OwnershipSnapshot) = ownership.replace(change(ownership.load()))
 
+    /** Commit all linked legs, treatments and notes together, retaining append-only manual revisions. */
+    fun saveTransaction(
+        draft: TransactionDraft,
+        editing: Boolean = false,
+    ) {
+        ensureDefaultAssets()
+        val previous = activities.history(draft.id).lastOrNull()
+        require(if (editing) previous?.manual == true else previous == null) { "Entry identity already exists or cannot be edited" }
+        require(previous == null || previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
+            "Only active manual entries can be edited"
+        }
+        require(
+            overlays.overlay(draft.id)?.second?.let {
+                it.amounts.isEmpty() && it.kind == null
+            } != false ||
+                !editing,
+        ) { "Edit this corrected entry through its correction tools" }
+        val accounts =
+            scopedAccounts(ownership.load(), null).intersect(
+                ownership
+                    .load()
+                    .accounts
+                    .filter {
+                        it.kind != AccountKind.GROUP
+                    }.map { it.id }
+                    .toSet(),
+            )
+        require(draft.account in accounts && (draft.destination == null || draft.destination in accounts)) { "Select active accounts" }
+        if (draft.destination != null) {
+            val catalog = ownership.load().accounts.associateBy { it.id }
+            require(catalog.getValue(draft.account).ownerId == catalog.getValue(draft.destination).ownerId) {
+                "Internal transfers require accounts with the same owner"
+            }
+        }
+        val assets = listOfNotNull(draft.asset, draft.quote, draft.feeAsset).distinct()
+        val precision = assets.associateWith { requireNotNull(market.metadataAt(it, draft.atMillis)) { "Unknown asset" }.decimals }
+        val prepared = TransactionDrafts.prepare(draft, precision)
+        db.transaction {
+            activities.saveInTransaction(prepared.activity)
+            treatments.saveInTransaction(draft.id, prepared.treatments)
+            overlays.saveOverlayInTransaction(
+                ActivityOverlay(
+                    draft.id,
+                    label =
+                        overlays
+                            .overlay(
+                                draft.id,
+                            )?.second
+                            ?.label,
+                    note = draft.notes,
+                ),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
+                listOf("transaction_draft:${draft.id.value}", draft.encode()),
+            )
+        }
+        invalidate()
+    }
+
+    /** Effective evidence intersecting the requested scope; callers paginate after computing summary metrics. */
+    fun transactionEntries(filter: ActivityFilter): List<EffectiveActivity> {
+        val accounts = scopedAccounts(ownership.load(), filter.portfolio).filter { filter.account == null || it == filter.account }.toSet()
+        return ledger()
+            .activities
+            .filter { entry ->
+                val a = entry.activity
+                a.movements.any { it.accountId in accounts && (filter.asset == null || it.amount.assetId == filter.asset) } &&
+                    (filter.kind == null || a.kind == filter.kind) &&
+                    (filter.status == null || a.status == filter.status) &&
+                    (
+                        filter.search.isBlank() ||
+                            listOfNotNull(entry.label, entry.note, a.id.value, a.kind.name).any { it.contains(filter.search, true) }
+                    )
+            }.sortedWith(compareByDescending<EffectiveActivity> { it.activity.occurredAtEpochMillis }.thenBy { it.activity.id.value })
+    }
+
+    fun transactionAccounts(portfolio: PortfolioId?): Set<AccountId> = scopedAccounts(ownership.load(), portfolio)
+
+    fun transactionDraft(id: ActivityId): TransactionDraft? =
+        setting("transaction_draft:${id.value}")?.let(TransactionDraft::decode)?.let { draft ->
+            overlays.overlay(id)?.let { draft.copy(notes = it.second.note.orEmpty()) } ?: draft
+        }
+
+    /** Reversal is a retained manual revision; imported evidence can only be corrected by overlays. */
+    fun reverseManualTransaction(id: ActivityId) {
+        val previous = requireNotNull(activities.history(id).lastOrNull()) { "Unknown entry" }
+        require(previous.manual && previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
+            "Only active manual entries can be reversed"
+        }
+        activities.save(previous.copy(status = io.polion.core.ledger.ActivityStatus.REVERSED))
+        invalidate()
+    }
+
     fun saveManualActivity(value: Activity) {
         require(value.manual)
         val accountIds =
@@ -2252,7 +2346,10 @@ class PortfolioApplication(
     }
 
     /** Exports all matching activity movements in the requested scope, independently of on-screen pagination. */
-    fun exportCsv(filter: ActivityFilter = ActivityFilter()): String {
+    fun exportCsv(
+        filter: ActivityFilter = ActivityFilter(),
+        activityIds: Set<ActivityId>? = null,
+    ): String {
         fun cell(
             value: String,
             text: Boolean,
@@ -2266,6 +2363,7 @@ class PortfolioApplication(
         val selected = scopedAccounts(ownership.load(), filter.portfolio)
         filterActivitiesByNetwork(overlays.replayForLedger(activities.current()).activities, filter.network).forEach { item ->
             val activity = item.activity
+            if (activityIds != null && activity.id !in activityIds) return@forEach
             if (filter.kind != null && activity.kind != filter.kind) return@forEach
             if (filter.status != null && activity.status != filter.status) return@forEach
             if (filter.search.isNotBlank() &&

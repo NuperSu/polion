@@ -56,23 +56,24 @@ class OverlayRepository(
         }
     }
 
-    fun saveOverlay(overlay: ActivityOverlay): Int =
-        db.transaction {
-            val previous = readOverlay(overlay.activityId)
-            if (previous?.second == overlay) return@transaction previous.first
-            val revision = (previous?.first ?: -1) + 1
+    fun saveOverlay(overlay: ActivityOverlay): Int = db.transaction { saveOverlayInTransaction(overlay) }
+
+    internal fun saveOverlayInTransaction(overlay: ActivityOverlay): Int {
+        val previous = readOverlay(overlay.activityId)
+        if (previous?.second == overlay) return previous.first
+        val revision = (previous?.first ?: -1) + 1
+        db.execute(
+            "INSERT INTO overlay_revisions VALUES (?, ?, ?, ?, ?)",
+            listOf(overlay.activityId.value, revision.toString(), overlay.label, overlay.note, overlay.kind?.name),
+        )
+        overlay.amounts.entries.sortedBy { it.key.value }.forEach { (event, amount) ->
             db.execute(
-                "INSERT INTO overlay_revisions VALUES (?, ?, ?, ?, ?)",
-                listOf(overlay.activityId.value, revision.toString(), overlay.label, overlay.note, overlay.kind?.name),
+                "INSERT INTO overlay_amounts VALUES (?, ?, ?, ?, ?)",
+                listOf(overlay.activityId.value, revision.toString(), event.value, amount.assetId.value, amount.atomicUnits.toString()),
             )
-            overlay.amounts.entries.sortedBy { it.key.value }.forEach { (event, amount) ->
-                db.execute(
-                    "INSERT INTO overlay_amounts VALUES (?, ?, ?, ?, ?)",
-                    listOf(overlay.activityId.value, revision.toString(), event.value, amount.assetId.value, amount.atomicUnits.toString()),
-                )
-            }
-            revision
         }
+        return revision
+    }
 
     fun overlay(id: ActivityId): Pair<Int, ActivityOverlay>? = readOverlay(id)
 

@@ -51,10 +51,11 @@ class ReliabilityInstrumentation : Instrumentation() {
                             override fun getInputStream() = "{}".byteInputStream()
                         }
                     val pacer = KrakenPricePacer(clock = { now }, sleep = { now += it })
-                    val transport = KrakenPriceTransport(openConnection = {
-                        requests++
-                        response
-                    }, pacer = pacer)
+                    val transport =
+                        KrakenPriceTransport(openConnection = {
+                            requests++
+                            response
+                        }, pacer = pacer)
                     val url = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60"
                     check(runCatching { transport.get(url) }.exceptionOrNull() is io.polion.core.market.KrakenRateLimitedException)
                     code = 200
@@ -286,6 +287,21 @@ class ReliabilityInstrumentation : Instrumentation() {
                                 check(store.observations().size == 2)
                                 check(db.query("PRAGMA integrity_check").single().single() == "ok")
                             }
+                        }
+                    }
+                },
+                "manualTransactionWorkflow" to {
+                    val files = mutableListOf<File>()
+                    try {
+                        io.polion.testing.verifyManualTransactionWorkflow {
+                            val file = File.createTempFile("polion-manual-fixture-", ".sqlite", targetContext.cacheDir)
+                            files.add(file)
+                            AndroidSqliteDatabase(file.path)
+                        }
+                    } finally {
+                        files.forEach { file ->
+                            file.delete()
+                            File(file.path + "-journal").delete()
                         }
                     }
                 },

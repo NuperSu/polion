@@ -24,7 +24,12 @@ class TreatmentRepository(
     fun save(
         activity: ActivityId,
         treatments: List<Treatment>,
-    ) = db.transaction {
+    ) = db.transaction { saveInTransaction(activity, treatments) }
+
+    internal fun saveInTransaction(
+        activity: ActivityId,
+        treatments: List<Treatment>,
+    ) {
         db.execute("DELETE FROM accounting_treatments WHERE activity_id=?", listOf(activity.value))
         treatments.forEachIndexed { index, item ->
             val kind: String
