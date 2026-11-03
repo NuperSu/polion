@@ -39,7 +39,7 @@ Each phase is separately executable; its exit gate is defined in its document. P
 
 - **Complete (baseline)** · [Phase 0 — Establish the exact contract and honest baseline](ui-model-phases/0-establish-the-exact-contract-and-honest-baseline.md)
 - **Ready for user visual review** · [Phase 1 — Build one faithful presentation layer](ui-model-phases/1-build-one-faithful-presentation-layer.md)
-- **Not started** · [Phase 2 — Finish Portfolio and coin General with existing data](ui-model-phases/2-finish-portfolio-and-coin-general-with-existing-data.md)
+- **Implemented and verified; user visual review pending** · [Phase 2 — Finish Portfolio and coin General with existing data](ui-model-phases/2-finish-portfolio-and-coin-general-with-existing-data.md)
 - **Not started** · [Phase 3 — Implement the model's transaction system](ui-model-phases/3-implement-the-model-s-transaction-system.md)
 - **Not started** · [Phase 4 — Finish Accounts, history refresh and recovery](ui-model-phases/4-finish-accounts-history-refresh-and-recovery.md)
 - **Not started** · [Phase 5 — Make Main a real market-discovery screen](ui-model-phases/5-make-main-a-real-market-discovery-screen.md)
@@ -53,4 +53,4 @@ Start with Phases 0–1, then deliver Portfolio/coin General and transactions as
 
 Track each section with separate fields for reference capture, production renderer, data source, interaction coverage, financial oracle, Android evidence, desktop evidence and remaining blocker. Record the exact tested revision. Commit focused changes after their relevant checks, preserve unrelated work and do not push without instruction.
 
-Phase 0 is complete as a baseline. Phase 1 is ready for user visual review; its visual exit gate remains open. Expanding the old dashboard under the new colors does not satisfy the shared-renderer task.
+Phase 0 established the baseline. The user authorized Phase 2 following the Phase 1 review; the shared presentation remains subject to iterative visual feedback. Phase 2 implementation and evidence are recorded in its phase document. Expanding the old dashboard under the new colors does not satisfy the shared-renderer task.

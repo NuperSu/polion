@@ -94,3 +94,5 @@ These are proposed presentation contracts. Loading retains eligible saved conten
 - [ ] Test all controls, navigation, sorting, ranges, keyboard focus and recreation/draft state on both hosts.
 - [ ] Establish independent financial examples for each calculation, including flows, transfers, fees, missing basis/prices and ordering; reconcile exports.
 - [ ] Record separate Android and desktop build, launch and journey evidence at the tested revision. Review hosted CI separately.
+
+Phase 2 bindings and financial definitions are recorded in [Phase 2 evidence](ui-model-phases/phase-2-evidence.md); the earlier source inventory remains a baseline rather than the current binding status.

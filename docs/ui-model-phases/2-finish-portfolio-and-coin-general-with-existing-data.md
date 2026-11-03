@@ -11,3 +11,7 @@ Bind the six coin metrics to scoped evidence. Do not invent basis for transfers 
 The Portfolio explanation action should open a concise factual summary of changes, contributions and relevant data issues. It does not require an AI feature.
 
 **Exit:** balances, quantities and supported gains reconcile with the existing engines; changes have explicit periods and meanings; chart controls work; selecting/sorting holdings and navigating between portfolio and coin details preserves scope. Visual parity passes using real projected fixture data.
+
+## Implementation and verification
+
+The [Phase 2 evidence record](phase-2-evidence.md) defines the implemented ranges, price eligibility, accounting figures, display precision and verification coverage. Final populated-screen visual review is user-owned. Later financial/service/release gates remain separate.
