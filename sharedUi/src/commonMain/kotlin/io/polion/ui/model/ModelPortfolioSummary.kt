@@ -51,6 +51,7 @@ data class ModelPortfolioSummaryState(
     val chartTopLabel: String,
     val chartBottomLabel: String,
     val ranges: List<String> = listOf("1H", "1D", "1W", "1M", "YTD", "1Y", "ALL"),
+    val changeLabel: String? = null,
 )
 
 enum class ModelChangeTone { POSITIVE, NEGATIVE, NEUTRAL }
@@ -129,6 +130,7 @@ fun ModelPortfolioSummary(
                 currencyMenuContent()
             }
         }
+        state.changeLabel?.let { Text(it, color = colors.muted, fontSize = 12.sp) }
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(state.change, color = changeColor, fontSize = 17.sp)
             Text(

@@ -199,7 +199,7 @@ fun ColumnScope.ModelCoinDetail(
     when (state.tab) {
         ModelCoinTab.GENERAL -> {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(state.price, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+                Text(state.price, fontSize = 36.sp, fontWeight = FontWeight.Bold, modifier = Modifier.testTag("coin-unit-price"))
                 val changeColor =
                     when (state.changeTone) {
                         ModelChangeTone.POSITIVE -> c.primary

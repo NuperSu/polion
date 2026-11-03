@@ -187,7 +187,7 @@ private fun FavoriteButton(
 }
 
 private fun marketPrice(asset: MarketCoin): String =
-    asset.price?.let { "${it.price.value} ${it.price.quoteAssetId.value}" } ?: "Price unavailable"
+    asset.price?.let { quotePrice(it.price.value, it.price.quoteAssetId) } ?: "Price unavailable"
 
 private fun marketQuoteStatus(asset: MarketCoin): String =
     when {

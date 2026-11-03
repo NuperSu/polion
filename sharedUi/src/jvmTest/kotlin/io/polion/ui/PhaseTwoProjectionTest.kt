@@ -37,6 +37,15 @@ class PhaseTwoProjectionTest {
     )
 
     @Test
+    fun usdDisplayIsBoundedToCentsWithoutChangingTinyPrices() {
+        val original = ExactDecimal.parse("1234.56789123456789")
+        assertEquals("$1,234.57", quotePrice(original, AssetId("USD")))
+        assertEquals("1234.56789123456789", original.toString())
+        assertEquals("<$0.01", quotePrice(ExactDecimal.parse("0.000000001"), AssetId("USD")))
+        assertEquals("$0.00", quotePrice(ExactDecimal.parse("0"), AssetId("USD")))
+    }
+
+    @Test
     fun contributionsUseExactNativeDifferencesAndExcludeTransfers() {
         val before =
             io.polion.core.application.AnalyticsSnapshot(

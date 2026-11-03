@@ -137,6 +137,7 @@ fun ModelShell(
     onMenu: (String) -> Unit,
     onRefresh: () -> Unit,
     onAdd: (() -> Unit)? = null,
+    statusContent: @Composable () -> Unit = {},
     content: @Composable ColumnScope.(wide: Boolean, short: Boolean) -> Unit,
 ) {
     ModelTheme(state.dark) {
@@ -193,6 +194,7 @@ fun ModelShell(
                                 }
                             }
                         }
+                        statusContent()
                         if (!wide) BottomNavigation(state.page, onPage)
                     }
                 }

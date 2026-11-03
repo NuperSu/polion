@@ -103,6 +103,7 @@ internal fun ModelWorkspace(
     onAutomatic: (Boolean) -> Unit,
     onWifi: (Boolean) -> Unit,
     onManual: (AssetValuation?) -> Unit,
+    statusContent: @Composable () -> Unit = {},
 ) {
     var priceDetails by rememberSaveable { mutableStateOf(false) }
     var priceLoading by remember { mutableStateOf(false) }
@@ -204,7 +205,7 @@ internal fun ModelWorkspace(
         AlertDialog(onDismissRequest = { priceDetails = false }, title = { Text("Saved unit-price observations") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 prices.mapNotNull { it.price }.distinctBy { it.id }.sortedByDescending { it.validAtMillis }.forEach { observation ->
-                    Text("${observation.price.value} ${observation.price.quoteAssetId.value} per unit")
+                    Text("${quotePrice(observation.price.value, observation.price.quoteAssetId)} per unit")
                     val valid = kotlin.time.Instant.fromEpochMilliseconds(observation.validAtMillis)
                     val observedAt = kotlin.time.Instant.fromEpochMilliseconds(observation.observedAtMillis)
                     Text("${observation.providerId?.value ?: "Manual"} · valid $valid")
@@ -289,6 +290,7 @@ internal fun ModelWorkspace(
         },
         onRefresh = onRefresh,
         onAdd = if (page == Page.OVERVIEW && selectedAsset == null) onAdd else null,
+        statusContent = statusContent,
     ) { wide, short ->
         val data = snapshot
         if (data?.sampleData == true) {
@@ -343,7 +345,7 @@ internal fun ModelWorkspace(
                             },
                     breakdownExpanded = expanded,
                     tab = ModelCoinTab.valueOf(tab),
-                    price = asset.price?.let { "${it.price.value} ${it.price.quoteAssetId.value}" } ?: "—",
+                    price = asset.price?.let { quotePrice(it.price.value, it.price.quoteAssetId) } ?: "—",
                     change =
                         if (observationCount >= 2) {
                             unitPriceChange(observed.firstOrNull(), observed.lastOrNull(), coinRange)
@@ -361,8 +363,8 @@ internal fun ModelWorkspace(
                         } ?: "Price unavailable",
                     selectedRange = coinRange,
                     chartPoints = priceCoordinates,
-                    chartTopLabel = observed.filterNotNull().maxOrNull()?.toString() ?: "—",
-                    chartBottomLabel = observed.filterNotNull().minOrNull()?.toString() ?: "—",
+                    chartTopLabel = observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—",
+                    chartBottomLabel = observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—",
                     transactionMetrics =
                         listOf(
                             ModelMetric("Avg. Buy Price", "—"),
@@ -434,7 +436,10 @@ internal fun ModelWorkspace(
                         data.marketCoins.map { coin ->
                             ModelMarketCoin(
                                 identity(coin.asset.value, coin.metadata?.symbol, coin.metadata?.name),
-                                "${coin.price.price.value} ${coin.price.price.quoteAssetId.value} · ${coin.priceStatus.name.lowercase()}",
+                                "${quotePrice(
+                                    coin.price.price.value,
+                                    coin.price.price.quoteAssetId,
+                                )} · ${coin.priceStatus.name.lowercase()}",
                                 "—",
                             )
                         }
@@ -501,7 +506,8 @@ internal fun ModelWorkspace(
                         ModelPortfolioSummaryState(
                             balance = summary.total?.let { money(it, data.currency) } ?: "—",
                             currency = data.currency.value,
-                            change = portfolioValueChange(chart, data.currency, labels[period] ?: "Selected period"),
+                            change = portfolioValueDelta(chart, data.currency),
+                            changeLabel = "Value change · ${labels[period] ?: "Selected period"}",
                             percentChange = portfolioValuePercent(chart),
                             selectedRange = labels[period] ?: "",
                             chartPoints = points,
@@ -553,7 +559,7 @@ internal fun ModelWorkspace(
                                     }
                                 ModelHoldingRow(
                                     identity(asset.asset.value, symbol, asset.metadata?.name),
-                                    "$quantity $symbol · ${asset.price?.price?.value ?: "—"} ${data.currency.value}",
+                                    "$quantity $symbol · ${asset.price?.let { quotePrice(it.price.value, it.price.quoteAssetId) } ?: "—"}",
                                     asset.value?.let { money(it, data.currency) } ?: "—",
                                     portfolioValueDelta(assetHistory, data.currency),
                                     portfolioValuePercent(assetHistory),

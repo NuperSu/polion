@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -237,14 +238,18 @@ class ModelWorkspaceRestorationTest {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("BTC").fetchSemanticsNodes().isNotEmpty() }
                     onAllNodesWithText("BTC").onFirst().performClick()
-                    onNodeWithText("64000 USD").assertIsDisplayed()
+                    onNodeWithTag("coin-unit-price").assertTextEquals("$64,000.00")
                     runOnIdle {
                         now += 1_000
                         savePrice("second-price", "65000")
                         host.dataRevision.value++
                     }
-                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("65000 USD").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithText("65000 USD").assertIsDisplayed()
+                    waitUntil(timeoutMillis = 10_000) {
+                        onAllNodesWithTag("coin-unit-price").fetchSemanticsNodes().any {
+                            it.config[SemanticsProperties.Text].any { text -> text.text == "$65,000.00" }
+                        }
+                    }
+                    onNodeWithTag("coin-unit-price").assertTextEquals("$65,000.00")
                 }
             }
         }

@@ -396,7 +396,7 @@ private fun Product(
 
     fun returnFromAdvanced() {
         advancedMode = false
-        if (advancedOrigin.size == 10) {
+        if (advancedOrigin.size >= 10) {
             val saved = advancedOrigin
             presenter.update {
                 val restored =
@@ -404,6 +404,14 @@ private fun Product(
                         page = Page.valueOf(saved[0]),
                         detailAsset = saved[1].takeIf(String::isNotEmpty)?.let(::AssetId),
                         selectedAsset = null,
+                        selectedPortfolio =
+                            if (saved.size >
+                                10
+                            ) {
+                                saved[10].takeIf(String::isNotEmpty)?.let(::PortfolioId)
+                            } else {
+                                selectedPortfolio
+                            },
                     )
                 if (saved[9] != "true") {
                     restored
@@ -472,7 +480,7 @@ private fun Product(
                                 ) ||
                                 snapshotFilter.portfolio == selectedPortfolio
                         },
-                    selectedPortfolio = selectedPortfolio,
+                    selectedPortfolio = if (page == Page.HOME) null else selectedPortfolio,
                     selectedAsset = selectedAsset,
                     chart = if (presenter.state.chartCurrency == snapshot?.currency) chart else emptyList(),
                     chartLoading = presenter.state.chartLoading,
@@ -530,7 +538,9 @@ private fun Product(
                                 current.offset.toString(),
                                 current.activityAsset?.value.orEmpty(),
                                 (destination == Page.ACTIVITY && selectedAsset != null).toString(),
+                                current.selectedPortfolio?.value.orEmpty(),
                             )
+                        if (current.page == Page.HOME && current.detailAsset != null) selectedPortfolio = null
                         if (destination == Page.ACTIVITY && selectedAsset != null) {
                             presenter.dispatch(ProductEvent.AssetActivity(selectedAsset!!.asset))
                         } else {
@@ -553,6 +563,7 @@ private fun Product(
                         execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
                         preferences = updated
                     },
+                    statusContent = { SnackbarHost(snackbar, Modifier.testTag("status-message")) },
                     onManual = { asset ->
                         manualAsset = asset?.asset
                         modelManual = true
@@ -1307,15 +1318,7 @@ private fun Product(
                 )
             }
         }
-        if (modelMode) {
-            SnackbarHost(
-                snackbar,
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = if (maxWidth < 850.dp) 132.dp else 88.dp)
-                    .testTag("status-message"),
-            )
-        }
+
         if (refreshDetails != null && showRefreshDetails) {
             AlertDialog(
                 onDismissRequest = { showRefreshDetails = false },
@@ -1709,7 +1712,7 @@ private fun AssetsCard(
                         maxLines = 2,
                     )
                     asset.price?.let { quote ->
-                        Text("${quote.price.value} ${quote.price.quoteAssetId.value} per unit", color = Muted, fontSize = 11.sp)
+                        Text("${quotePrice(quote.price.value, quote.price.quoteAssetId)} per unit", color = Muted, fontSize = 11.sp)
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -2153,6 +2156,10 @@ internal fun money(
     value: ExactDecimal,
     currency: AssetId,
 ): String {
+    if (currency.value == "USD" && value.coefficient.sign != 0) {
+        val magnitude = if (value.coefficient.sign < 0) ExactDecimal(-value.coefficient, value.scale) else value
+        if (magnitude < ExactDecimal.parse("0.01")) return (if (value.coefficient.sign < 0) "-" else "") + "<$0.01"
+    }
     val prefix =
         when (currency.value) {
             "USD" -> "$"
