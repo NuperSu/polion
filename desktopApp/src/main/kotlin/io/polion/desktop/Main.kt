@@ -438,8 +438,9 @@ internal class DesktopHost(
     private fun reconcileRefreshPreferences() {
         val preference = refreshPreferences()
         app.value.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
-        scheduleWalletRefresh(preference.automaticRefresh && app.value.sourceConsent())
-        setAutomaticPriceRefresh(app.value.automaticPriceConsent())
+        val plan = io.polion.ui.refreshSchedulePlan(preference, app.value.sourceConsent(), app.value.automaticPriceConsent())
+        scheduleWalletRefresh(plan.walletHistory)
+        setAutomaticPriceRefresh(plan.prices)
     }
 
     override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))

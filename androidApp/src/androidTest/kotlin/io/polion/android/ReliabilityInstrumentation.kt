@@ -64,6 +64,87 @@ class ReliabilityInstrumentation : Instrumentation() {
                     now += 120_000
                     check(transport.get(url) == "{}" && requests == 2)
                 },
+                "refreshSchedulingConstraints" to {
+                    val manager = androidx.work.WorkManager.getInstance(targetContext)
+                    val suffix =
+                        java.util.UUID
+                            .randomUUID()
+                            .toString()
+                    val wallet = "polion-fixture-history-$suffix"
+                    val price = "polion-fixture-price-$suffix"
+                    val deferred =
+                        java.util.concurrent.TimeUnit.DAYS
+                            .toMillis(1)
+                    try {
+                        AndroidRefreshScheduling
+                            .wallets(
+                                targetContext,
+                                true,
+                                true,
+                                wallet,
+                                deferred,
+                            ).result
+                            .get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        AndroidRefreshScheduling
+                            .prices(
+                                targetContext,
+                                true,
+                                true,
+                                price,
+                                deferred,
+                            ).result
+                            .get(10, java.util.concurrent.TimeUnit.SECONDS)
+                        val history = manager.getWorkInfosForUniqueWork(wallet).get().single()
+                        val prices = manager.getWorkInfosForUniqueWork(price).get().single()
+                        check(history.constraints.requiredNetworkType == androidx.work.NetworkType.UNMETERED)
+                        check(prices.constraints.requiredNetworkType == androidx.work.NetworkType.UNMETERED)
+                        check(
+                            history.periodicityInfo?.repeatIntervalMillis ==
+                                java.util.concurrent.TimeUnit.MINUTES
+                                    .toMillis(30),
+                        )
+                        check(
+                            prices.periodicityInfo?.repeatIntervalMillis ==
+                                java.util.concurrent.TimeUnit.HOURS
+                                    .toMillis(1),
+                        )
+                        check(history.initialDelayMillis == deferred && prices.initialDelayMillis == deferred)
+                        check(
+                            androidx.work.WorkManager
+                                .getInstance(targetContext)
+                                .getWorkInfosForUniqueWork(wallet)
+                                .get()
+                                .single()
+                                .id ==
+                                history.id,
+                        )
+                        AndroidRefreshScheduling.wallets(targetContext, true, false, wallet, deferred).result.get()
+                        AndroidRefreshScheduling.prices(targetContext, true, false, price, deferred).result.get()
+                        check(
+                            manager
+                                .getWorkInfosForUniqueWork(wallet)
+                                .get()
+                                .single()
+                                .constraints.requiredNetworkType ==
+                                androidx.work.NetworkType.CONNECTED,
+                        )
+                        check(
+                            manager
+                                .getWorkInfosForUniqueWork(price)
+                                .get()
+                                .single()
+                                .constraints.requiredNetworkType ==
+                                androidx.work.NetworkType.CONNECTED,
+                        )
+                        AndroidRefreshScheduling.wallets(targetContext, false, false, wallet).result.get()
+                        AndroidRefreshScheduling.prices(targetContext, false, false, price).result.get()
+                        check(manager.getWorkInfosForUniqueWork(wallet).get().all { it.state == androidx.work.WorkInfo.State.CANCELLED })
+                        check(manager.getWorkInfosForUniqueWork(price).get().all { it.state == androidx.work.WorkInfo.State.CANCELLED })
+                    } finally {
+                        manager.cancelUniqueWork(wallet).result.get()
+                        manager.cancelUniqueWork(price).result.get()
+                    }
+                },
                 "priceRefreshProgress" to {
                     val tracker = PriceRefreshTracker()
                     check(tracker.status.value == io.polion.ui.PriceRefreshPhase.IDLE)
@@ -287,6 +368,21 @@ class ReliabilityInstrumentation : Instrumentation() {
                                 check(store.observations().size == 2)
                                 check(db.query("PRAGMA integrity_check").single().single() == "ok")
                             }
+                        }
+                    }
+                },
+                "accountHistoryWorkflow" to {
+                    val files = mutableListOf<File>()
+                    try {
+                        io.polion.testing.verifyAccountHistoryWorkflow {
+                            val file = File.createTempFile("polion-account-fixture-", ".sqlite", targetContext.cacheDir)
+                            files.add(file)
+                            AndroidSqliteDatabase(file.path)
+                        }
+                    } finally {
+                        files.forEach { file ->
+                            file.delete()
+                            File(file.path + "-journal").delete()
                         }
                     }
                 },

@@ -346,12 +346,9 @@ private class AndroidHost(
     private fun reconcileRefreshPreferences(application: PortfolioApplication) {
         val preference = readRefreshPreferences(application)
         application.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
-        scheduleWalletRefresh(preference.automaticRefresh && application.sourceConsent(), preference.wifiOnly)
-        scheduleAutomaticPrices(
-            preference.automaticRefresh && application.automaticPriceConsent(),
-            preference.wifiOnly,
-            application.automaticPriceConsent(),
-        )
+        val plan = io.polion.ui.refreshSchedulePlan(preference, application.sourceConsent(), application.automaticPriceConsent())
+        scheduleWalletRefresh(plan.walletHistory, plan.wifiOnly)
+        scheduleAutomaticPrices(plan.prices, plan.wifiOnly, application.automaticPriceConsent())
     }
 
     override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))
@@ -360,22 +357,7 @@ private class AndroidHost(
         enabled: Boolean,
         wifiOnly: Boolean,
     ) {
-        val manager = androidx.work.WorkManager.getInstance(activity)
-        if (enabled) {
-            val work =
-                androidx.work
-                    .PeriodicWorkRequestBuilder<RefreshWorker>(30, java.util.concurrent.TimeUnit.MINUTES)
-                    .setConstraints(
-                        androidx.work.Constraints
-                            .Builder()
-                            .setRequiredNetworkType(
-                                if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED,
-                            ).build(),
-                    ).build()
-            manager.enqueueUniquePeriodicWork("polion-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
-        } else {
-            manager.cancelUniqueWork("polion-refresh")
-        }
+        AndroidRefreshScheduling.wallets(activity, enabled, wifiOnly)
     }
 
     override fun backgroundRefreshEnabled(): Boolean = refreshPreferences().automaticRefresh
@@ -391,22 +373,7 @@ private class AndroidHost(
         consent: Boolean,
     ) {
         val manager = androidx.work.WorkManager.getInstance(activity)
-        if (enabled) {
-            val work =
-                androidx.work
-                    .PeriodicWorkRequestBuilder<AutomaticPriceWorker>(1, java.util.concurrent.TimeUnit.HOURS)
-                    .setInputData(androidx.work.workDataOf("automatic" to true))
-                    .setConstraints(
-                        androidx.work.Constraints
-                            .Builder()
-                            .setRequiredNetworkType(
-                                if (wifiOnly) androidx.work.NetworkType.UNMETERED else androidx.work.NetworkType.CONNECTED,
-                            ).build(),
-                    ).build()
-            manager.enqueueUniquePeriodicWork("polion-price-refresh", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, work)
-        } else {
-            manager.cancelUniqueWork("polion-price-refresh")
-        }
+        AndroidRefreshScheduling.prices(activity, enabled, wifiOnly)
         if (!consent) {
             manager.cancelUniqueWork("polion-price-refresh-now")
             AutomaticPriceWorker.tracker.setWorkState(queued = false, running = false)
