@@ -64,6 +64,12 @@ internal class ProductPresenter(
         val hostRevision: Long,
     )
 
+    private data class ChartSelection(
+        val portfolio: PortfolioId?,
+        val period: Int,
+        val currency: AssetId?,
+    )
+
     private data class CachedChart(
         val at: Long,
         val points: List<HistoryPoint>,
@@ -73,17 +79,27 @@ internal class ProductPresenter(
     private val charts = mutableMapOf<ChartKey, CachedChart>()
 
     fun dispatch(event: ProductEvent) {
-        if ((event is ProductEvent.Portfolio && event.value != state.selectedPortfolio) ||
-            (event is ProductEvent.Period && event.days != state.period)
-        ) {
-            chartRequest++
-        }
         if (event is ProductEvent.Portfolio && event.value != state.selectedPortfolio) snapshotRequest++
-        state = state.reduce(event)
+        update { reduce(event) }
     }
 
     fun update(change: ProductPresentation.() -> ProductPresentation) {
-        state = state.change()
+        val previous = state
+        val next = previous.change()
+        val previousSelection = ChartSelection(previous.selectedPortfolio, previous.period, previous.snapshot?.currency)
+        val nextSelection = ChartSelection(next.selectedPortfolio, next.period, next.snapshot?.currency)
+        if (previousSelection != nextSelection) {
+            chartRequest++
+            state =
+                next.copy(
+                    chart = emptyList(),
+                    chartCurrency = null,
+                    chartLoading = next.showsHistory,
+                    chartError = false,
+                )
+        } else {
+            state = next
+        }
     }
 
     fun notify(message: String) {
@@ -144,6 +160,10 @@ internal class ProductPresenter(
         val selected = state
         if (!selected.showsHistory) {
             update { copy(chartLoading = false) }
+            return
+        }
+        if (selected.snapshot == null || selected.snapshotFilter.portfolio != selected.selectedPortfolio) {
+            update { copy(chart = emptyList(), chartCurrency = null, chartLoading = false, chartError = true) }
             return
         }
         val key = ChartKey(selected.selectedPortfolio, selected.period, selected.snapshot?.currency, selected.revision, hostRevision)
@@ -323,7 +343,16 @@ internal fun rememberProductPresenter(
     LaunchedEffect(presenter, state.page, state.revision, hostRevision, filter) {
         presenter.loadSnapshot(hostRevision)
     }
-    LaunchedEffect(presenter, state.page, state.revision, hostRevision, state.selectedPortfolio, state.period, state.snapshot?.currency) {
+    LaunchedEffect(
+        presenter,
+        state.page,
+        state.revision,
+        hostRevision,
+        state.selectedPortfolio,
+        state.period,
+        state.snapshot?.currency,
+        state.snapshotFilter.portfolio,
+    ) {
         presenter.loadChart(hostRevision)
     }
     return presenter

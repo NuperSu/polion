@@ -70,7 +70,12 @@ class ProductPresentationTest {
             presenter.dispatch(ProductEvent.Period(30))
             presenter.loadChart(1)
             assertEquals(2, calls)
-            presenter.dispatch(ProductEvent.Portfolio(PortfolioId("other")))
+            presenter.update { copy(selectedPortfolio = PortfolioId("other")) }
+            assertTrue(presenter.state.chart.isEmpty())
+            assertNull(presenter.state.chartCurrency)
+            presenter.loadChart(1)
+            assertEquals(2, calls)
+            presenter.loadSnapshot(1)
             presenter.loadChart(1)
             assertEquals(3, calls)
             assertEquals(PortfolioId("other"), requestedScopes.last())
@@ -156,6 +161,7 @@ class ProductPresentationTest {
                 ) {
                     end
                 }
+            presenter.loadSnapshot(0)
             presenter.loadChart(0)
             assertEquals(portfolio, scope)
             assertEquals(first, requested.first())
