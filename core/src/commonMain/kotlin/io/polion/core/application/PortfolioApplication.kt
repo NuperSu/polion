@@ -1558,15 +1558,24 @@ class PortfolioApplication(
 
     fun sourceEndpoint(): String = setting("source_endpoint") ?: "https://blockstream.info/api"
 
+    fun configureBitcoinSource(
+        endpoint: String,
+        consent: Boolean,
+    ) = db.transaction {
+        setSourceEndpoint(endpoint)
+        setSourceConsent(consent)
+    }
+
     fun setSourceEndpoint(endpoint: String) {
         require(
             endpoint.startsWith("https://") &&
+                endpoint.substringAfter("https://").substringBefore('/').isNotBlank() &&
                 endpoint.length <= 2048 &&
                 endpoint.none { it.isWhitespace() } &&
                 !endpoint.substringAfter("https://").substringBefore('/').contains('@') &&
                 !endpoint.contains('?') &&
                 !endpoint.contains('#'),
-        )
+        ) { "Use an HTTPS provider URL with a host and without credentials, query or fragment" }
         putSetting("source_endpoint", endpoint.trimEnd('/'))
     }
 
@@ -1713,6 +1722,44 @@ class PortfolioApplication(
                 )
             }.sortedBy { it.asset.value }
 
+    fun accountOverview(portfolio: PortfolioId? = null): List<AccountOverview> {
+        ensureDefaultAssets()
+        val catalog = ownership.load()
+        val unarchived = catalog.copy(accounts = catalog.accounts.map { it.copy(tags = it.tags - "polion:archived") })
+        val membership = catalog.portfolios.associate { it.id to scopedAccounts(unarchived, it.id) }
+        val entries = ledger().activities.map { it.activity }
+        val balance = holdings.historical(entries, now(), BalanceCoverage.UNKNOWN)
+        val projection = AccountHistoryProjection(db)
+        val endpoints = bitcoinProviderEndpoints()
+        val quote = portfolioCurrency(portfolio)
+        return catalog.accounts.map { account ->
+            val targets = catalog.targets.filter { it.accountId == account.id && it.identity.networkId == BITCOIN_MAINNET }
+            val active =
+                targets
+                    .filter { it.enabled && it.role == TargetRole.LEAF && it.identity.kind == "address" }
+                    .map { bitcoinMainnetAddress(it.identity.canonicalKey) }
+                    .toSet()
+            val accepted = projection.latest(account.id)
+            val discovered =
+                targets.filter { it.enabled && it.role == TargetRole.WALLET }.all { wallet ->
+                    targets.any { it.enabled && it.walletId == wallet.id }
+                }
+            AccountOverview(
+                account,
+                targets.filter { it.walletId == null },
+                targets.count { it.walletId != null },
+                catalog.portfolios.filter { account.id in membership.getValue(it.id) }.map { it.label },
+                valuations(balance.copy(quantities = balance.quantities.filterKeys { it.account == account.id }), quote, now()),
+                accepted,
+                discovered &&
+                    active.isNotEmpty() &&
+                    accepted?.addresses == active &&
+                    accepted.providerSourceId == "esplora:" + sha256(sourceEndpoint()),
+                accepted?.let { endpoints[it.providerSourceId] },
+            )
+        }
+    }
+
     fun saveOwner(value: Owner) = updateOwnership { it.copy(owners = it.owners.filterNot { old -> old.id == value.id } + value) }
 
     fun saveAccount(value: Account) = updateOwnership { it.copy(accounts = it.accounts.filterNot { old -> old.id == value.id } + value) }
@@ -1816,12 +1863,20 @@ class PortfolioApplication(
         newAccount: Account? = null,
         newOwner: Owner? = null,
         consentAccepted: Boolean = false,
+        providerEndpoint: String? = null,
+        portfolio: PortfolioId? = null,
     ) {
         require(target.identity.networkId == BITCOIN_MAINNET && target.identity.kind == "wallet") { "Expected a Bitcoin public wallet" }
         require(target.label.isNotBlank()) { "Enter a wallet name" }
         val normalized = normalizeTarget(target)
         db.transaction {
             require(sourceConsent() || consentAccepted) { "Source consent required" }
+            if (providerEndpoint != null) {
+                require(
+                    providerEndpoint.trimEnd('/') == sourceEndpoint() || consentAccepted,
+                ) { "Consent is required for the selected provider" }
+                setSourceEndpoint(providerEndpoint)
+            }
             val catalog = ownership.loadInTransaction()
             require(catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
             require(
@@ -1846,8 +1901,21 @@ class PortfolioApplication(
                 require("polion:archived" !in ancestor.tags) { "Select an active account group" }
                 parent = ancestor.parentId
             }
+            val portfolios =
+                catalog.portfolios.map { selected ->
+                    if (selected.id != portfolio) {
+                        selected
+                    } else {
+                        require(
+                            selected.ownerIds.isEmpty() || account.ownerId in selected.ownerIds,
+                        ) { "Select an owner included in this portfolio" }
+                        if (selected.accountIds.isEmpty()) selected else selected.copy(accountIds = selected.accountIds + account.id)
+                    }
+                }
+            require(portfolio == null || catalog.portfolios.any { it.id == portfolio }) { "Unknown portfolio" }
             ownership.replaceInTransaction(
                 catalog.copy(
+                    portfolios = portfolios,
                     owners = catalog.owners + listOfNotNull(newOwner),
                     accounts = catalog.accounts + listOfNotNull(newAccount),
                     targets = catalog.targets + normalized,
