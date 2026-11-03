@@ -151,8 +151,8 @@ fun PortfolioModel(initialPage: ModelPage = ModelPage.PORTFOLIO) {
                             ModelSettingsState(
                                 automatic,
                                 wifi,
-                                "Pull down to refresh all portfolios. Only missing data since the last successful " +
-                                    "refresh is requested, with a small overlap.",
+                                "Pull down to refresh prices across portfolios. Wallet history is a separate action. " +
+                                    "Automatic jobs follow provider consent and platform scheduling.",
                                 "These controls demonstrate the design only.",
                             ),
                             {
@@ -165,8 +165,8 @@ fun PortfolioModel(initialPage: ModelPage = ModelPage.PORTFOLIO) {
                     auxiliary == "Accounts" ->
                         ModelAccounts(
                             ModelAccountsState(listOf(ModelAccountRow("My Wallet", "Bitcoin · Main Portfolio", "Last refreshed just now"))),
-                        ) {
-                        }
+                            onConnect = {},
+                        )
                     selected != null -> CoinDetail(selected, portfolio) { transaction = true }
                     page == ModelPage.MAIN -> MainContent(wide)
                     page == ModelPage.PORTFOLIO -> {

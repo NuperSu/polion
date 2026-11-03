@@ -227,6 +227,9 @@ private fun Product(
     val presenter = rememberProductPresenter(app, host)
     var manualAsset by remember { mutableStateOf<AssetId?>(null) }
     var advancedMode by rememberSaveable { mutableStateOf(false) }
+    var modelConnect by rememberSaveable { mutableStateOf(false) }
+    var modelHistory by rememberSaveable { mutableStateOf(false) }
+    val sourceFlowState = rememberSaveableStateHolder()
     var modelAdd by rememberSaveable { mutableStateOf(false) }
     var modelEditingId by rememberSaveable { mutableStateOf<String?>(null) }
     var modelEditingDraft by remember { mutableStateOf<io.polion.core.application.TransactionDraft?>(null) }
@@ -461,6 +464,8 @@ private fun Product(
     val modalOpen =
         dialog != null ||
             modelAdd ||
+            modelConnect ||
+            modelHistory ||
             selectedActivity != null ||
             addressWallet != null ||
             removeAccount != null ||
@@ -577,7 +582,17 @@ private fun Product(
                         showRefreshDetails = true
                         refreshDetails = app.automaticPriceStatus() ?: "Price refresh has not run."
                     },
-                    onSyncDetails = { dialog = "sync" },
+                    onSyncDetails = { modelHistory = true },
+                    onConnectBitcoin = { modelConnect = true },
+                    onAccountChanged = { execute("Account updated; saved history retained") {} },
+                    onAccountTool = { tool ->
+                        dialog =
+                            when (tool) {
+                                AccountTool.RULES -> "rule"
+                                AccountTool.RECONCILIATION -> "reconcile"
+                                AccountTool.UTXO -> "utxo"
+                            }
+                    },
                     onAutomatic = { enabled ->
                         val updated = preferences.copy(automaticRefresh = enabled)
                         execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
@@ -1325,6 +1340,38 @@ private fun Product(
                 }
             }
         }
+        if (modelConnect && snapshot != null) {
+            sourceFlowState.SaveableStateProvider("bitcoin-connect") {
+                BitcoinConnectDialog(
+                    app,
+                    host,
+                    snapshot!!,
+                    selectedPortfolio,
+                    close = { modelConnect = false },
+                    onSaved = {
+                        sourceFlowState.removeState("bitcoin-connect")
+                        execute("Public Bitcoin source saved") {}
+                    },
+                    notify = { presenter.notify(it) },
+                )
+            }
+        }
+        if (modelHistory && snapshot != null) {
+            sourceFlowState.SaveableStateProvider("bitcoin-history") {
+                BitcoinHistoryDialog(
+                    app,
+                    host,
+                    snapshot!!,
+                    syncStatus,
+                    close = { modelHistory = false },
+                    onSaved = {
+                        sourceFlowState.removeState("bitcoin-history")
+                        execute("Bitcoin source settings saved") {}
+                    },
+                    notify = { presenter.notify(it) },
+                )
+            }
+        }
         if (modelAdd && snapshot != null && (modelEditingId == null || modelEditingDraft?.id?.value == modelEditingId)) {
             modelDraftState.SaveableStateProvider(modelEditingId ?: "manual-draft") {
                 TransactionEntry(
@@ -1338,7 +1385,7 @@ private fun Product(
                     onClose = { modelAdd = false },
                     onWallet = {
                         modelAdd = false
-                        dialog = "add"
+                        modelConnect = true
                     },
                     onSaved = {
                         modelAdd = false

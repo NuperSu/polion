@@ -25,6 +25,22 @@ data class RefreshPreferences(
     val wifiOnly: Boolean = false,
 )
 
+data class RefreshSchedulePlan(
+    val walletHistory: Boolean,
+    val prices: Boolean,
+    val wifiOnly: Boolean,
+)
+
+fun refreshSchedulePlan(
+    preferences: RefreshPreferences,
+    historyConsent: Boolean,
+    priceConsent: Boolean,
+) = RefreshSchedulePlan(
+    preferences.automaticRefresh && historyConsent,
+    preferences.automaticRefresh && priceConsent,
+    preferences.wifiOnly,
+)
+
 data class UnlockResult(
     val success: Boolean,
     val message: String? = null,

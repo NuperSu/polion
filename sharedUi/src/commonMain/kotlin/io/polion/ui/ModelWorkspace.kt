@@ -37,9 +37,6 @@ import io.polion.core.market.PriceStatus
 import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import io.polion.core.reconcile.EffectiveActivity
-import io.polion.ui.model.ModelAccountRow
-import io.polion.ui.model.ModelAccounts
-import io.polion.ui.model.ModelAccountsState
 import io.polion.ui.model.ModelChangeTone
 import io.polion.ui.model.ModelCoinDetail
 import io.polion.ui.model.ModelCoinDetailActions
@@ -104,6 +101,9 @@ internal fun ModelWorkspace(
     onAutomatic: (Boolean) -> Unit,
     onWifi: (Boolean) -> Unit,
     onManual: (AssetValuation?) -> Unit,
+    onConnectBitcoin: () -> Unit = onAdd,
+    onAccountChanged: () -> Unit = {},
+    onAccountTool: (AccountTool) -> Unit = {},
     onTransaction: (EffectiveActivity) -> Unit = {},
     statusContent: @Composable () -> Unit = {},
 ) {
@@ -376,7 +376,7 @@ internal fun ModelWorkspace(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
-        if (page == Page.ACCOUNTS || syncStatus.phase != SyncPhase.IDLE || data?.sourceStatus?.interrupted == true) {
+        if (page != Page.ACCOUNTS && (syncStatus.phase != SyncPhase.IDLE || data?.sourceStatus?.interrupted == true)) {
             SyncBanner(syncStatus, data?.sourceStatus, onSyncDetails)
         }
         if (data == null) {
@@ -766,19 +766,19 @@ internal fun ModelWorkspace(
                     TextButton(onClick = { onAdvanced(Page.REPORTS) }) { Text("Reporting and accounting tools") }
                 }
                 Page.ACCOUNTS -> {
-                    ModelAccounts(
-                        ModelAccountsState(
-                            data.ownership.accounts.map {
-                                ModelAccountRow(
-                                    it.label,
-                                    it.kind.name.lowercase(),
-                                    if ("polion:archived" in it.tags) "Archived" else "Refresh details available in account tools",
-                                )
-                            },
-                        ),
-                        onAdd,
+                    AccountsWorkspace(
+                        app,
+                        host,
+                        data,
+                        selectedPortfolio,
+                        dataRevision,
+                        syncStatus,
+                        onConnectBitcoin,
+                        onSyncDetails,
+                        onAdvanced,
+                        onAccountChanged,
+                        onAccountTool,
                     )
-                    TextButton(onClick = { onAdvanced(Page.ACCOUNTS) }) { Text("Account and sync tools") }
                 }
                 Page.SETTINGS -> {
                     ModelSettings(
@@ -795,6 +795,10 @@ internal fun ModelWorkspace(
                         onAutomatic,
                         onWifi,
                     )
+                    TextButton(
+                        onClick = onSyncDetails,
+                        modifier = Modifier.testTag("settings-wallet-history"),
+                    ) { Text("Wallet history and recovery") }
                     TextButton(onClick = { onAdvanced(Page.SETTINGS) }) { Text("Appearance, privacy, backup and price settings") }
                 }
                 else -> Unit

@@ -32,6 +32,10 @@ data class ModelAccountRow(
     val name: String,
     val description: String,
     val refreshStatus: String,
+    val id: String = name,
+    val sources: List<String> = emptyList(),
+    val portfolios: String? = null,
+    val accepted: Boolean = true,
 )
 
 data class ModelAccountsState(
@@ -50,17 +54,26 @@ data class ModelSettingsState(
 fun ColumnScope.ModelAccounts(
     state: ModelAccountsState,
     onConnect: () -> Unit,
+    onAccount: (String) -> Unit = {},
 ) {
     Text("Your accounts", color = foreground, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
     if (state.accounts.isEmpty()) Text(state.emptyMessage, color = muted)
     state.accounts.forEach { account ->
         Column(
-            Modifier.fillMaxWidth().background(card, RoundedCornerShape(14.dp)).padding(16.dp),
+            Modifier
+                .fillMaxWidth()
+                .background(card, RoundedCornerShape(14.dp))
+                .clickable {
+                    onAccount(account.id)
+                }.testTag("account-${account.id}")
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(account.name, fontWeight = FontWeight.Bold)
             Text(account.description, color = muted)
-            Text(account.refreshStatus, color = green, fontSize = 12.sp)
+            account.sources.forEach { Text(it, color = muted, fontSize = 12.sp) }
+            account.portfolios?.let { Text(it, color = muted, fontSize = 12.sp) }
+            Text(account.refreshStatus, color = if (account.accepted) green else muted, fontSize = 12.sp)
         }
     }
     Text(
