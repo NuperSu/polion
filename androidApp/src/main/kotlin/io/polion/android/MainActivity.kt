@@ -253,17 +253,17 @@ private class AndroidHost(
     ) {
         main.post {
             try {
-                syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…", io.polion.ui.SyncOperation.DISCOVERY)
                 activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java).putExtra("wallet_id", walletId.value))
-                onResult("Wallet discovery continues in the background.")
+                onResult("Wallet discovery requested. It runs after any current Bitcoin work; progress appears in the notification.")
             } catch (_: Exception) {
-                syncStatus.value =
+                val failure =
                     SyncStatus(
                         SyncPhase.ERROR,
-                        "Could not start wallet discovery. Open Polion and retry.",
+                        "Could not request discovery. Open this wallet in Accounts and choose Discover addresses to retry.",
                         io.polion.ui.SyncOperation.DISCOVERY,
                     )
-                onResult(syncStatus.value.message)
+                if (syncStatus.value.phase != SyncPhase.SYNCING) syncStatus.value = failure
+                onResult(failure.message)
             }
         }
     }

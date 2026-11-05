@@ -32,6 +32,50 @@ class ReliabilityInstrumentation : Instrumentation() {
         var failures = 0
         val checks =
             listOf<Pair<String, () -> Unit>>(
+                "queuedWalletDiscoveryService" to {
+                    val previousStatus = RefreshWorker.syncStatus.value
+                    check(
+                        previousStatus.phase != io.polion.ui.SyncPhase.SYNCING,
+                    ) { "Wait for existing Bitcoin work before running this fixture" }
+                    val scenario = SyncServiceProbeState()
+                    SyncServiceProbe.state = scenario
+                    val activity =
+                        startActivitySync(
+                            android.content
+                                .Intent(targetContext, SyncServiceProbeActivity::class.java)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    val service = android.content.Intent(targetContext, SyncServiceProbe::class.java)
+                    try {
+                        runOnMainSync { targetContext.startForegroundService(service) }
+                        check(scenario.firstStarted.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                        runOnMainSync {
+                            targetContext.startForegroundService(android.content.Intent(service).putExtra("wallet_id", "wallet-a"))
+                            targetContext.startForegroundService(android.content.Intent(service).putExtra("wallet_id", "wallet-b"))
+                        }
+                        check(scenario.delivered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                        scenario.releaseFirst.countDown()
+                        check(scenario.secondStarted.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                        waitForIdleSync()
+                        check(scenario.destroyed.count == 1L)
+                        scenario.releaseSecond.countDown()
+                        check(scenario.thirdStarted.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                        waitForIdleSync()
+                        check(scenario.destroyed.count == 1L)
+                        check(scenario.started.toList() == listOf("history", "wallet-a", "wallet-b"))
+                        check(scenario.instances == 1)
+                        scenario.releaseThird.countDown()
+                        check(scenario.destroyed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                    } finally {
+                        scenario.releaseAll()
+                        runOnMainSync {
+                            targetContext.stopService(service)
+                            activity.finish()
+                        }
+                        if (scenario.instances > 0) scenario.destroyed.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                        RefreshWorker.syncStatus.value = previousStatus
+                    }
+                },
                 "priceRateLimit" to {
                     var now = 0L
                     var requests = 0
