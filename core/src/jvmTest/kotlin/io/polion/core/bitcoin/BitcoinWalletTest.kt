@@ -1,5 +1,6 @@
 package io.polion.core.bitcoin
 
+import io.polion.core.application.BitcoinDiscoveryConflict
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.model.AccountId
 import io.polion.core.model.OwnerId
@@ -214,6 +215,33 @@ class BitcoinWalletTest {
             val states = app.refreshBitcoin(transport)
             assertTrue(states.isNotEmpty() && states.all { it == JobState.COMPLETED }, states.toString())
             assertEquals(1, app.snapshot().activityTotal)
+        }
+    }
+
+    @Test fun discoveryNamesTheAccountThatAlreadyTracksAnAddress() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 0L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            val walletId = TrackingTargetId("w")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.saveAccount(Account(AccountId("old"), owner, "Old standalone account", AccountKind.ACCOUNT))
+            app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+            app.saveTarget(
+                TrackingTarget(
+                    TrackingTargetId("leaf"),
+                    AccountId("old"),
+                    TargetIdentity(BITCOIN_MAINNET, "address", bitcoinWallet(xpub).address(0, 0)),
+                    TargetRole.LEAF,
+                    "Old address",
+                ),
+            )
+            app.setSourceConsent(true)
+            val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
+            val failure = assertFails { app.discoverBitcoinWallet(walletId, unused, 2, 3) }
+            assertTrue(failure is BitcoinDiscoveryConflict, failure::class.simpleName)
+            assertTrue(failure.message!!.contains("Old standalone account"), failure.message)
         }
     }
 }

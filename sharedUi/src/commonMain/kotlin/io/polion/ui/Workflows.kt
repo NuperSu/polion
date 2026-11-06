@@ -608,6 +608,10 @@ internal fun WorkflowDialog(
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text("Your endpoint is saved. Source settings can be changed after this scan finishes.", fontSize = 12.sp)
                 }
+                // The details view explains the last failure instead of only opening the settings.
+                if (syncStatus.phase == SyncPhase.ERROR) {
+                    Text(syncStatus.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sync-error"))
+                }
                 Text(
                     "Querying an indexer shares watched public addresses and your IP address with that provider. Choose an HTTPS Esplora endpoint you trust. No cloud account is required.",
                     fontSize = 13.sp,

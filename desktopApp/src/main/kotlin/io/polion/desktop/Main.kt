@@ -76,6 +76,7 @@ internal fun discoverWalletStatus(
         SyncStatus(
             SyncPhase.ERROR,
             (it as? BitcoinProviderException)?.reason?.userMessage
+                ?: (it as? io.polion.core.application.BitcoinDiscoveryConflict)?.message
                 ?: "Wallet discovery incomplete. Check consent, provider and discovery limits; retry.",
         )
     }

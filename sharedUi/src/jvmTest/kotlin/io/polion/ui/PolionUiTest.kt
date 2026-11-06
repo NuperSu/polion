@@ -907,7 +907,8 @@ class PolionUiTest {
                         WorkflowDialog("sync", data, app, host, {}, { _, operation -> operation() }, {}, { _, _ -> })
                     }
                     onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
-                    onNodeWithText("A full history recovery is required.").performScrollTo().assertIsDisplayed()
+                    // The failure is shown in the sync details and in the account status; either match is the displayed error.
+                    onAllNodesWithText("A full history recovery is required.").onFirst().performScrollTo().assertIsDisplayed()
                     onNodeWithTag("bitcoin-recovery-consent").performScrollTo().performClick()
                     onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
                     onNodeWithText("I allow public address queries to this endpoint").performScrollTo()

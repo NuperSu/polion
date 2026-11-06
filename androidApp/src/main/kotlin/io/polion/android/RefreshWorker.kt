@@ -149,6 +149,7 @@ class RefreshWorker(
                 SyncStatus(
                     SyncPhase.ERROR,
                     (failure as? BitcoinProviderException)?.reason?.userMessage
+                        ?: (failure as? io.polion.core.application.BitcoinDiscoveryConflict)?.message
                         ?: "Could not finish sync during $stage (${failure::class.java.simpleName}). Saved data is unchanged; retry.",
                 )
             }

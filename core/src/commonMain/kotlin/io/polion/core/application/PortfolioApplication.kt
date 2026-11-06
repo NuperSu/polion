@@ -245,6 +245,11 @@ data class PortfolioSnapshot(
     val marketCoins: List<MarketCoin> = emptyList(),
 )
 
+/** Wallet discovery refused an address because another account already tracks it. The message is safe to show. */
+class BitcoinDiscoveryConflict(
+    message: String,
+) : IllegalArgumentException(message)
+
 /** Shared persisted workflows. A source connector is required before coverage can be complete. */
 class PortfolioApplication(
     private val db: SqliteDatabase,
@@ -2004,6 +2009,32 @@ class PortfolioApplication(
         db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
     }
 
+    /**
+     * An address that another account (or another wallet) already tracks cannot join this wallet. The message names that
+     * account so the user can remove the standalone address there and retry.
+     */
+    private fun discoveryConflict(
+        snapshot: OwnershipSnapshot,
+        address: String,
+        accountId: AccountId,
+        walletId: TrackingTargetId,
+        childId: TrackingTargetId,
+    ): BitcoinDiscoveryConflict? {
+        val conflict =
+            snapshot.targets.firstOrNull {
+                it.id != childId &&
+                    it.role == TargetRole.LEAF &&
+                    it.identity.networkId == BITCOIN_MAINNET &&
+                    it.identity.kind == "address" &&
+                    it.identity.canonicalKey == address &&
+                    !(it.accountId == accountId && (it.walletId == null || it.walletId == walletId))
+            } ?: return null
+        val label = snapshot.accounts.firstOrNull { it.id == conflict.accountId }?.label ?: "another account"
+        return BitcoinDiscoveryConflict(
+            "This address is already tracked in account \"$label\". Remove it there, then retry wallet discovery.",
+        )
+    }
+
     /** Discovers public addresses; requests disclose each derived address to the selected provider. */
     fun discoverBitcoinWallet(
         walletId: TrackingTargetId,
@@ -2062,18 +2093,7 @@ class PortfolioApplication(
                 require(existing == null || existing.walletId == walletId && existing.identity.canonicalKey == address) {
                     "Wallet child identity conflict"
                 }
-                require(
-                    catalog.targets
-                        .filter {
-                            it.role == TargetRole.LEAF &&
-                                it.identity.networkId == BITCOIN_MAINNET &&
-                                it.identity.kind == "address" &&
-                                it.identity.canonicalKey == address &&
-                                it.id != id
-                        }.all {
-                            it.accountId == target.accountId && (it.walletId == null || it.walletId == walletId)
-                        },
-                ) { "Address assigned to another account or wallet" }
+                discoveryConflict(catalog, address, target.accountId, walletId, id)?.let { throw it }
                 children.add(
                     TrackingTarget(
                         id,
@@ -2108,18 +2128,9 @@ class PortfolioApplication(
             }
             val fresh = ownership.loadInTransaction()
             require(fresh.targets.firstOrNull { it.id == walletId } == target) { "Wallet changed during discovery; retry" }
-            require(
-                children.all { child ->
-                    fresh.targets
-                        .filter {
-                            it.id != child.id &&
-                                it.role == TargetRole.LEAF &&
-                                it.identity.networkId == BITCOIN_MAINNET &&
-                                it.identity.kind == "address" &&
-                                it.identity.canonicalKey == child.identity.canonicalKey
-                        }.all { it.accountId == target.accountId && (it.walletId == null || it.walletId == walletId) }
-                },
-            ) { "Address assigned to another account or wallet" }
+            children.forEach { child ->
+                discoveryConflict(fresh, child.identity.canonicalKey, target.accountId, walletId, child.id)?.let { throw it }
+            }
             ownership.replaceInTransaction(fresh.copy(targets = fresh.targets.filterNot { it.id in childIds } + children))
             db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
         }
