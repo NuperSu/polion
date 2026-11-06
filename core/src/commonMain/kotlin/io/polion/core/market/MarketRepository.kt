@@ -287,7 +287,10 @@ class MarketRepository(
             ids.size
         }
 
-    /** Select manual override first; other observations follow freshness and provider policy. */
+    /**
+     * The most recent valid observation wins, whether manual or provider. A manual observation wins only a tie, so newer
+     * automatic data replaces an older manual override while a newer manual entry still takes precedence.
+     */
     fun lookup(
         base: AssetId,
         quote: AssetId,
@@ -335,9 +338,9 @@ class MarketRepository(
             atMillis >= Long.MIN_VALUE + policy.maxAgeMillis && observation.validAtMillis < atMillis - policy.maxAgeMillis
         val selected =
             observations.minWithOrNull(
-                compareBy<PriceObservation> { if (it.manual) 0 else 1 }
-                    .thenBy { if (!it.manual && policy.preferFresh && isStale(it)) 1 else 0 }
-                    .thenByDescending { if (!it.manual && policy.preferLatest) it.validAtMillis else Long.MIN_VALUE }
+                compareBy<PriceObservation> { if (policy.preferFresh && isStale(it)) 1 else 0 }
+                    .thenByDescending { if (policy.preferLatest) it.validAtMillis else Long.MIN_VALUE }
+                    .thenBy { if (it.manual) 0 else 1 }
                     .thenBy { if (it.manual) -1 else policy.providerPriority.indexOf(it.providerId) }
                     .thenByDescending { it.validAtMillis }
                     .thenByDescending { it.observedAtMillis }
