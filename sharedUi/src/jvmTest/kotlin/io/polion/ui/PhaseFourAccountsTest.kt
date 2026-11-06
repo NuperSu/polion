@@ -1,6 +1,8 @@
 package io.polion.ui
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.runtime.saveable.SaveableStateRegistry
@@ -8,7 +10,9 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -48,28 +52,34 @@ class PhaseFourAccountsTest {
                     runDesktopComposeUiTest(width = width, height = height) {
                         setContent {
                             val density = LocalDensity.current
+                            val status by host.syncStatus.collectAsState()
                             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                                 PolionTheme(
                                     AppearanceTheme.DARK,
-                                ) { BitcoinConnectDialog(app, host, app.snapshot(), null, { closed = true }, {}, {}) }
+                                ) { BitcoinConnectDialog(app, host, app.snapshot(), null, { closed = true }, {}, {}, syncStatus = status) }
                             }
                         }
-                        onNodeWithTag("connect-review").assertIsNotEnabled()
+                        onNodeWithTag("connect-confirm").assertIsNotEnabled()
+                        onNodeWithTag("connect-blocker").assertTextEquals("Enter an account or wallet name.")
                         onNodeWithTag("connect-name").performScrollTo().performTextInput("My Bitcoin account")
                         onNodeWithTag("connect-expression").performScrollTo().performTextInput("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
                         onNodeWithTag("connect-consent").performScrollTo().performClick()
-                        onNodeWithTag("connect-review").performScrollTo().performClick()
-                        onNodeWithTag("connect-confirm").performScrollTo()
+                        onNodeWithTag("connect-confirm").performScrollTo().assertIsEnabled()
                         val output = File("build/phase4-account-previews").apply { mkdirs() }
                         ImageIO.write(
                             onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(),
                             "png",
-                            File(output, "${width}x$height-$fontScale-connect-review.png"),
+                            File(output, "${width}x$height-$fontScale-connect-ready.png"),
                         )
                         onNodeWithTag("connect-confirm").performClick()
                         waitUntil(timeoutMillis = 10000) { host.discovery == 1 }
-                        assertTrue(closed)
-                        assertEquals(SyncPhase.SYNCING, host.syncStatus.value.phase)
+                        waitForIdle()
+                        // The dialog stays open and follows discovery; it closes only on a successful discovery status.
+                        assertTrue(!closed)
+                        onNodeWithTag("connect-status").assertTextEquals("Discovery queued")
+                        onNodeWithTag("connect-confirm").assertIsNotEnabled()
+                        host.syncStatus.value = SyncStatus(SyncPhase.SUCCESS, "Wallet discovery complete", SyncOperation.DISCOVERY)
+                        waitUntil(timeoutMillis = 10000) { closed }
                         val summary = app.accountOverview().single()
                         assertEquals(
                             "addr(1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa)",
@@ -213,6 +223,42 @@ class PhaseFourAccountsTest {
                     RefreshSchedulePlan(false, false, true),
                     refreshSchedulePlan(preferences.copy(automaticRefresh = false), true, true),
                 )
+            }
+        }
+    }
+
+    @Test fun connectDialogReportsDiscoveryFailureAndRetriesWithoutSavingAgain() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
+                val app = PortfolioApplication(db) { 1_800_000_000_000L }
+                val host = Host(delegate)
+                var closed = false
+                runDesktopComposeUiTest(width = 390, height = 844) {
+                    setContent {
+                        val status by host.syncStatus.collectAsState()
+                        PolionTheme(AppearanceTheme.DARK) {
+                            BitcoinConnectDialog(app, host, app.snapshot(), null, { closed = true }, {}, {}, syncStatus = status)
+                        }
+                    }
+                    onNodeWithTag("connect-name").performScrollTo().performTextInput("Cold wallet")
+                    onNodeWithTag("connect-expression").performScrollTo().performTextInput("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+                    onNodeWithTag("connect-consent").performScrollTo().performClick()
+                    onNodeWithTag("connect-confirm").performScrollTo().assertIsEnabled().performClick()
+                    waitUntil(timeoutMillis = 10000) { host.discovery == 1 }
+                    host.syncStatus.value =
+                        SyncStatus(SyncPhase.ERROR, "Wallet discovery incomplete. Check the provider; retry.", SyncOperation.DISCOVERY)
+                    waitForIdle()
+                    onNodeWithTag("connect-status").assertTextEquals("Wallet discovery incomplete. Check the provider; retry.")
+                    onNodeWithTag("connect-confirm")
+                        .performScrollTo()
+                        .assertTextEquals("Retry discovery")
+                        .assertIsEnabled()
+                        .performClick()
+                    waitUntil(timeoutMillis = 10000) { host.discovery == 2 }
+                    waitForIdle()
+                    assertTrue(!closed)
+                    assertEquals(1, app.accountOverview().size)
+                }
             }
         }
     }

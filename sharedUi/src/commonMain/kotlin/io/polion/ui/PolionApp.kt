@@ -1355,6 +1355,7 @@ private fun Product(
                         execute("Public Bitcoin source saved") {}
                     },
                     notify = { presenter.notify(it) },
+                    syncStatus = syncStatus,
                 )
             }
         }

@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +89,7 @@ internal fun BitcoinConnectDialog(
     close: () -> Unit,
     onSaved: () -> Unit,
     notify: (String) -> Unit,
+    syncStatus: SyncStatus = SyncStatus(),
 ) {
     val scope = rememberCoroutineScope()
     var label by rememberSaveable { mutableStateOf("") }
@@ -96,18 +98,15 @@ internal fun BitcoinConnectDialog(
     var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
     var portfolio by rememberSaveable { mutableStateOf(initialPortfolio?.value.orEmpty()) }
     var account by rememberSaveable { mutableStateOf("") }
-    var owner by rememberSaveable {
-        mutableStateOf(
-            data.ownership.owners
-                .firstOrNull()
-                ?.id
-                ?.value
-                .orEmpty(),
-        )
-    }
-    var reviewed by rememberSaveable { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
+    var owner by rememberSaveable { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Set once the wallet is saved. Discovery then runs in the host and this dialog follows its status.
+    var savedWallet by remember { mutableStateOf<TrackingTargetId?>(null) }
+    // The host status when discovery was requested. Only a discovery status that differs from it counts as progress.
+    var baseline by remember { mutableStateOf<SyncStatus?>(null) }
+    // The host's immediate reply to the request. It explains a rejected request and is shown until a discovery status arrives.
+    var hostReply by remember { mutableStateOf<String?>(null) }
     val selectedPortfolio = data.ownership.portfolios.find { it.id.value == portfolio }
     val owners =
         data.ownership.owners.filter {
@@ -121,159 +120,179 @@ internal fun BitcoinConnectDialog(
                 "polion:archived" !in it.tags &&
                 (selectedPortfolio == null || selectedPortfolio.ownerIds.isEmpty() || it.ownerId in selectedPortfolio.ownerIds)
         }
+    val ownerChoice = owners.firstOrNull { it.id.value == owner }?.id ?: owners.firstOrNull()?.id
     val canonical = runCatching { canonicalBitcoinSource(expression) }.getOrNull()
-    AccountFlowDialog("Connect Bitcoin wallet", busy, close) {
+    val wallet = savedWallet
+    val discovery = syncStatus.takeIf { wallet != null && it != baseline && it.operation == SyncOperation.DISCOVERY }
+    val failed = wallet != null && (discovery?.phase == SyncPhase.ERROR || (discovery == null && hostReply != null))
+    val blocker =
+        when {
+            label.isBlank() -> "Enter an account or wallet name."
+            canonical == null -> "Enter a valid Bitcoin mainnet public address, supported descriptor or xpub."
+            account.isEmpty() && data.ownership.owners.isNotEmpty() && ownerChoice == null ->
+                "No owner in this portfolio can hold the wallet. Choose another portfolio."
+            endpoint.isBlank() -> "Enter the HTTPS provider endpoint."
+            !consent -> "Tick the consent box to allow queries to this provider."
+            else -> null
+        }
+
+    fun discover(walletId: TrackingTargetId) {
+        savedWallet = walletId
+        baseline = syncStatus
+        hostReply = null
+        host.discoverWallet(walletId) { hostReply = it }
+    }
+
+    LaunchedEffect(discovery) {
+        if (discovery?.phase == SyncPhase.SUCCESS) {
+            notify(discovery.message)
+            close()
+        }
+    }
+
+    fun submit() {
+        saving = true
+        error = null
+        val suffix =
+            kotlin.random.Random
+                .nextLong()
+                .toString()
+                .removePrefix("-")
+        val accountId = account.takeIf { it.isNotEmpty() }?.let(::AccountId) ?: AccountId("wallet-account-$suffix")
+        val ownerId = ownerChoice?.takeIf { account.isEmpty() } ?: OwnerId("owner-$suffix")
+        val id = TrackingTargetId("wallet-$suffix")
+        scope.launch {
+            try {
+                val walletId =
+                    withContext(host.dispatcher) {
+                        require(data.ownership.owners.isEmpty() || account.isNotEmpty() || ownerChoice != null) {
+                            "Select an owner in this portfolio"
+                        }
+                        // A retried import of an undiscovered wallet returns the existing wallet ID.
+                        app.saveBitcoinWallet(
+                            TrackingTarget(
+                                id,
+                                accountId,
+                                TargetIdentity(BITCOIN_MAINNET, "wallet", requireNotNull(canonical)),
+                                TargetRole.WALLET,
+                                label.trim(),
+                            ),
+                            newAccount =
+                                if (account.isEmpty()) {
+                                    Account(accountId, ownerId, label.trim(), AccountKind.WALLET)
+                                } else {
+                                    null
+                                },
+                            newOwner =
+                                if (account.isEmpty() && data.ownership.owners.isEmpty()) {
+                                    Owner(ownerId, "Personal")
+                                } else {
+                                    null
+                                },
+                            consentAccepted = consent,
+                            providerEndpoint = endpoint.trim(),
+                            portfolio = portfolio.takeIf { it.isNotBlank() }?.let(::PortfolioId),
+                        )
+                    }
+                val scheduled =
+                    withContext(host.dispatcher) {
+                        runCatching { host.updateRefreshPreferences(host.refreshPreferences()) }.isSuccess
+                    }
+                onSaved()
+                if (!scheduled) notify("Source saved. Automatic refresh could not be scheduled; check sync settings.")
+                if (walletId != id) notify("Resumed the wallet imported earlier; its account was kept.")
+                discover(walletId)
+            } catch (
+                cancelled: CancellationException,
+            ) {
+                throw cancelled
+            } catch (
+                e: Exception,
+            ) {
+                error = e.message ?: "Could not save this source. Check the input and retry."
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    AccountFlowDialog("Connect Bitcoin wallet", saving, close) {
+        val editable = wallet == null && !saving
         Text("Watch-only · Bitcoin mainnet")
-        OutlinedTextField(label, {
-            label = it
-            reviewed = false
-        }, enabled = !busy, label = { Text("Account / wallet name") }, modifier = Modifier.fillMaxWidth().testTag("connect-name"))
-        OutlinedTextField(expression, {
-            expression = it
-            reviewed = false
-        }, enabled = !busy, label = {
+        OutlinedTextField(label, { label = it }, enabled = editable, label = {
+            Text("Account / wallet name")
+        }, modifier = Modifier.fillMaxWidth().testTag("connect-name"))
+        OutlinedTextField(expression, { expression = it }, enabled = editable, label = {
             Text("Public address, descriptor or xpub")
         }, modifier = Modifier.fillMaxWidth().testTag("connect-expression"))
         Text(
             "Public information only. Never enter private keys or recovery words. A bare xpub uses native SegWit receive and change branches.",
         )
+        if (canonical != null) {
+            Text("Validated public source: $canonical")
+            Text(
+                "Discovery checks both branches for a bare xpub and stops after 20 unused addresses per branch. A descriptor checks its defined branch. History beyond the gap can be missed. Accepted holdings appear in Accounts; source coverage remains provider-based.",
+            )
+            if (selectedPortfolio != null && selectedPortfolio.accountIds.isNotEmpty()) {
+                Text("The chosen account will be included in ${selectedPortfolio.label}.")
+            }
+        }
         TransactionChoice(
             "Portfolio",
             listOf("" to "All portfolios") + data.ownership.portfolios.map { it.id.value to it.label },
             portfolio,
         ) {
-            portfolio =
-                it
-            ; account = ""
+            portfolio = it
+            account = ""
             owner = ""
-            reviewed = false
         }
         TransactionChoice("Account", listOf("" to "New account") + accounts.map { it.id.value to it.label }, account) {
             account = it
-            reviewed =
-                false
         }
         if (account.isEmpty()) {
             if (data.ownership.owners.isEmpty()) {
                 Text("A local Personal owner will be created.")
             } else {
-                TransactionChoice("Owner", owners.map { it.id.value to it.label }, owner) {
-                    owner = it
-                    reviewed = false
-                }
+                TransactionChoice("Owner", owners.map { it.id.value to it.label }, ownerChoice?.value.orEmpty()) { owner = it }
             }
         }
         OutlinedTextField(endpoint, {
             endpoint = it
             consent = false
-            reviewed = false
-        }, enabled = !busy, label = {
+        }, enabled = editable, label = {
             Text("Bitcoin provider (HTTPS Esplora endpoint)")
         }, modifier = Modifier.fillMaxWidth().testTag("connect-endpoint"))
         Row {
-            Checkbox(consent, {
-                consent = it
-                reviewed = false
-            }, enabled = !busy, modifier = Modifier.testTag("connect-consent"))
+            Checkbox(consent, { consent = it }, enabled = editable, modifier = Modifier.testTag("connect-consent"))
             Text("Allow public address and transaction queries to this provider.", Modifier.weight(1f))
         }
-        if (canonical != null && reviewed) {
-            Text("Validated public source: $canonical")
-            Text(
-                "Discovery checks both branches for a bare xpub and stops after 20 unused addresses per branch. A descriptor checks its defined branch. History beyond the gap can be missed. Accepted holdings appear in Accounts; source coverage remains provider-based.",
-            )
-            if (selectedPortfolio != null &&
-                selectedPortfolio.accountIds.isNotEmpty()
-            ) {
-                Text("The chosen account will be included in ${selectedPortfolio.label}.")
-            }
-            Button(enabled = !busy && consent, modifier = Modifier.fillMaxWidth().testTag("connect-confirm"), onClick = {
-                busy = true
-                scope.launch {
-                    try {
-                        val wallet =
-                            withContext(host.dispatcher) {
-                                val suffix =
-                                    kotlin.random.Random
-                                        .nextLong()
-                                        .toString()
-                                        .removePrefix("-")
-                                val ownerId = owner.takeIf { it.isNotEmpty() }?.let(::OwnerId) ?: OwnerId("owner-$suffix")
-                                require(
-                                    data.ownership.owners.isEmpty() || ownerId in owners.map { it.id } || account.isNotEmpty(),
-                                ) { "Select an owner in this portfolio" }
-                                val accountId = account.takeIf { it.isNotEmpty() }?.let(::AccountId) ?: AccountId("wallet-account-$suffix")
-                                val id = TrackingTargetId("wallet-$suffix")
-                                // A retried import of an undiscovered wallet returns the existing wallet ID.
-                                var walletId = id
-                                walletId =
-                                    app.saveBitcoinWallet(
-                                        TrackingTarget(
-                                            id,
-                                            accountId,
-                                            TargetIdentity(BITCOIN_MAINNET, "wallet", requireNotNull(canonical)),
-                                            TargetRole.WALLET,
-                                            label.trim(),
-                                        ),
-                                        newAccount =
-                                            if (account.isEmpty()) {
-                                                Account(
-                                                    accountId,
-                                                    ownerId,
-                                                    label.trim(),
-                                                    AccountKind.WALLET,
-                                                )
-                                            } else {
-                                                null
-                                            },
-                                        newOwner =
-                                            if (account.isEmpty() &&
-                                                data.ownership.owners.isEmpty()
-                                            ) {
-                                                Owner(ownerId, "Personal")
-                                            } else {
-                                                null
-                                            },
-                                        consentAccepted = consent,
-                                        providerEndpoint = endpoint.trim(),
-                                        portfolio = portfolio.takeIf { it.isNotBlank() }?.let(::PortfolioId),
-                                    )
-                                val scheduled = runCatching { host.updateRefreshPreferences(host.refreshPreferences()) }.isSuccess
-                                Triple(walletId, scheduled, walletId != id)
-                            }
-                        onSaved()
-                        close()
-                        // The host owns discovery and history; its callback can acknowledge queued work.
-                        if (!wallet.second) notify("Source saved. Automatic refresh could not be scheduled; check sync settings.")
-                        if (wallet.third) notify("Resumed the wallet imported earlier; its account was kept.")
-                        host.discoverWallet(wallet.first, notify)
-                    } catch (
-                        cancelled: CancellationException,
-                    ) {
-                        throw cancelled
-                    } catch (
-                        e: Exception,
-                    ) {
-                        error = e.message ?: "Could not save this source. Check the input and retry."
-                    } finally {
-                        busy = false
-                    }
-                }
-            }) { Text(if (busy) "Saving source…" else "Connect and fetch history") }
+        if (wallet == null) {
+            blocker?.let { Text(it, modifier = Modifier.testTag("connect-blocker")) }
         } else {
-            Button(
-                enabled = !busy && label.isNotBlank() && expression.isNotBlank() && consent,
-                modifier =
-                    Modifier.fillMaxWidth().testTag(
-                        "connect-review",
-                    ),
-                onClick = {
-                    error = if (canonical == null) "Enter a valid Bitcoin mainnet public address, supported descriptor or xpub." else null
-                    reviewed = canonical != null
-                },
-            ) { Text("Review connection") }
+            Text(
+                discovery?.message ?: hostReply ?: "Saved. Discovery is queued; progress appears here.",
+                color = if (discovery?.phase == SyncPhase.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.testTag("connect-status"),
+            )
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Button(
+            enabled = if (wallet == null) !saving && blocker == null else failed,
+            modifier = Modifier.fillMaxWidth().testTag("connect-confirm"),
+            onClick = {
+                val current = wallet
+                if (current == null) submit() else discover(current)
+            },
+        ) {
+            Text(
+                when {
+                    saving -> "Importing…"
+                    wallet == null -> "Import wallet"
+                    failed -> "Retry discovery"
+                    else -> "Discovering…"
+                },
+            )
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("connect-save-error")) }
     }
 }
 
