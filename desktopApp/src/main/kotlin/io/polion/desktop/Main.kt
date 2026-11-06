@@ -13,11 +13,14 @@ import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.model.TrackingTargetId
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
 import io.polion.ui.UnlockResult
+import io.polion.ui.WALLET_REFRESH_INTERVAL_MILLIS
+import io.polion.ui.cooldownDelayMillis
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -445,7 +448,7 @@ internal class DesktopHost(
         app.value.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
         val plan = io.polion.ui.refreshSchedulePlan(preference, app.value.sourceConsent(), app.value.automaticPriceConsent())
         scheduleWalletRefresh(plan.walletHistory)
-        setAutomaticPriceRefresh(plan.prices)
+        schedulePrices(plan.prices)
     }
 
     override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))
@@ -454,9 +457,12 @@ internal class DesktopHost(
         refreshTask?.cancel(false)
         refreshTask =
             if (enabled) {
+                // The first run waits out the rest of the interval after a success, so a restart does not repeat it.
+                val delay =
+                    cooldownDelayMillis(app.value.sourceLastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, System.currentTimeMillis())
                 executor.scheduleWithFixedDelay({
                     refresh { }
-                }, 30, 30, java.util.concurrent.TimeUnit.MINUTES)
+                }, delay, WALLET_REFRESH_INTERVAL_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
             } else {
                 null
             }
@@ -464,11 +470,22 @@ internal class DesktopHost(
 
     override fun backgroundRefreshEnabled(): Boolean = refreshPreferences().automaticRefresh
 
-    override fun setAutomaticPriceRefresh(enabled: Boolean) {
+    private fun schedulePrices(enabled: Boolean) {
         automaticPriceTask?.cancel(false)
         automaticPriceTask =
             if (enabled && refreshPreferences().automaticRefresh && app.value.automaticPriceConsent() && !closing.get()) {
-                priceExecutor.scheduleWithFixedDelay(::runAutomaticPriceRefresh, 0, 1, java.util.concurrent.TimeUnit.HOURS)
+                val delay =
+                    cooldownDelayMillis(
+                        app.value.automaticPriceLastSuccessMillis(),
+                        PRICE_REFRESH_INTERVAL_MILLIS,
+                        System.currentTimeMillis(),
+                    )
+                priceExecutor.scheduleWithFixedDelay(
+                    ::runAutomaticPriceRefresh,
+                    delay,
+                    PRICE_REFRESH_INTERVAL_MILLIS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS,
+                )
             } else {
                 null
             }

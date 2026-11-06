@@ -29,11 +29,14 @@ import androidx.core.view.WindowInsetsControllerCompat
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.storage.AndroidSqliteDatabase
+import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
 import io.polion.ui.UnlockResult
+import io.polion.ui.WALLET_REFRESH_INTERVAL_MILLIS
+import io.polion.ui.cooldownDelayMillis
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.update
@@ -348,8 +351,18 @@ private class AndroidHost(
         val preference = readRefreshPreferences(application)
         application.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
         val plan = io.polion.ui.refreshSchedulePlan(preference, application.sourceConsent(), application.automaticPriceConsent())
-        scheduleWalletRefresh(plan.walletHistory, plan.wifiOnly)
-        scheduleAutomaticPrices(plan.prices, plan.wifiOnly, application.automaticPriceConsent())
+        val now = System.currentTimeMillis()
+        scheduleWalletRefresh(
+            plan.walletHistory,
+            plan.wifiOnly,
+            cooldownDelayMillis(application.sourceLastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, now),
+        )
+        scheduleAutomaticPrices(
+            plan.prices,
+            plan.wifiOnly,
+            application.automaticPriceConsent(),
+            cooldownDelayMillis(application.automaticPriceLastSuccessMillis(), PRICE_REFRESH_INTERVAL_MILLIS, now),
+        )
     }
 
     override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))
@@ -357,24 +370,21 @@ private class AndroidHost(
     private fun scheduleWalletRefresh(
         enabled: Boolean,
         wifiOnly: Boolean,
+        initialDelayMillis: Long,
     ) {
-        AndroidRefreshScheduling.wallets(activity, enabled, wifiOnly)
+        AndroidRefreshScheduling.wallets(activity, enabled, wifiOnly, initialDelayMillis = initialDelayMillis)
     }
 
     override fun backgroundRefreshEnabled(): Boolean = refreshPreferences().automaticRefresh
-
-    override fun setAutomaticPriceRefresh(enabled: Boolean) {
-        val preference = refreshPreferences()
-        scheduleAutomaticPrices(enabled && preference.automaticRefresh, preference.wifiOnly, enabled)
-    }
 
     private fun scheduleAutomaticPrices(
         enabled: Boolean,
         wifiOnly: Boolean,
         consent: Boolean,
+        initialDelayMillis: Long,
     ) {
         val manager = androidx.work.WorkManager.getInstance(activity)
-        AndroidRefreshScheduling.prices(activity, enabled, wifiOnly)
+        AndroidRefreshScheduling.prices(activity, enabled, wifiOnly, initialDelayMillis = initialDelayMillis)
         if (!consent) {
             manager.cancelUniqueWork("polion-price-refresh-now")
             AutomaticPriceWorker.tracker.setWorkState(queued = false, running = false)

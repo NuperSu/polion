@@ -358,8 +358,8 @@ class PolionUiTest {
             onResult("Saved Bitcoin price history.")
         }
 
-        override fun setAutomaticPriceRefresh(enabled: Boolean) {
-            automaticPrices = enabled
+        override fun updateRefreshPreferences(preferences: RefreshPreferences) {
+            automaticPrices = preferences.automaticRefresh
         }
 
         override fun refreshAutomaticPrices(onResult: (String) -> Unit) {

@@ -1307,6 +1307,9 @@ class PortfolioApplication(
 
     fun sourceFailureMessage(): String? = setting("source_error")
 
+    /** Epoch millis of the last successful wallet refresh, or null when none has completed. */
+    fun sourceLastSuccessMillis(): Long? = setting("source_last_success")?.toLongOrNull()
+
     fun priceSourceConsent(): Boolean = setting("price_source_consent") == "true"
 
     fun automaticPriceConsent(): Boolean = setting("automatic_price_consent") == "true"
@@ -1323,6 +1326,9 @@ class PortfolioApplication(
 
     fun automaticPriceStatus(): String? = setting("automatic_price_status")
 
+    /** Epoch millis of the last successful automatic price refresh, or null when none has completed. */
+    fun automaticPriceLastSuccessMillis(): Long? = setting("automatic_price_last_success")?.toLongOrNull()
+
     fun recordAutomaticPriceSchedulingFailure() =
         db.transaction {
             if (automaticPriceConsent()) putSetting("automatic_price_status", "Automatic price refresh could not be scheduled")
@@ -1333,6 +1339,7 @@ class PortfolioApplication(
         rateLimited: Boolean = false,
     ) = db.transaction {
         if (automaticPriceConsent()) {
+            if (success) putSetting("automatic_price_last_success", now().toString())
             putSetting(
                 "automatic_price_status",
                 if (success) {
@@ -1353,11 +1360,22 @@ class PortfolioApplication(
         }
     }
 
-    fun setAutomaticPriceConsent(accepted: Boolean) =
+    fun setAutomaticPriceConsent(accepted: Boolean) = db.transaction { putAutomaticPriceConsent(accepted) }
+
+    private fun putAutomaticPriceConsent(accepted: Boolean) {
+        putSetting("automatic_price_generation", priceRequestNonce())
+        putSetting("automatic_price_consent", accepted.toString())
+        if (accepted) putSetting("automatic_price_scope", "all")
+    }
+
+    /**
+     * The single automatic-refresh switch. Enabling it grants automatic Kraken price consent with the schedule preference;
+     * disabling it withdraws that consent. Both change in one transaction, so prices and wallet history cannot disagree.
+     */
+    fun setAutomaticRefresh(enabled: Boolean) =
         db.transaction {
-            putSetting("automatic_price_generation", priceRequestNonce())
-            putSetting("automatic_price_consent", accepted.toString())
-            if (accepted) putSetting("automatic_price_scope", "all")
+            putSetting("refresh_automatic", enabled.toString())
+            putAutomaticPriceConsent(enabled)
         }
 
     fun setAutomaticPortfolioPriceConsent(accepted: Boolean) =

@@ -138,6 +138,7 @@ class RewriteAcceptanceTest {
                         onNodeWithTag("workspace-menu").performClick()
                         onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("automatic-refresh").performScrollTo().performClick()
+                        onNodeWithTag("automatic-refresh-confirm").performClick()
                         onNodeWithTag("wifi-only-refresh").performScrollTo().performClick()
                         waitUntil(timeoutMillis = 10_000) { host.preferences == RefreshPreferences(true, true) }
                         capture("settings")
@@ -405,8 +406,6 @@ class RewriteAcceptanceTest {
 
         @Volatile var priceRequests = 0
 
-        @Volatile var automaticPrices = false
-
         @Volatile var recoveryRequests = 0
 
         @Volatile var refreshRequests = 0
@@ -460,10 +459,6 @@ class RewriteAcceptanceTest {
         ) {
             priceRequests++
             onResult("Saved Bitcoin price history.")
-        }
-
-        override fun setAutomaticPriceRefresh(enabled: Boolean) {
-            automaticPrices = enabled
         }
 
         override fun refreshAutomaticPrices(onResult: (String) -> Unit) {

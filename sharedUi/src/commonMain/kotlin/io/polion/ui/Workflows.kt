@@ -519,28 +519,24 @@ internal fun WorkflowDialog(
                 HorizontalDivider()
                 Text("Automatic Bitcoin prices", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Kraken receives Bitcoin pairs for your USD, EUR and GBP portfolio currencies and your IP address; wallet addresses are not sent. Closed hourly and daily prices refresh automatically while scheduling is available. No API key is needed.",
+                    "Kraken receives Bitcoin pairs for your USD, EUR and GBP portfolio currencies and your IP address; wallet addresses " +
+                        "are not sent. This switch also turns on automatic wallet history refresh. " +
+                        "Closed hourly and daily prices refresh while scheduling is available. No API key is needed.",
                     fontSize = 13.sp,
                 )
                 Row {
                     Checkbox(automaticPriceConsent, { accepted ->
                         automaticPriceConsent = accepted
                         if (accepted) automaticPortfolioPrices = true
-                        scope.launch {
-                            withContext(host.dispatcher) { app.setAutomaticPriceConsent(accepted) }
-                            host.setAutomaticPriceRefresh(accepted)
-                        }
+                        execute("Refresh settings saved") { applyAutomaticRefresh(app, host, accepted) }
                     }, modifier = Modifier.testTag("automatic-price-consent"))
-                    Text("Allow automatic Kraken prices", modifier = Modifier.padding(top = 12.dp))
+                    Text("Allow automatic Kraken prices and wallet refresh", modifier = Modifier.padding(top = 12.dp))
                 }
                 if (automaticPriceConsent) {
                     Row {
                         Checkbox(automaticPortfolioPrices, { accepted ->
                             automaticPortfolioPrices = accepted
-                            scope.launch {
-                                withContext(host.dispatcher) { app.setAutomaticPortfolioPriceConsent(accepted) }
-                                host.setAutomaticPriceRefresh(true)
-                            }
+                            execute("Price currencies saved") { app.setAutomaticPortfolioPriceConsent(accepted) }
                         }, modifier = Modifier.testTag("automatic-portfolio-price-consent"))
                         Text("Include other portfolio currencies", modifier = Modifier.padding(top = 12.dp))
                     }

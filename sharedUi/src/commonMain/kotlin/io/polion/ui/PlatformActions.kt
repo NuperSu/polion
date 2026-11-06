@@ -1,5 +1,6 @@
 package io.polion.ui
 
+import io.polion.core.application.PortfolioApplication
 import io.polion.core.model.AssetId
 import io.polion.core.model.TrackingTargetId
 import kotlinx.coroutines.CoroutineDispatcher
@@ -40,6 +41,35 @@ fun refreshSchedulePlan(
     preferences.automaticRefresh && priceConsent,
     preferences.wifiOnly,
 )
+
+const val WALLET_REFRESH_INTERVAL_MILLIS = 30L * 60_000L
+const val PRICE_REFRESH_INTERVAL_MILLIS = 60L * 60_000L
+
+/**
+ * Delay before the next scheduled run. It is zero when there is no successful run or the last one is due, so a run
+ * never repeats on app start within the interval after a success.
+ */
+fun cooldownDelayMillis(
+    lastSuccessMillis: Long?,
+    intervalMillis: Long,
+    nowMillis: Long,
+): Long {
+    if (lastSuccessMillis == null) return 0L
+    return (lastSuccessMillis + intervalMillis - nowMillis).coerceAtLeast(0L)
+}
+
+/**
+ * The single automatic-refresh switch. Core consent and the schedule preference change in one transaction, then the host
+ * reschedules prices and wallet history from them. Callers run this on the host dispatcher.
+ */
+internal fun applyAutomaticRefresh(
+    app: PortfolioApplication,
+    host: PlatformActions,
+    enabled: Boolean,
+) {
+    app.setAutomaticRefresh(enabled)
+    host.updateRefreshPreferences(RefreshPreferences(enabled, host.refreshPreferences().wifiOnly))
+}
 
 data class UnlockResult(
     val success: Boolean,
@@ -106,8 +136,6 @@ interface PlatformActions {
     }
 
     fun setBackgroundRefresh(enabled: Boolean)
-
-    fun setAutomaticPriceRefresh(enabled: Boolean) {}
 
     fun refreshAutomaticPrices(onResult: (String) -> Unit) {
         onResult("Price refresh is unavailable on this host.")

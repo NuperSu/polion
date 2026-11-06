@@ -785,7 +785,7 @@ internal fun ModelWorkspace(
                         ModelSettingsState(
                             preferences.automaticRefresh,
                             preferences.wifiOnly,
-                            "Consented wallet history and prices refresh subject to platform scheduling.",
+                            "Prices and wallet history refresh together. Unchanged wallets are only checked, not downloaded again.",
                             if (wifiOnlyRefreshSupported) {
                                 "Background jobs use an unmetered network. Manual refresh uses the current connection."
                             } else {

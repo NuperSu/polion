@@ -254,6 +254,7 @@ private fun Product(
     var menuOpen by remember { mutableStateOf(false) }
     var showRefreshDetails by remember { mutableStateOf(false) }
     var preferences by remember(host) { mutableStateOf(RefreshPreferences()) }
+    var automaticDisclosure by remember { mutableStateOf(false) }
     val preferenceRevision by host.dataRevision.collectAsState()
     LaunchedEffect(app, host, preferenceRevision) {
         preferences = withContext(host.dispatcher) { host.refreshPreferences() }
@@ -270,6 +271,10 @@ private fun Product(
     }
     LaunchedEffect(revision) {
         if (revision != 0) onLocalDataChanged()
+    }
+    // Workflow dialogs change automatic refresh through the same action, so the cached preferences reload after each change.
+    LaunchedEffect(revision) {
+        preferences = withContext(host.dispatcher) { host.refreshPreferences() }
     }
     var search by presenter.field({ it.search }) { presenter.dispatch(ProductEvent.Search(it)) }
     var kind by presenter.field({ it.kind }) { presenter.dispatch(ProductEvent.Kind(it)) }
@@ -405,6 +410,16 @@ private fun Product(
         action: () -> Unit,
     ) = presenter.execute(success, action)
 
+    fun changeAutomaticRefresh(enabled: Boolean) {
+        preferences = preferences.copy(automaticRefresh = enabled)
+        execute("Refresh settings saved") { applyAutomaticRefresh(app, host, enabled) }
+    }
+
+    fun onAutomaticSwitch(enabled: Boolean) {
+        // Turning automatic refresh on sends data to Kraken and the wallet provider, so it asks first.
+        if (enabled) automaticDisclosure = true else changeAutomaticRefresh(false)
+    }
+
     fun saveAssetPreference(preference: AssetListPreference) =
         execute("Asset display saved") {
             app.setAssetListPreference(preference)
@@ -412,6 +427,30 @@ private fun Product(
         }
     LaunchedEffect(presenter, snackbar) {
         presenter.messages.collect { snackbar.showSnackbar(it) }
+    }
+    if (automaticDisclosure) {
+        AlertDialog(
+            onDismissRequest = { automaticDisclosure = false },
+            title = { Text("Turn on automatic refresh?") },
+            text = {
+                Text(
+                    "Automatic refresh updates Bitcoin prices and wallet history on a schedule. Kraken receives Bitcoin pairs " +
+                        "for your portfolio currencies and your IP address; wallet addresses are not sent to Kraken. Your Bitcoin " +
+                        "provider receives watched addresses when wallet history refreshes, and only if you have allowed it. " +
+                        "Turning this off withdraws automatic price consent.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        automaticDisclosure = false
+                        changeAutomaticRefresh(true)
+                    },
+                    modifier = Modifier.testTag("automatic-refresh-confirm"),
+                ) { Text("Turn on") }
+            },
+            dismissButton = { TextButton(onClick = { automaticDisclosure = false }) { Text("Cancel") } },
+        )
     }
     if (dialog == "add") {
         SupportedSourceDialog(
@@ -595,11 +634,7 @@ private fun Product(
                                 AccountTool.UTXO -> "utxo"
                             }
                     },
-                    onAutomatic = { enabled ->
-                        val updated = preferences.copy(automaticRefresh = enabled)
-                        execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
-                        preferences = updated
-                    },
+                    onAutomatic = { enabled -> onAutomaticSwitch(enabled) },
                     onWifi = { enabled ->
                         val updated = preferences.copy(wifiOnly = enabled)
                         execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
@@ -1177,15 +1212,15 @@ private fun Product(
                                                 Text("Sync settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     Text("Automatic refresh", Modifier.weight(1f))
-                                                    Switch(preferences.automaticRefresh, { enabled ->
-                                                        val updated = preferences.copy(automaticRefresh = enabled)
-                                                        execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
-                                                        preferences = updated
-                                                    }, modifier = Modifier.testTag("automatic-refresh"))
+                                                    Switch(
+                                                        preferences.automaticRefresh,
+                                                        { enabled -> onAutomaticSwitch(enabled) },
+                                                        modifier = Modifier.testTag("automatic-refresh"),
+                                                    )
                                                 }
                                                 Text(
-                                                    "Consented wallet history every 30 minutes and prices hourly, subject to " +
-                                                        "platform scheduling.",
+                                                    "Prices hourly and wallet history every 30 minutes, subject to platform scheduling. " +
+                                                        "Unchanged wallets are only checked, not downloaded again.",
                                                     color = Muted,
                                                 )
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
