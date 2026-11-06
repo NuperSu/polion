@@ -11,6 +11,7 @@ import io.polion.core.ownership.TargetIdentity
 import io.polion.core.ownership.TargetRole
 import io.polion.core.ownership.TrackingTarget
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.core.sync.JobState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -164,6 +165,55 @@ class BitcoinWalletTest {
             val single = app.discoverBitcoinWallet(TrackingTargetId("d"), oneUsed, 2, 3)
             assertEquals(1, single.usedAddresses)
             assertTrue(single.notice!!.contains("one branch"), single.notice)
+        }
+    }
+
+    @Test fun discoveredXpubWithHistoryCompletesRefresh() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 15552000000L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            val walletId = TrackingTargetId("w")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+            app.setSourceConsent(true)
+            val usedAddress = bitcoinWallet(xpub).address(0, 1)
+            val txid = "b".repeat(64)
+
+            fun hash(height: Long) = height.toString(16).padStart(64, '0')
+            val funding =
+                """{"txid":"$txid","vin":[{"is_coinbase":true}],"vout":[{"scriptpubkey_address":"$usedAddress","value":1000}],""" +
+                    """"fee":0,"status":{"confirmed":true,"block_time":1,"block_height":100,"block_hash":"${hash(100)}"}}"""
+
+            fun summary(count: Int) = """{"chain_stats":{"tx_count":$count},"mempool_stats":{"tx_count":0}}"""
+            val transport =
+                EsploraTransport { path ->
+                    val address = Regex("/address/([^/]+)").find(path)?.groupValues?.get(1)
+                    when {
+                        path == "/blocks/tip/hash" -> hash(110)
+                        path == "/block/${hash(110)}" -> """{"id":"${hash(110)}","height":110}"""
+                        path.startsWith("/block-height/") -> hash(path.removePrefix("/block-height/").toLong())
+                        address == null -> error("Unexpected provider request: $path")
+                        path == "/address/$address" -> summary(if (address == usedAddress) 1 else 0)
+                        path == "/address/$address/txs/mempool" -> "[]"
+                        path == "/address/$address/utxo" ->
+                            if (address == usedAddress) {
+                                """[{"txid":"$txid","vout":0,"value":1000,"status":""" +
+                                    """{"confirmed":true,"block_height":100,"block_hash":"${hash(100)}"}}]"""
+                            } else {
+                                "[]"
+                            }
+                        path == "/address/$address/txs/chain" -> if (address == usedAddress) "[$funding]" else "[]"
+                        path.startsWith("/address/$address/txs/chain/") -> "[]"
+                        else -> error("Unexpected provider request: $path")
+                    }
+                }
+            val discovered = app.discoverBitcoinWallet(walletId, transport)
+            assertEquals(1, discovered.usedAddresses)
+            val states = app.refreshBitcoin(transport)
+            assertTrue(states.isNotEmpty() && states.all { it == JobState.COMPLETED }, states.toString())
+            assertEquals(1, app.snapshot().activityTotal)
         }
     }
 }
