@@ -204,44 +204,48 @@ internal fun BitcoinConnectDialog(
                                 ) { "Select an owner in this portfolio" }
                                 val accountId = account.takeIf { it.isNotEmpty() }?.let(::AccountId) ?: AccountId("wallet-account-$suffix")
                                 val id = TrackingTargetId("wallet-$suffix")
-                                app.saveBitcoinWallet(
-                                    TrackingTarget(
-                                        id,
-                                        accountId,
-                                        TargetIdentity(BITCOIN_MAINNET, "wallet", requireNotNull(canonical)),
-                                        TargetRole.WALLET,
-                                        label.trim(),
-                                    ),
-                                    newAccount =
-                                        if (account.isEmpty()) {
-                                            Account(
-                                                accountId,
-                                                ownerId,
-                                                label.trim(),
-                                                AccountKind.WALLET,
-                                            )
-                                        } else {
-                                            null
-                                        },
-                                    newOwner =
-                                        if (account.isEmpty() &&
-                                            data.ownership.owners.isEmpty()
-                                        ) {
-                                            Owner(ownerId, "Personal")
-                                        } else {
-                                            null
-                                        },
-                                    consentAccepted = consent,
-                                    providerEndpoint = endpoint.trim(),
-                                    portfolio = portfolio.takeIf { it.isNotBlank() }?.let(::PortfolioId),
-                                )
+                                // A retried import of an undiscovered wallet returns the existing wallet ID.
+                                var walletId = id
+                                walletId =
+                                    app.saveBitcoinWallet(
+                                        TrackingTarget(
+                                            id,
+                                            accountId,
+                                            TargetIdentity(BITCOIN_MAINNET, "wallet", requireNotNull(canonical)),
+                                            TargetRole.WALLET,
+                                            label.trim(),
+                                        ),
+                                        newAccount =
+                                            if (account.isEmpty()) {
+                                                Account(
+                                                    accountId,
+                                                    ownerId,
+                                                    label.trim(),
+                                                    AccountKind.WALLET,
+                                                )
+                                            } else {
+                                                null
+                                            },
+                                        newOwner =
+                                            if (account.isEmpty() &&
+                                                data.ownership.owners.isEmpty()
+                                            ) {
+                                                Owner(ownerId, "Personal")
+                                            } else {
+                                                null
+                                            },
+                                        consentAccepted = consent,
+                                        providerEndpoint = endpoint.trim(),
+                                        portfolio = portfolio.takeIf { it.isNotBlank() }?.let(::PortfolioId),
+                                    )
                                 val scheduled = runCatching { host.updateRefreshPreferences(host.refreshPreferences()) }.isSuccess
-                                id to scheduled
+                                Triple(walletId, scheduled, walletId != id)
                             }
                         onSaved()
                         close()
                         // The host owns discovery and history; its callback can acknowledge queued work.
                         if (!wallet.second) notify("Source saved. Automatic refresh could not be scheduled; check sync settings.")
+                        if (wallet.third) notify("Resumed the wallet imported earlier; its account was kept.")
                         host.discoverWallet(wallet.first, notify)
                     } catch (
                         cancelled: CancellationException,

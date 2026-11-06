@@ -244,4 +244,33 @@ class BitcoinWalletTest {
             assertTrue(failure.message!!.contains("Old standalone account"), failure.message)
         }
     }
+
+    @Test fun failedImportIsRetriedWithTheSameWalletInsteadOfBlockingTheExpression() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 0L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.setSourceConsent(true)
+            val target =
+                TrackingTarget(
+                    TrackingTargetId("w1"),
+                    account,
+                    TargetIdentity(BITCOIN_MAINNET, "wallet", xpub),
+                    TargetRole.WALLET,
+                    "Wallet",
+                )
+            val firstId = app.saveBitcoinWallet(target)
+            val offline = EsploraTransport { throw BitcoinProviderException(BitcoinProviderFailure.OFFLINE) }
+            assertFails { app.discoverBitcoinWallet(firstId, offline, 2, 3) }
+            // The failed import left a wallet without addresses, so importing the same expression again reuses it.
+            val retriedId = app.saveBitcoinWallet(target.copy(id = TrackingTargetId("w2")))
+            assertEquals(firstId, retriedId)
+            val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
+            assertEquals(4, app.discoverBitcoinWallet(retriedId, unused, 2, 3).addresses)
+            // A wallet that already has addresses still cannot be imported twice.
+            assertFails { app.saveBitcoinWallet(target.copy(id = TrackingTargetId("w3"))) }
+        }
+    }
 }

@@ -1907,7 +1907,11 @@ class PortfolioApplication(
             value
         }
 
-    /** Saves a consented public wallet and optional ownership records as one local change. */
+    /**
+     * Saves a consented public wallet and optional ownership records as one local change, and returns the wallet ID that
+     * discovery must use. A wallet whose earlier discovery failed has no addresses yet, so importing the same expression
+     * again reuses it and keeps the account it was first saved with. A wallet that already has addresses cannot be imported twice.
+     */
     fun saveBitcoinWallet(
         target: TrackingTarget,
         newAccount: Account? = null,
@@ -1915,66 +1919,78 @@ class PortfolioApplication(
         consentAccepted: Boolean = false,
         providerEndpoint: String? = null,
         portfolio: PortfolioId? = null,
-    ) {
+    ): TrackingTargetId {
         require(target.identity.networkId == BITCOIN_MAINNET && target.identity.kind == "wallet") { "Expected a Bitcoin public wallet" }
         require(target.label.isNotBlank()) { "Enter a wallet name" }
         val normalized = normalizeTarget(target)
-        db.transaction {
-            require(sourceConsent() || consentAccepted) { "Source consent required" }
-            if (providerEndpoint != null) {
-                require(
-                    providerEndpoint.trimEnd('/') == sourceEndpoint() || consentAccepted,
-                ) { "Consent is required for the selected provider" }
-                setSourceEndpoint(providerEndpoint)
-            }
-            val catalog = ownership.loadInTransaction()
-            require(catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
-            require(
-                catalog.targets.none { it.identity == normalized.identity && it.role == TargetRole.WALLET },
-            ) { "Wallet already tracked" }
-            require(newOwner == null || newAccount != null && newAccount.ownerId == newOwner.id) { "Owner requires a matching new account" }
-            if (newOwner != null) {
-                require(newOwner.label.isNotBlank()) { "Enter an owner name" }
-                require(catalog.owners.none { it.id == newOwner.id }) { "Owner already exists" }
-            }
-            if (newAccount != null) {
-                require(newAccount.id == normalized.accountId) { "Wallet account does not match" }
-                require(newAccount.label.isNotBlank()) { "Enter an account name" }
-                require(catalog.accounts.none { it.id == newAccount.id }) { "Account already exists" }
-            }
-            val account = requireNotNull(newAccount ?: catalog.accounts.firstOrNull { it.id == normalized.accountId }) { "Unknown account" }
-            require(account.kind != AccountKind.GROUP && "polion:archived" !in account.tags) { "Select an active account" }
-            val byId = catalog.accounts.associateBy { it.id }
-            var parent = account.parentId
-            while (parent != null) {
-                val ancestor = requireNotNull(byId[parent]) { "Unknown parent account" }
-                require("polion:archived" !in ancestor.tags) { "Select an active account group" }
-                parent = ancestor.parentId
-            }
-            val portfolios =
-                catalog.portfolios.map { selected ->
-                    if (selected.id != portfolio) {
-                        selected
-                    } else {
-                        require(
-                            selected.ownerIds.isEmpty() || account.ownerId in selected.ownerIds,
-                        ) { "Select an owner included in this portfolio" }
-                        if (selected.accountIds.isEmpty()) selected else selected.copy(accountIds = selected.accountIds + account.id)
-                    }
+        val walletId =
+            db.transaction {
+                require(sourceConsent() || consentAccepted) { "Source consent required" }
+                if (providerEndpoint != null) {
+                    require(
+                        providerEndpoint.trimEnd('/') == sourceEndpoint() || consentAccepted,
+                    ) { "Consent is required for the selected provider" }
+                    setSourceEndpoint(providerEndpoint)
                 }
-            require(portfolio == null || catalog.portfolios.any { it.id == portfolio }) { "Unknown portfolio" }
-            ownership.replaceInTransaction(
-                catalog.copy(
-                    portfolios = portfolios,
-                    owners = catalog.owners + listOfNotNull(newOwner),
-                    accounts = catalog.accounts + listOfNotNull(newAccount),
-                    targets = catalog.targets + normalized,
-                ),
-            )
-            if (consentAccepted) putSetting("source_consent", "true")
-            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
-        }
+                val catalog = ownership.loadInTransaction()
+                val existing = catalog.targets.firstOrNull { it.identity == normalized.identity && it.role == TargetRole.WALLET }
+                val reused = existing?.takeIf { wallet -> catalog.targets.none { it.walletId == wallet.id } }
+                require(existing == null || reused != null) { "Wallet already tracked" }
+                require(reused != null || catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
+                require(reused == null || newAccount != null || target.accountId == reused.accountId) { "Wallet already tracked" }
+                val wallet = reused ?: normalized
+                val createdAccount = if (reused == null) newAccount else null
+                val createdOwner = if (reused == null) newOwner else null
+                require(createdOwner == null || createdAccount != null && createdAccount.ownerId == createdOwner.id) {
+                    "Owner requires a matching new account"
+                }
+                if (createdOwner != null) {
+                    require(createdOwner.label.isNotBlank()) { "Enter an owner name" }
+                    require(catalog.owners.none { it.id == createdOwner.id }) { "Owner already exists" }
+                }
+                if (createdAccount != null) {
+                    require(createdAccount.id == wallet.accountId) { "Wallet account does not match" }
+                    require(createdAccount.label.isNotBlank()) { "Enter an account name" }
+                    require(catalog.accounts.none { it.id == createdAccount.id }) { "Account already exists" }
+                }
+                val account =
+                    requireNotNull(
+                        createdAccount ?: catalog.accounts.firstOrNull { it.id == wallet.accountId },
+                    ) { "Unknown account" }
+                require(account.kind != AccountKind.GROUP && "polion:archived" !in account.tags) { "Select an active account" }
+                val byId = catalog.accounts.associateBy { it.id }
+                var parent = account.parentId
+                while (parent != null) {
+                    val ancestor = requireNotNull(byId[parent]) { "Unknown parent account" }
+                    require("polion:archived" !in ancestor.tags) { "Select an active account group" }
+                    parent = ancestor.parentId
+                }
+                val portfolios =
+                    catalog.portfolios.map { selected ->
+                        if (selected.id != portfolio) {
+                            selected
+                        } else {
+                            require(
+                                selected.ownerIds.isEmpty() || account.ownerId in selected.ownerIds,
+                            ) { "Select an owner included in this portfolio" }
+                            if (selected.accountIds.isEmpty()) selected else selected.copy(accountIds = selected.accountIds + account.id)
+                        }
+                    }
+                require(portfolio == null || catalog.portfolios.any { it.id == portfolio }) { "Unknown portfolio" }
+                ownership.replaceInTransaction(
+                    catalog.copy(
+                        portfolios = portfolios,
+                        owners = catalog.owners + listOfNotNull(createdOwner),
+                        accounts = catalog.accounts + listOfNotNull(createdAccount),
+                        targets = if (reused == null) catalog.targets + normalized else catalog.targets,
+                    ),
+                )
+                if (consentAccepted) putSetting("source_consent", "true")
+                db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+                wallet.id
+            }
         invalidate()
+        return walletId
     }
 
     fun saveTarget(value: TrackingTarget) {

@@ -60,9 +60,11 @@ class WalletOnboardingTest {
             val initial = app.snapshot().ownership
             val anotherOwner = Owner(OwnerId("another-owner"), "Another owner")
             val anotherAccount = Account(AccountId("another-account"), anotherOwner.id, "Another account", AccountKind.WALLET)
-            assertFails {
-                app.saveBitcoinWallet(wallet("duplicate", anotherAccount.id), anotherAccount, anotherOwner, consentAccepted = true)
-            }
+            // The undiscovered wallet is resumed in its original account; the requested account and owner are not created.
+            assertEquals(
+                TrackingTargetId("wallet"),
+                app.saveBitcoinWallet(wallet("duplicate", anotherAccount.id), anotherAccount, anotherOwner, consentAccepted = true),
+            )
             assertEquals(initial, app.snapshot().ownership)
         }
     }
