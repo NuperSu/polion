@@ -31,6 +31,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 val BITCOIN_MAINNET = NetworkId("bitcoin-mainnet")
 val BITCOIN_ASSET = AssetId("bitcoin:btc")
@@ -266,10 +268,12 @@ class BitcoinDecoder(
             }
         val sources = mutableSetOf(SourceRecordId(observation.id))
         if (blockOrder != tx.id) sources.add(SourceRecordId("bitcoin-block:${order[3]}"))
+        // Unconfirmed transactions have no block time; the retrieval time avoids a 1970 display and ordering value.
+        val occurredAt = if (tx.confirmed) tx.time else retrievalMillis(observation.retrievedAt)
         return listOf(
             Activity(
                 ActivityId("bitcoin:${tx.id}"),
-                tx.time,
+                occurredAt,
                 blockOrder,
                 kind,
                 if (tx.confirmed) ActivityStatus.CONFIRMED else ActivityStatus.PENDING,
@@ -281,3 +285,6 @@ class BitcoinDecoder(
         )
     }
 }
+
+@OptIn(ExperimentalTime::class)
+private fun retrievalMillis(retrievedAt: String): Long = Instant.parse(retrievedAt).toEpochMilliseconds()

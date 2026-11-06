@@ -11,6 +11,11 @@ class PortableBackup(
     companion object {
         private val excludedTables = (BitcoinScanStage.SCRATCH_TABLES + "android_metadata").joinToString(",") { "'$it'" }
 
+        /** Limits shared by export and [restoreToStaging]: export refuses any archive that restore would reject. */
+        const val MAX_ARCHIVE_CHARS = 100_000_000
+        const val MAX_ROWS_PER_TABLE = 1_000_000
+        const val MAX_FIELDS = 10_000_000
+
         /** Discover durable application tables; transient Bitcoin scan working tables are excluded. */
         fun discover(db: SqliteDatabase): PortableBackup {
             val tables =
@@ -36,14 +41,18 @@ class PortableBackup(
                 val columns = metadata.map { it[1]!! }
                 require(columns.isNotEmpty() && columns.all { it.matches(Regex("[a-z][a-z0-9_]*")) })
                 val rows = db.query("SELECT ${columns.joinToString(",")} FROM $table").sortedBy { row -> encode(row) }
+                require(rows.size <= MAX_ROWS_PER_TABLE) { "Backup is too large to restore safely; saved data is unchanged" }
                 fields.add(table)
                 fields.add(columns.size.toString())
                 fields.addAll(columns)
                 fields.add(rows.size.toString())
                 rows.forEach { fields.addAll(it) }
             }
+            require(fields.size <= MAX_FIELDS) { "Backup is too large to restore safely; saved data is unchanged" }
             val payload = encode(fields)
-            encode(listOf(sha256(payload), payload))
+            encode(listOf(sha256(payload), payload)).also {
+                require(it.length <= MAX_ARCHIVE_CHARS) { "Backup is too large to restore safely; saved data is unchanged" }
+            }
         }
 
     /** Restore to a new, empty database with application-created schemas. The original DB remains untouched. */
@@ -51,7 +60,7 @@ class PortableBackup(
         db: SqliteDatabase,
         archive: String,
     ) {
-        require(archive.length <= 100_000_000)
+        require(archive.length <= MAX_ARCHIVE_CHARS)
         val outer = decode(archive)
         require(outer.size == 2 && outer[0] == sha256(requireNotNull(outer[1]))) { "Corrupt archive" }
         val fields = decode(outer[1]!!)

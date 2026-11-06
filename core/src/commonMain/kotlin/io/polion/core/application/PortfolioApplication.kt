@@ -169,6 +169,8 @@ data class AccountingView(
     val missingTreatments: List<ActivityId>,
     val invalidTreatments: List<ActivityId>,
     val orderingUncertain: List<ActivityId>,
+    /** Treatments priced in another quote currency; their cost or proceeds are unknown in the report currency. */
+    val currencyMismatch: List<ActivityId> = emptyList(),
 )
 
 data class SavedObservation(
@@ -204,6 +206,8 @@ data class SourceStatus(
     val lastError: String?,
     val interrupted: Boolean,
     val utxoMismatchCount: Int = 0,
+    /** False when the latest accepted scan could not obtain the provider UTXO comparison. */
+    val utxoComparisonAvailable: Boolean = true,
 )
 
 data class BitcoinScanProgress(
@@ -219,6 +223,8 @@ data class BitcoinScanProgress(
 data class BitcoinWalletDiscovery(
     val addresses: Int,
     val usedAddresses: Int,
+    /** Human-readable caveat about script type or branch coverage; null when none applies. */
+    val notice: String? = null,
 )
 
 data class PortfolioSnapshot(
@@ -331,6 +337,7 @@ class PortfolioApplication(
                 setting("source_error"),
                 setting("source_in_progress") == "true",
                 bitcoinUtxoReview(limit = 1).total,
+                setting("utxo_comparison_available") != "false",
             ),
             setting("sample_data") == "true",
             ledger.activities.count {
@@ -629,6 +636,7 @@ class PortfolioApplication(
         val missing = mutableListOf<ActivityId>()
         val invalid = mutableListOf<ActivityId>()
         val orderingUncertain = mutableListOf<ActivityId>()
+        val currencyMismatch = mutableListOf<ActivityId>()
         val quote = portfolioCurrency(portfolio)
         val priceAt = now()
         val confirmedLedger = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
@@ -683,16 +691,40 @@ class PortfolioApplication(
                                     }
                                 },
                             ) { "Internal transfer requires distinct accounts with the same owner" }
-                            val quotes =
-                                computed.mapNotNull { action ->
+                            // A treatment recorded in another quote currency keeps its lot and quantity, but its cost or
+                            // proceeds are unknown in this report's currency. Its basis and gain therefore stay unknown.
+                            val normalized =
+                                computed.map { action ->
                                     when (action) {
-                                        is io.polion.core.accounting.AccountingAction.Acquisition -> action.totalCost
-                                        is io.polion.core.accounting.AccountingAction.Disposal -> action.proceeds
-                                        is io.polion.core.accounting.AccountingAction.Transfer -> null
+                                        is io.polion.core.accounting.AccountingAction.Acquisition ->
+                                            if (action.totalCost != null && action.totalCost.asset != quote) {
+                                                currencyMismatch.add(action.activityId)
+                                                action.copy(totalCost = null)
+                                            } else {
+                                                action
+                                            }
+                                        is io.polion.core.accounting.AccountingAction.Disposal ->
+                                            if (action.proceeds != null && action.proceeds.asset != quote) {
+                                                currencyMismatch.add(action.activityId)
+                                                action.copy(proceeds = null)
+                                            } else {
+                                                action
+                                            }
+                                        is io.polion.core.accounting.AccountingAction.Transfer -> action
                                     }
                                 }
-                            require(quotes.all { it.asset == quote && it.amount >= Rational.ZERO })
-                            actions.addAll(computed)
+                            require(
+                                normalized.all { action ->
+                                    val value =
+                                        when (action) {
+                                            is io.polion.core.accounting.AccountingAction.Acquisition -> action.totalCost
+                                            is io.polion.core.accounting.AccountingAction.Disposal -> action.proceeds
+                                            is io.polion.core.accounting.AccountingAction.Transfer -> null
+                                        }
+                                    value == null || value.amount >= Rational.ZERO
+                                },
+                            )
+                            actions.addAll(normalized)
                         }
                     } catch (_: IllegalArgumentException) {
                         if (affectsSelection(activity)) invalid.add(activity.id)
@@ -800,6 +832,7 @@ class PortfolioApplication(
             missing.distinct(),
             invalid.distinct(),
             orderingUncertain.distinct(),
+            currencyMismatch.distinct(),
         )
     }
 
@@ -1113,10 +1146,20 @@ class PortfolioApplication(
             ) {
                 throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
             }
-            val mismatchCount =
-                io.polion.core.bitcoin
-                    .BitcoinStagedUtxoComparison(db)
-                    .fetchAndCompare(transport)
+            // The comparison is advisory. When the provider permanently rejects the UTXO request (for example a capped
+            // address), history is still applied and the snapshot is recorded as not compared, so no clean "matching"
+            // result is claimed. Transient failures (offline, timeout, rate limit) still interrupt and keep the session.
+            val mismatchCount: Long? =
+                try {
+                    io.polion.core.bitcoin
+                        .BitcoinStagedUtxoComparison(db)
+                        .fetchAndCompare(transport)
+                } catch (failure: BitcoinProviderException) {
+                    if (failure.reason != BitcoinProviderFailure.UNAVAILABLE) throw failure
+                    null
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
             runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "apply")) }
             require(
                 transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash &&
@@ -1149,6 +1192,7 @@ class PortfolioApplication(
                         io.polion.core.bitcoin
                             .BitcoinBlockAnchor(anchorHeight, startTip),
                     observedAt = Instant.fromEpochMilliseconds(now()).toString(),
+                    compared = mismatchCount != null,
                     recoveryBaseline = recoverHistory,
                 )
                 bitcoinStage.applyCompleteInTransaction(
@@ -1157,7 +1201,8 @@ class PortfolioApplication(
                     requireBlockPositions = verifyBlockPositions,
                     graphState = stagedGraph::state,
                 )
-                putSetting("utxo_mismatch_count", mismatchCount.toString())
+                putSetting("utxo_comparison_available", (mismatchCount != null).toString())
+                mismatchCount?.let { putSetting("utxo_mismatch_count", it.toString()) }
                 bitcoinStage.clearInTransaction()
                 putSetting("source_last_success", now().toString())
                 db.execute("DELETE FROM application_settings WHERE key='source_error'")
@@ -1965,6 +2010,7 @@ class PortfolioApplication(
         transport: EsploraTransport,
         gapLimit: Int = 20,
         maxAddressesPerBranch: Int = 1000,
+        providerEndpoint: String? = null,
     ): BitcoinWalletDiscovery {
         require(sourceConsent()) { "Source consent required" }
         require(gapLimit in 1..100 && maxAddressesPerBranch in gapLimit..10000)
@@ -2047,9 +2093,38 @@ class PortfolioApplication(
             }
         }
         val childIds = children.map { it.id }.toSet()
-        ownership.replace(catalog.copy(targets = catalog.targets.filterNot { it.id in childIds } + children))
-        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
-        return BitcoinWalletDiscovery(children.size, used)
+        val notice =
+            when {
+                used == 0 ->
+                    "No used addresses in ${children.size} checked. Check the expression: a bare xpub is read as native SegWit (BIP84) only."
+                wallet.ranged && wallet.branchCount == 1 -> "The descriptor covers one branch; change addresses are not scanned."
+                else -> null
+            }
+        // Merge into the catalog as it is at commit time, so edits saved during the network scan survive.
+        db.transaction {
+            require(sourceConsent()) { "Source consent required" }
+            providerEndpoint?.let { endpoint ->
+                if (sourceEndpoint() != endpoint) throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+            }
+            val fresh = ownership.loadInTransaction()
+            require(fresh.targets.firstOrNull { it.id == walletId } == target) { "Wallet changed during discovery; retry" }
+            require(
+                children.all { child ->
+                    fresh.targets
+                        .filter {
+                            it.id != child.id &&
+                                it.role == TargetRole.LEAF &&
+                                it.identity.networkId == BITCOIN_MAINNET &&
+                                it.identity.kind == "address" &&
+                                it.identity.canonicalKey == child.identity.canonicalKey
+                        }.all { it.accountId == target.accountId && (it.walletId == null || it.walletId == walletId) }
+                },
+            ) { "Address assigned to another account or wallet" }
+            ownership.replaceInTransaction(fresh.copy(targets = fresh.targets.filterNot { it.id in childIds } + children))
+            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        }
+        invalidate()
+        return BitcoinWalletDiscovery(children.size, used, notice)
     }
 
     fun savePortfolio(value: Portfolio) =
@@ -2060,7 +2135,9 @@ class PortfolioApplication(
             )
         }
 
-    private fun updateOwnership(change: (OwnershipSnapshot) -> OwnershipSnapshot) = ownership.replace(change(ownership.load()))
+    /** Read-modify-write in one transaction, so concurrent edits cannot be lost between load and replace. */
+    private fun updateOwnership(change: (OwnershipSnapshot) -> OwnershipSnapshot) =
+        db.transaction { ownership.replaceInTransaction(change(ownership.loadInTransaction())) }
 
     /** Commit all linked legs, treatments and notes together, retaining append-only manual revisions. */
     fun saveTransaction(
@@ -2464,8 +2541,12 @@ class PortfolioApplication(
         return lines.joinToString("\r\n", postfix = "\r\n")
     }
 
-    fun exportBackup(password: CharArray): ByteArray =
-        BackupEncryption.encrypt(PortableBackup.discover(db).export(db).encodeToByteArray(), password)
+    fun exportBackup(password: CharArray): ByteArray {
+        val encrypted = BackupEncryption.encrypt(PortableBackup.discover(db).export(db).encodeToByteArray(), password)
+        // Restore accepts at most MAX_ARCHIVE_CHARS ciphertext bytes; refuse here instead of producing an unrestorable file.
+        require(encrypted.size <= PortableBackup.MAX_ARCHIVE_CHARS) { "Backup is too large to restore safely; saved data is unchanged" }
+        return encrypted
+    }
 
     fun restoreToStaging(
         staging: SqliteDatabase,

@@ -95,4 +95,75 @@ class BitcoinWalletTest {
             assertEquals(6, app.discoverBitcoinWallet(walletId, unused, 2, 5).addresses)
         }
     }
+
+    @Test fun discoveryKeepsOwnershipEditsSavedDuringTheScan() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 0L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            val walletId = TrackingTargetId("w")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+            app.setSourceConsent(true)
+            var saved = false
+            // An edit made by another writer while the network scan is in progress.
+            val transport =
+                EsploraTransport {
+                    if (!saved) {
+                        saved = true
+                        app.saveOwner(Owner(OwnerId("late"), "Saved during scan"))
+                    }
+                    """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}"""
+                }
+            val result = app.discoverBitcoinWallet(walletId, transport, 2, 3)
+            val catalog = app.snapshot().ownership
+            assertTrue(catalog.owners.any { it.id == OwnerId("late") }, "owner saved during discovery must survive")
+            assertEquals(result.addresses, catalog.targets.count { it.walletId == walletId })
+        }
+    }
+
+    @Test fun unusedBareXpubAndSingleBranchDescriptorGiveNotices() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 0L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.setSourceConsent(true)
+            val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
+            app.saveTarget(
+                TrackingTarget(
+                    TrackingTargetId("w"),
+                    account,
+                    TargetIdentity(BITCOIN_MAINNET, "wallet", xpub),
+                    TargetRole.WALLET,
+                    "W",
+                ),
+            )
+            val bare = app.discoverBitcoinWallet(TrackingTargetId("w"), unused, 2, 3)
+            assertEquals(0, bare.usedAddresses)
+            assertTrue(bare.notice!!.contains("BIP84"), bare.notice)
+
+            val descriptor = "pkh($xpub/0/*)"
+            app.saveTarget(
+                TrackingTarget(
+                    TrackingTargetId("d"),
+                    account,
+                    TargetIdentity(BITCOIN_MAINNET, "wallet", bitcoinWallet(descriptor).canonical),
+                    TargetRole.WALLET,
+                    "D",
+                ),
+            )
+            val firstAddress = bitcoinWallet(descriptor).address(0, 0)
+            val oneUsed =
+                EsploraTransport { path ->
+                    val count = if (path.endsWith(firstAddress)) 1 else 0
+                    """{"chain_stats":{"tx_count":$count},"mempool_stats":{"tx_count":0}}"""
+                }
+            val single = app.discoverBitcoinWallet(TrackingTargetId("d"), oneUsed, 2, 3)
+            assertEquals(1, single.usedAddresses)
+            assertTrue(single.notice!!.contains("one branch"), single.notice)
+        }
+    }
 }

@@ -61,7 +61,7 @@ class EsploraTest {
                 EsploraTransport { path ->
                     if (path.endsWith("mempool") == !confirmed) "[${tx(confirmed)}]" else "[]"
                 },
-                { "now" },
+                { "2026-11-06T10:00:00Z" },
             ).fetch(request).observations.single()
         val decoder = BitcoinDecoder(mapOf(address to account))
         val pending = decoder.decode(observation(false)).single()
@@ -69,6 +69,8 @@ class EsploraTest {
         assertEquals(pending.id, confirmed.id)
         assertEquals(ActivityStatus.PENDING, pending.status)
         assertEquals(ActivityStatus.CONFIRMED, confirmed.status)
+        // Pending transactions have no block time; they are dated by retrieval, never at the epoch.
+        assertEquals(1793959200000L, pending.occurredAtEpochMillis)
         assertEquals(emptyMap(), LedgerDeltas.calculate(listOf(pending)))
     }
 
