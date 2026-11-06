@@ -343,6 +343,10 @@ internal fun BitcoinHistoryDialog(
         if (running) Text(status.message, Modifier.testTag("history-progress"))
         if (failed) {
             Text("History refresh did not finish. Saved accepted records are retained; you can retry.")
+            // The reason is shown here so the details view explains the failure instead of only reopening the screen.
+            (if (status.phase == SyncPhase.ERROR) status.message else data.sourceStatus.lastError)?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("history-error"))
+            }
         }
         Button(enabled = consent && !busy && !running, modifier = Modifier.fillMaxWidth().testTag("history-refresh"), onClick = {
             save(true, false)

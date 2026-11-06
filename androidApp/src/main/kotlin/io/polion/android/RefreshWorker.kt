@@ -57,8 +57,10 @@ class RefreshWorker(
             recoverHistory: Boolean = false,
             ensureActive: () -> Unit = {},
             onProgress: (String) -> Unit = {},
-        ): SyncStatus =
-            try {
+        ): SyncStatus {
+            // The stage and exception class name the failing step without revealing addresses or provider payloads.
+            var stage = "setup"
+            return try {
                 val file = context.getDatabasePath("portfolio.sqlite")
                 file.parentFile?.mkdirs()
                 AndroidSqliteDatabase(file.path).use { db ->
@@ -83,6 +85,7 @@ class RefreshWorker(
                                     },
                                 ),
                             )
+                        stage = if (walletId != null) "discovery" else "history"
                         val discoveryNotice =
                             if (walletId != null) {
                                 app
@@ -106,6 +109,7 @@ class RefreshWorker(
                                 "Bitcoin order verified. Mixed-source chronology may still require review.",
                             )
                         }
+                        stage = "history"
                         val states =
                             app.refreshBitcoin(transport, recoverHistory = recoverHistory, providerEndpoint = endpoint) { progress ->
                                 val detail =
@@ -145,8 +149,9 @@ class RefreshWorker(
                 SyncStatus(
                     SyncPhase.ERROR,
                     (failure as? BitcoinProviderException)?.reason?.userMessage
-                        ?: "Could not finish sync. Check storage and provider, then retry.",
+                        ?: "Could not finish sync during $stage (${failure::class.java.simpleName}). Saved data is unchanged; retry.",
                 )
             }
+        }
     }
 }
