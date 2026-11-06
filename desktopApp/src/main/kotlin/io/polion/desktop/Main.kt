@@ -46,7 +46,7 @@ internal fun discoverWalletStatus(
                     onProgress("Discovering wallet · address queries answered: $queries")
                 }
             }
-        val result = application.discoverBitcoinWallet(walletId, discoveryTransport)
+        val result = application.discoverBitcoinWallet(walletId, discoveryTransport, providerEndpoint = providerEndpoint)
         val states =
             application.refreshBitcoin(transport, providerEndpoint = providerEndpoint) { progress ->
                 onProgress(
@@ -65,7 +65,11 @@ internal fun discoverWalletStatus(
         } else {
             SyncStatus(
                 SyncPhase.SUCCESS,
-                "Wallet discovery complete: ${result.addresses} addresses checked; coverage remains unverified.",
+                listOfNotNull(
+                    "Wallet discovery complete: ${result.addresses} addresses checked, ${result.usedAddresses} used; " +
+                        "coverage remains unverified.",
+                    result.notice,
+                ).joinToString(" "),
             )
         }
     }.getOrElse {
