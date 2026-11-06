@@ -126,10 +126,10 @@ fun PolionApp(
     }
     PolionTheme(appearance) {
         Surface(Modifier.fillMaxSize(), color = Paper) {
+            // The product stays composed under the lock, so in-progress forms and selections survive a lock cycle.
+            OnboardingProduct(application, platform, appearance) { selected -> appearance = selected }
             if (locked) {
-                LockScreen(platform)
-            } else {
-                OnboardingProduct(application, platform, appearance) { selected -> appearance = selected }
+                Surface(Modifier.fillMaxSize(), color = Paper) { LockScreen(platform) }
             }
         }
     }
@@ -246,6 +246,8 @@ private fun Product(
     }
     var modelManual by rememberSaveable { mutableStateOf(false) }
     val modelDraftState = rememberSaveableStateHolder()
+    // Drafts are scoped to their starting context, so an entry opened from one coin never reuses another coin's draft.
+    val modelDraftScope = modelEditingId ?: "manual-draft:${manualAsset?.value.orEmpty()}"
     val modelWorkspaceState = rememberSaveableStateHolder()
     var modelReturnPage by rememberSaveable { mutableStateOf(Page.OVERVIEW.name) }
     var advancedOrigin by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
@@ -1373,7 +1375,7 @@ private fun Product(
             }
         }
         if (modelAdd && snapshot != null && (modelEditingId == null || modelEditingDraft?.id?.value == modelEditingId)) {
-            modelDraftState.SaveableStateProvider(modelEditingId ?: "manual-draft") {
+            modelDraftState.SaveableStateProvider(modelDraftScope) {
                 TransactionEntry(
                     app,
                     host,
@@ -1389,7 +1391,7 @@ private fun Product(
                     },
                     onSaved = {
                         modelAdd = false
-                        modelDraftState.removeState(modelEditingId ?: "manual-draft")
+                        modelDraftState.removeState(modelDraftScope)
                         modelEditingId = null
                         modelEditingDraft = null
                         execute("Transaction saved on this device") {}
@@ -2302,6 +2304,12 @@ internal fun money(
 private fun date(millis: Long) = Instant.fromEpochMilliseconds(millis).toString().take(10)
 
 private fun newId(prefix: String) = "$prefix-${Clock.System.now().toEpochMilliseconds()}-${kotlin.random.Random.nextInt(1_000_000)}"
+
+/** Running, failed or interrupted work is shown; a finished success is not kept as a permanent banner. */
+internal fun shouldShowSyncBanner(
+    status: SyncStatus,
+    saved: SourceStatus?,
+): Boolean = status.phase == SyncPhase.SYNCING || status.phase == SyncPhase.ERROR || saved?.interrupted == true
 
 @Composable
 internal fun SyncBanner(

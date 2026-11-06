@@ -376,7 +376,7 @@ internal fun ModelWorkspace(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
-        if (page != Page.ACCOUNTS && (syncStatus.phase != SyncPhase.IDLE || data?.sourceStatus?.interrupted == true)) {
+        if (page != Page.ACCOUNTS && shouldShowSyncBanner(syncStatus, data?.sourceStatus)) {
             SyncBanner(syncStatus, data?.sourceStatus, onSyncDetails)
         }
         if (data == null) {

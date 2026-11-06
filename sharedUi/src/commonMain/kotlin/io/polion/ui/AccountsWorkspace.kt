@@ -70,7 +70,7 @@ internal fun AccountsWorkspace(
         }
     }
     Column {
-        if (sync.phase != SyncPhase.IDLE || data.sourceStatus.interrupted) {
+        if (shouldShowSyncBanner(sync, data.sourceStatus)) {
             val operation =
                 when (sync.operation) {
                     SyncOperation.HISTORY -> "Wallet history"
