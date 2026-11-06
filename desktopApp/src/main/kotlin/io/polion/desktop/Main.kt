@@ -415,10 +415,10 @@ internal class DesktopHost(
                     else ->
                         SyncStatus(
                             SyncPhase.SUCCESS,
-                            if (recoverHistory) {
-                                "History recovery complete; coverage remains unverified"
-                            } else {
-                                "Sync complete; coverage remains unverified"
+                            when {
+                                recoverHistory -> "History recovery complete; coverage remains unverified"
+                                application.lastRefreshSkipped() -> "Checked for new activity; none found."
+                                else -> "Sync complete; coverage remains unverified"
                             },
                         )
                 }

@@ -23,6 +23,7 @@ import io.polion.testing.utxoResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -59,10 +60,35 @@ class BitcoinChainAcceptanceTest {
 
         private fun canonical(height: Long): String = changedBlocks[height] ?: blockHash(height)
 
-        private fun funding(): String =
-            """{"txid":"$txid","vin":[{"is_coinbase":true}],"vout":[{"scriptpubkey_address":"$address","value":1000}],"fee":0,"status":{"confirmed":true,"block_time":1,"block_height":100,"block_hash":"${blockHash(
-                100,
-            )}"}}"""
+        /** A second confirmed transaction in block 105 that the provider reports once [extraTransaction] is set. */
+        var extraTransaction = false
+
+        /** An unconfirmed transaction paying the address that the provider reports once [pendingTransaction] is set. */
+        var pendingTransaction = false
+
+        private fun transaction(
+            id: String,
+            height: Long,
+            value: Long,
+        ): String =
+            """
+            {"txid":"$id","vin":[{"is_coinbase":true}],"vout":[{"scriptpubkey_address":"$address","value":$value}],"fee":0,
+            "status":{"confirmed":true,"block_time":1,"block_height":$height,"block_hash":"${blockHash(height)}"}}
+            """.trimIndent().replace("\n", "")
+
+        private fun funding(): String = transaction(txid, 100, 1000)
+
+        private fun chainPayloads(): List<String> {
+            val later = transaction("c".repeat(64), 105, 500).takeIf { extraTransaction }
+            return listOfNotNull(later, funding())
+        }
+
+        private fun pending(): String =
+            """
+            {"txid":"${"d".repeat(64)}","vin":[{"txid":"${"e".repeat(64)}","vout":0,
+            "prevout":{"scriptpubkey_address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT","value":1000}}],
+            "vout":[{"scriptpubkey_address":"$address","value":250}],"fee":750,"status":{"confirmed":false}}
+            """.trimIndent().replace("\n", "")
 
         val transport =
             EsploraTransport { path ->
@@ -71,11 +97,12 @@ class BitcoinChainAcceptanceTest {
                     path == "/blocks/tip/hash" -> canonical(tipHeight)
                     path == "/block/${canonical(tipHeight)}" -> """{"id":"${canonical(tipHeight)}","height":$tipHeight}"""
                     path.startsWith("/block-height/") -> canonical(path.removePrefix("/block-height/").toLong())
-                    path == "/address/$address" -> """{"chain_stats":{"tx_count":1},"mempool_stats":{"tx_count":0}}"""
-                    path == "/address/$address/txs/mempool" -> "[]"
-                    path == "/address/$address/txs/chain" -> "[${funding()}]"
+                    path == "/address/$address" ->
+                        """{"chain_stats":{"tx_count":${if (extraTransaction) 2 else 1}},"mempool_stats":{"tx_count":${if (pendingTransaction) 1 else 0}}}"""
+                    path == "/address/$address/txs/mempool" -> if (pendingTransaction) "[${pending()}]" else "[]"
+                    path == "/address/$address/txs/chain" -> "[${chainPayloads().joinToString(",")}]"
                     path == "/address/$address/txs/chain/$txid" -> "[]"
-                    path == "/address/$address/utxo" -> utxoResponse(address, listOf(funding()))
+                    path == "/address/$address/utxo" -> utxoResponse(address, chainPayloads())
                     else -> error("Unexpected provider request: $path")
                 }
             }
@@ -96,6 +123,12 @@ class BitcoinChainAcceptanceTest {
             "bitcoin_graph_owned_outputs",
         ).associateWith { table -> db.query("SELECT * FROM $table ORDER BY rowid") }
 
+    /**
+     * The accepted ledger and graph. Raw provider observations are evidence that a scan stores before it is applied, so a
+     * rejected scan may add them while the accepted state stays unchanged.
+     */
+    private fun acceptedLedgerAndGraph(db: JvmSqliteDatabase) = acceptedData(db).filterKeys { !it.startsWith("raw_") }
+
     private fun initialScan(
         app: PortfolioApplication,
         db: JvmSqliteDatabase,
@@ -112,6 +145,76 @@ class BitcoinChainAcceptanceTest {
                 .block,
         )
         provider.calls.clear()
+    }
+
+    @Test
+    fun unchangedProviderSkipsHistoryAndLeavesAcceptedDataIdentical() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            val before = acceptedData(db)
+
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+
+            assertTrue(app.lastRefreshSkipped())
+            assertEquals(before, acceptedData(db))
+            assertEquals(1, app.snapshot().activityTotal)
+            assertNotNull(app.sourceLastSuccessMillis())
+            assertEquals(listOf("/address/$address"), provider.calls.filter { it.startsWith("/address/") })
+            assertTrue(provider.calls.none { it.endsWith("/txs/chain") || it.endsWith("/utxo") }, provider.calls.toString())
+        }
+    }
+
+    @Test
+    fun newTransactionForcesFullScanThatAppliesIt() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+            provider.extraTransaction = true
+
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+
+            assertFalse(app.lastRefreshSkipped())
+            assertTrue("/address/$address/txs/chain" in provider.calls, provider.calls.toString())
+            assertEquals(2, app.snapshot().activityTotal)
+        }
+    }
+
+    @Test
+    fun pendingTransactionAtLastScanForcesFullScanOnNextRefresh() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            provider.pendingTransaction = true
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            provider.calls.clear()
+
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+
+            assertFalse(app.lastRefreshSkipped())
+            assertTrue("/address/$address/txs/chain" in provider.calls, provider.calls.toString())
+        }
+    }
+
+    @Test
+    fun changedProviderOrRecoveryForcesFullScan() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            initialScan(app, db, provider)
+
+            app.setSourceEndpoint("https://other.example/api")
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertFalse(app.lastRefreshSkipped())
+            assertTrue("/address/$address/txs/chain" in provider.calls, provider.calls.toString())
+
+            provider.calls.clear()
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport, recoverHistory = true))
+            assertFalse(app.lastRefreshSkipped())
+            assertTrue("/address/$address/txs/chain" in provider.calls, provider.calls.toString())
+        }
     }
 
     @Test
@@ -166,6 +269,7 @@ class BitcoinChainAcceptanceTest {
             assertEquals(listOf(250L, 100L), repository.anchors().map { it.height })
             provider.calls.clear()
             provider.tipHeight = 251
+            provider.extraTransaction = true
             assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
             assertTrue("/block-height/110" !in provider.calls)
             assertTrue("/block-height/250" in provider.calls)
@@ -264,11 +368,16 @@ class BitcoinChainAcceptanceTest {
             PortfolioApplication(restored) { 15552000000L }
             PortableBackup.discover(restored).restoreToStaging(restored, archive)
             val app = PortfolioApplication(restored) { 15552000000L }
-            val provider = ChainProvider().apply { tipHeight = 109 }
+            val provider =
+                ChainProvider().apply {
+                    tipHeight = 109
+                    extraTransaction = true
+                }
             assertEquals(listOf(109L, 100L), BitcoinGraphRepository(restored).anchors().map { it.height })
             assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
-            assertEquals(4, BitcoinGraphRepository(restored).snapshots().size)
-            assertEquals(1, app.snapshot().activityTotal)
+            // The restored snapshot count is 2: the source's no-change refresh skipped and recorded no snapshot.
+            assertEquals(3, BitcoinGraphRepository(restored).snapshots().size)
+            assertEquals(2, app.snapshot().activityTotal)
         }
     }
 
@@ -312,12 +421,13 @@ class BitcoinChainAcceptanceTest {
             val provider = ChainProvider()
             initialScan(app, db, provider)
             provider.tipHeight = 500
+            provider.extraTransaction = true
 
             assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
             val repository = BitcoinGraphRepository(db)
             assertEquals(2, repository.snapshots().size)
             assertEquals(BitcoinBlockAnchor(500, blockHash(500)), repository.latest()?.anchor)
-            assertEquals(1, app.snapshot().activityTotal)
+            assertEquals(2, app.snapshot().activityTotal)
             assertTrue("/block-height/110" in provider.calls)
         }
     }
@@ -328,8 +438,9 @@ class BitcoinChainAcceptanceTest {
             val app = setUp(db)
             val provider = ChainProvider()
             initialScan(app, db, provider)
-            val before = acceptedData(db)
+            val before = acceptedLedgerAndGraph(db)
             provider.tipHeight = 111
+            provider.extraTransaction = true
             val movingChain =
                 EsploraTransport { path ->
                     provider.transport.get(path).also {
@@ -338,7 +449,7 @@ class BitcoinChainAcceptanceTest {
                 }
             val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(movingChain) }
             assertEquals(BitcoinProviderFailure.REORGANIZED, failure.reason)
-            assertEquals(before, acceptedData(db))
+            assertEquals(before, acceptedLedgerAndGraph(db))
             assertEquals(1, BitcoinGraphRepository(db).snapshots().size)
         }
     }
@@ -349,8 +460,9 @@ class BitcoinChainAcceptanceTest {
             val app = setUp(db)
             val provider = ChainProvider()
             initialScan(app, db, provider)
-            val before = acceptedData(db)
+            val before = acceptedLedgerAndGraph(db)
             provider.tipHeight = 111
+            provider.extraTransaction = true
             val interrupted =
                 EsploraTransport { path ->
                     if (path.endsWith("/utxo")) throw BitcoinProviderException(BitcoinProviderFailure.RATE_LIMITED)
@@ -359,14 +471,14 @@ class BitcoinChainAcceptanceTest {
             val interruptedFailure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(interrupted) }
             assertEquals(BitcoinProviderFailure.RATE_LIMITED, interruptedFailure.reason)
             assertEquals("1", db.query("SELECT COUNT(*) FROM bitcoin_scan_session").single().single())
-            assertEquals("1", db.query("SELECT COUNT(*) FROM bitcoin_scan_validated_blocks").single().single())
-            assertEquals(before, acceptedData(db))
+            assertEquals("2", db.query("SELECT COUNT(*) FROM bitcoin_scan_validated_blocks").single().single())
+            assertEquals(before, acceptedLedgerAndGraph(db))
 
             provider.tipHeight = 112
             provider.changedBlocks[111] = "e".repeat(64)
             val reorgFailure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(provider.transport) }
             assertEquals(BitcoinProviderFailure.REORGANIZED, reorgFailure.reason)
-            assertEquals(before, acceptedData(db))
+            assertEquals(before, acceptedLedgerAndGraph(db))
             BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
                 assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
             }
@@ -375,7 +487,7 @@ class BitcoinChainAcceptanceTest {
             assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
             assertTrue("/address/$address/txs/chain" in provider.calls)
             assertEquals(BitcoinBlockAnchor(112, blockHash(112)), BitcoinGraphRepository(db).latest()?.anchor)
-            assertEquals(1, app.snapshot().activityTotal)
+            assertEquals(2, app.snapshot().activityTotal)
         }
     }
 
@@ -385,13 +497,14 @@ class BitcoinChainAcceptanceTest {
             val app = setUp(db)
             val provider = ChainProvider()
             initialScan(app, db, provider)
-            val before = acceptedData(db)
+            val before = acceptedLedgerAndGraph(db)
             provider.tipHeight = 111
             provider.changedBlocks[100] = "c".repeat(64)
+            provider.extraTransaction = true
 
             val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(provider.transport, verifyBlockPositions = false) }
             assertEquals(BitcoinProviderFailure.REORGANIZED, failure.reason)
-            assertEquals(before, acceptedData(db))
+            assertEquals(before, acceptedLedgerAndGraph(db))
             assertTrue("/block-height/100" in provider.calls)
         }
     }
@@ -427,9 +540,10 @@ class BitcoinChainAcceptanceTest {
             val app = setUp(db)
             val provider = ChainProvider()
             initialScan(app, db, provider)
-            val before = acceptedData(db)
+            val before = acceptedLedgerAndGraph(db)
             val endpoints = app.bitcoinProviderEndpoints()
             provider.tipHeight = 111
+            provider.extraTransaction = true
             val changingEndpoint =
                 EsploraTransport { path ->
                     provider.transport.get(path).also {
@@ -438,7 +552,7 @@ class BitcoinChainAcceptanceTest {
                 }
             val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(changingEndpoint) }
             assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
-            assertEquals(before, acceptedData(db))
+            assertEquals(before, acceptedLedgerAndGraph(db))
             assertEquals(endpoints, app.bitcoinProviderEndpoints())
             BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
                 assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
@@ -457,9 +571,10 @@ class BitcoinChainAcceptanceTest {
             val app = setUp(db)
             val provider = ChainProvider()
             initialScan(app, db, provider)
-            val before = acceptedData(db)
+            val before = acceptedLedgerAndGraph(db)
             val originalEndpoint = app.sourceEndpoint()
             provider.tipHeight = 111
+            provider.extraTransaction = true
             val interrupted =
                 EsploraTransport { path ->
                     if (path.endsWith("/utxo")) throw BitcoinProviderException(BitcoinProviderFailure.RATE_LIMITED)
@@ -476,7 +591,7 @@ class BitcoinChainAcceptanceTest {
                 }
             assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
             assertEquals(emptyList(), provider.calls)
-            assertEquals(before, acceptedData(db))
+            assertEquals(before, acceptedLedgerAndGraph(db))
             BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
                 assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())
             }
@@ -489,8 +604,9 @@ class BitcoinChainAcceptanceTest {
             val app = setUp(db)
             val provider = ChainProvider()
             initialScan(app, db, provider)
-            val before = acceptedData(db)
+            val before = acceptedLedgerAndGraph(db)
             provider.tipHeight = 111
+            provider.extraTransaction = true
             val changingScope =
                 EsploraTransport { path ->
                     provider.transport.get(path).also {
@@ -499,7 +615,7 @@ class BitcoinChainAcceptanceTest {
                 }
             val failure = assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(changingScope) }
             assertEquals(BitcoinProviderFailure.HISTORY_CHANGED, failure.reason)
-            assertEquals(before, acceptedData(db))
+            assertEquals(before, acceptedLedgerAndGraph(db))
             assertEquals(1, BitcoinGraphRepository(db).snapshots().size)
             BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
                 assertEquals("0", db.query("SELECT COUNT(*) FROM $table").single().single())

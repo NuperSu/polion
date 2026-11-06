@@ -89,9 +89,16 @@ import io.polion.core.sync.SyncJob
 import io.polion.core.sync.SyncOrchestrator
 import io.polion.core.sync.SyncProvider
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -986,6 +993,8 @@ class PortfolioApplication(
             )
         val acceptedAnchors = bitcoinGraph.anchors(addresses)
         val previousCheckpoint = acceptedAnchors.maxByOrNull { it.height }
+        // A non-canonical checkpoint means the accepted history may have changed, so the skip below must not run.
+        var checkpointCanonical = true
         if (!recoverHistory && previousCheckpoint != null) {
             require(previousCheckpoint.height <= anchorHeight) {
                 throw BitcoinProviderException(BitcoinProviderFailure.LAGGING_CHAIN)
@@ -993,6 +1002,7 @@ class PortfolioApplication(
             val canonical = transport.get("/block-height/${previousCheckpoint.height}").trim()
             require(canonical.matches(Regex("[0-9a-f]{64}"))) { "Invalid checkpoint response" }
             if (canonical != previousCheckpoint.hash) {
+                checkpointCanonical = false
                 val continuity =
                     try {
                         io.polion.core.bitcoin
@@ -1009,6 +1019,20 @@ class PortfolioApplication(
         }
         if (recoverHistory) bitcoinStage.clear()
         val pending = bitcoinStage.session()
+        if (pending == null &&
+            !recoverHistory &&
+            checkpointCanonical &&
+            previousCheckpoint != null &&
+            acceptedScanUnchanged(fingerprint, addresses.keys, verifyBlockPositions) { address -> summary(address) }
+        ) {
+            db.transaction {
+                putSetting("source_last_refresh_skipped", "true")
+                putSetting("source_last_success", now().toString())
+                db.execute("DELETE FROM application_settings WHERE key='source_error'")
+            }
+            invalidate()
+            return addresses.keys.map { JobState.COMPLETED }
+        }
         val resumable = pending != null && pending.fingerprint == fingerprint && pending.anchorHeight <= anchorHeight
         if (!resumable) {
             bitcoinStage.createSession(
@@ -1123,6 +1147,7 @@ class PortfolioApplication(
             require(
                 scanned.all { scan -> summary(scan.address) == bitcoinStage.seenCounts(scan.address) },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+            val acceptedCounts = scanned.associate { it.address to bitcoinStage.seenCounts(it.address) }
             require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
@@ -1209,6 +1234,8 @@ class PortfolioApplication(
                 putSetting("utxo_comparison_available", (mismatchCount != null).toString())
                 mismatchCount?.let { putSetting("utxo_mismatch_count", it.toString()) }
                 bitcoinStage.clearInTransaction()
+                putSetting("bitcoin_accepted_scan", acceptedScanJson(fingerprint, acceptedCounts, verifyBlockPositions))
+                putSetting("source_last_refresh_skipped", "false")
                 putSetting("source_last_success", now().toString())
                 db.execute("DELETE FROM application_settings WHERE key='source_error'")
             }
@@ -1309,6 +1336,77 @@ class PortfolioApplication(
 
     /** Epoch millis of the last successful wallet refresh, or null when none has completed. */
     fun sourceLastSuccessMillis(): Long? = setting("source_last_success")?.toLongOrNull()
+
+    /** True when the last wallet refresh found no change and left the accepted ledger as it was. */
+    fun lastRefreshSkipped(): Boolean = setting("source_last_refresh_skipped") == "true"
+
+    /**
+     * Clears the last-success marker and the accepted-scan snapshot together. Any change to accepted wallet state calls
+     * this, so the skip path never trusts a snapshot that no longer describes the ledger.
+     */
+    private fun forgetSourceSuccess() {
+        db.execute("DELETE FROM application_settings WHERE key IN ('source_last_success','bitcoin_accepted_scan')")
+    }
+
+    private data class AcceptedScan(
+        val fingerprint: String,
+        /** Per address: (confirmed transaction count, mempool transaction count) seen by the last applied scan. */
+        val counts: Map<String, Pair<Long, Long>>,
+        /** Whether the last applied scan verified transaction block positions. */
+        val blockPositionsVerified: Boolean,
+    )
+
+    private fun acceptedScan(): AcceptedScan? {
+        val text = setting("bitcoin_accepted_scan") ?: return null
+        return runCatching {
+            val root = Json.parseToJsonElement(text).jsonObject
+            AcceptedScan(
+                root.getValue("fingerprint").jsonPrimitive.content,
+                root.getValue("addresses").jsonObject.mapValues { (_, pair) ->
+                    val counts = pair.jsonArray
+                    counts[0].jsonPrimitive.long to counts[1].jsonPrimitive.long
+                },
+                root.getValue("blockPositionsVerified").jsonPrimitive.boolean,
+            )
+        }.getOrNull()
+    }
+
+    private fun acceptedScanJson(
+        fingerprint: String,
+        counts: Map<String, Pair<Long, Long>>,
+        blockPositionsVerified: Boolean,
+    ): String =
+        buildJsonObject {
+            put("fingerprint", fingerprint)
+            put("blockPositionsVerified", blockPositionsVerified)
+            putJsonObject("addresses") {
+                counts.forEach { (address, pair) ->
+                    putJsonArray(address) {
+                        add(pair.first)
+                        add(pair.second)
+                    }
+                }
+            }
+        }.toString()
+
+    /**
+     * True when the last applied scan covers the same provider and addresses, recorded no mempool activity, and the
+     * provider still reports the same chain and mempool counts for every address. While the accepted anchor is
+     * canonical, nothing at or below it has changed, and any new confirmed or pending transaction changes a count.
+     * A refresh that asks for block-position verification is never skipped by a scan that did not verify them.
+     */
+    private fun acceptedScanUnchanged(
+        fingerprint: String,
+        addresses: Set<String>,
+        verifyBlockPositions: Boolean,
+        liveCounts: (String) -> Pair<Long, Long>,
+    ): Boolean {
+        val accepted = acceptedScan() ?: return false
+        if (accepted.fingerprint != fingerprint || accepted.counts.keys != addresses) return false
+        if (verifyBlockPositions && !accepted.blockPositionsVerified) return false
+        if (accepted.counts.values.any { it.second != 0L }) return false
+        return addresses.all { address -> liveCounts(address) == accepted.counts.getValue(address) }
+    }
 
     fun priceSourceConsent(): Boolean = setting("price_source_consent") == "true"
 
@@ -1889,7 +1987,7 @@ class PortfolioApplication(
                     db.execute("DELETE FROM application_settings WHERE key=?", listOf(key))
                 }
             }
-            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+            forgetSourceSuccess()
         }
         invalidate()
     }
@@ -1912,7 +2010,7 @@ class PortfolioApplication(
             "Address assigned to multiple accounts"
         }
         ownership.replace(catalog.copy(accounts = catalog.accounts + account, targets = catalog.targets + normalized))
-        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        forgetSourceSuccess()
     }
 
     private fun normalizeTarget(value: TrackingTarget): TrackingTarget =
@@ -2004,7 +2102,7 @@ class PortfolioApplication(
                     ),
                 )
                 if (consentAccepted) putSetting("source_consent", "true")
-                db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+                forgetSourceSuccess()
                 wallet.id
             }
         invalidate()
@@ -2040,7 +2138,7 @@ class PortfolioApplication(
                     } + normalized,
             )
         }
-        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        forgetSourceSuccess()
     }
 
     /**
@@ -2166,7 +2264,7 @@ class PortfolioApplication(
                 discoveryConflict(fresh, child.identity.canonicalKey, target.accountId, walletId, child.id)?.let { throw it }
             }
             ownership.replaceInTransaction(fresh.copy(targets = fresh.targets.filterNot { it.id in childIds } + children))
-            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+            forgetSourceSuccess()
         }
         invalidate()
         return BitcoinWalletDiscovery(children.size, used, notice)

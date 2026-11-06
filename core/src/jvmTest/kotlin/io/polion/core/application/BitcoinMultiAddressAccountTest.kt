@@ -120,8 +120,9 @@ class BitcoinMultiAddressAccountTest {
                 assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), app.refreshBitcoin(provider.transport))
                 assertComplete(db, app, 1)
             }
+            // The repeat finds unchanged counts for both addresses, so it fetches no history again.
             addresses.forEach { address ->
-                assertEquals(2, provider.historyCalls.count { it == "/address/$address/txs/chain" })
+                assertEquals(1, provider.historyCalls.count { it == "/address/$address/txs/chain" })
             }
         }
     }

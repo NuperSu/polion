@@ -162,8 +162,9 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
         app.refreshBitcoin(transport)
         assertEquals(0, app.snapshot().sourceStatus.utxoMismatchCount)
         assertEquals(verified, app.accountingReport())
+        // The advisory UTXO comparison runs during a full scan; an unchanged refresh keeps the previous result.
         omitProviderUtxos = true
-        app.refreshBitcoin(transport)
+        app.refreshBitcoin(transport, recoverHistory = true)
         assertTrue(app.snapshot().sourceStatus.utxoMismatchCount > 0)
         assertEquals(
             "100",
@@ -175,7 +176,7 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 .toString(),
         )
         omitProviderUtxos = false
-        app.refreshBitcoin(transport)
+        app.refreshBitcoin(transport, recoverHistory = true)
         assertEquals(0, app.snapshot().sourceStatus.utxoMismatchCount)
         val archive = app.exportBackup("fixture-password".toCharArray())
         openDatabase().use { staging ->

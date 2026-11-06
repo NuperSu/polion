@@ -26,9 +26,13 @@ fun verifyAccountHistoryWorkflow(openDatabase: () -> SqliteDatabase) {
     val wallet = TrackingTargetId("public-source")
     var now = 1_700_000_000_000L
     var failing = false
-    val summary =
+
+    // Refresh skips unchanged addresses, so the failing step reports a new transaction to make the scan fetch history.
+    var reportedTransactions = 1
+
+    fun summary() =
         """
-        {"chain_stats":{"tx_count":1,"funded_txo_count":1,"funded_txo_sum":143332,"spent_txo_count":0,"spent_txo_sum":0},
+        {"chain_stats":{"tx_count":$reportedTransactions,"funded_txo_count":1,"funded_txo_sum":143332,"spent_txo_count":0,"spent_txo_sum":0},
         "mempool_stats":{"tx_count":0,"funded_txo_count":0,"funded_txo_sum":0,"spent_txo_count":0,"spent_txo_sum":0}}
         """.trimIndent()
     val transport =
@@ -37,7 +41,7 @@ fun verifyAccountHistoryWorkflow(openDatabase: () -> SqliteDatabase) {
                 path == "/blocks/tip/height" -> "800000"
                 path == "/block/$hash" -> """{"id":"$hash","height":800000}"""
                 path == "/blocks/tip/hash" || path == "/block-height/800000" -> hash
-                path == "/address/$address" -> summary
+                path == "/address/$address" -> summary()
                 path == "/address/$address/txs/mempool" -> "[]"
                 path == "/address/$address/txs/chain" -> {
                     check(!failing) { "fixture interruption" }
@@ -84,10 +88,12 @@ fun verifyAccountHistoryWorkflow(openDatabase: () -> SqliteDatabase) {
         val csv = app.exportCsv()
         now += 1000
         failing = true
+        reportedTransactions = 2
         check(app.refreshBitcoin(transport).any { it != JobState.COMPLETED })
         check(app.snapshot().activities.map { it.activity.id } == ids)
         check(app.accountOverview().single { it.account.id == account }.accepted == accepted.accepted)
         failing = false
+        reportedTransactions = 1
         val reopened = PortfolioApplication(db) { now }
         check(reopened.refreshBitcoin(transport).all { it == JobState.COMPLETED })
         check(reopened.exportCsv() == csv)
