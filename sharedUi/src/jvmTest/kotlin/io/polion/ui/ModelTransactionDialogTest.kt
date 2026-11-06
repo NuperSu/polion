@@ -114,6 +114,7 @@ class ModelTransactionDialogTest {
             onNodeWithTag("choose-csv").assertIsNotEnabled()
             onNodeWithTag("choose-exchange").assertIsNotEnabled()
             onNodeWithTag("choose-manual").performClick()
+            onNodeWithText("Asset: BTC", substring = true).performClick()
             onNodeWithText("ETH").performClick()
             onNodeWithText("Sell").performClick()
             onNodeWithText("Amount (Sell)").performScrollTo().performTextInput("1.25")

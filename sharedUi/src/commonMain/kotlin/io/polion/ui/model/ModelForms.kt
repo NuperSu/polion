@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -26,7 +29,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -242,12 +247,23 @@ fun ModelTransactionDialog(
                             actions.onImport,
                         )
                     } else {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            state.assets.forEach { asset ->
-                                FormCapsule(
-                                    asset.ticker,
-                                    asset.id == state.selectedAsset,
-                                ) { actions.onAsset(asset.id) }
+                        // A dropdown scales to many currencies and coins; a row of capsules does not.
+                        var assetMenu by remember { mutableStateOf(false) }
+                        Box {
+                            FormCapsule(
+                                "Asset: ${state.assets.find { it.id == state.selectedAsset }?.ticker ?: state.selectedAsset} ▾",
+                                true,
+                            ) { assetMenu = true }
+                            DropdownMenu(assetMenu, { assetMenu = false }) {
+                                state.assets.forEach { asset ->
+                                    DropdownMenuItem(
+                                        text = { Text(asset.ticker) },
+                                        onClick = {
+                                            assetMenu = false
+                                            actions.onAsset(asset.id)
+                                        },
+                                    )
+                                }
                             }
                         }
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
