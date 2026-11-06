@@ -165,7 +165,8 @@ private class AndroidHost(
         password: String,
         onResult: (String) -> Unit,
     ) {
-        executor.execute {
+        // Restore replaces the database file, so it shares the sync thread and cannot overlap a running scan.
+        RefreshWorker.syncExecutor.execute {
             var staging: java.nio.file.Path? = null
             var result = "Could not restore backup"
             var swapped = false

@@ -22,7 +22,7 @@ open class BitcoinRefreshService : Service() {
 
     @Volatile private var stopping = false
 
-    protected open val workExecutor: java.util.concurrent.Executor get() = RefreshWorker.executor
+    protected open val workExecutor: java.util.concurrent.Executor get() = RefreshWorker.syncExecutor
 
     override fun onBind(intent: Intent?): IBinder? = null
 

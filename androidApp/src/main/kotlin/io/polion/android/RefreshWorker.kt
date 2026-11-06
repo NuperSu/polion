@@ -29,7 +29,7 @@ class RefreshWorker(
         setForegroundAsync(SyncNotification.foreground(applicationContext)).get()
         syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Fetching public history…")
         val status =
-            executor
+            syncExecutor
                 .submit<SyncStatus> {
                     performRefresh(applicationContext, ensureActive = {
                         if (isStopped) throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
@@ -41,7 +41,11 @@ class RefreshWorker(
     }
 
     companion object {
+        /** UI and database workflows; a long Bitcoin scan must never occupy this thread. */
         val executor = Executors.newSingleThreadExecutor()
+
+        /** All Bitcoin sync work (foreground service and periodic worker) runs here, one scan at a time. */
+        val syncExecutor = Executors.newSingleThreadExecutor()
         val dataRevision = MutableStateFlow(0L)
         val syncStatus = MutableStateFlow(SyncStatus())
 
@@ -79,13 +83,18 @@ class RefreshWorker(
                                     },
                                 ),
                             )
-                        if (walletId != null) {
-                            app.discoverBitcoinWallet(
-                                io.polion.core.model
-                                    .TrackingTargetId(walletId),
-                                transport,
-                            )
-                        }
+                        val discoveryNotice =
+                            if (walletId != null) {
+                                app
+                                    .discoverBitcoinWallet(
+                                        io.polion.core.model
+                                            .TrackingTargetId(walletId),
+                                        transport,
+                                        providerEndpoint = endpoint,
+                                    ).notice
+                            } else {
+                                null
+                            }
                         if (verifyOrder) {
                             app.verifyAccountingOrder(transport) { progress ->
                                 val detail = "Verifying blocks ${progress.blocksResolved}/${progress.totalBlocks}"
@@ -121,11 +130,13 @@ class RefreshWorker(
                             else ->
                                 SyncStatus(
                                     SyncPhase.SUCCESS,
-                                    if (recoverHistory) {
-                                        "History recovery complete; coverage remains unverified"
-                                    } else {
-                                        "Sync complete; coverage remains unverified"
-                                    },
+                                    (
+                                        if (recoverHistory) {
+                                            "History recovery complete; coverage remains unverified"
+                                        } else {
+                                            "Sync complete; coverage remains unverified"
+                                        }
+                                    ) + (discoveryNotice?.let { " $it" } ?: ""),
                                 )
                         }
                     }
