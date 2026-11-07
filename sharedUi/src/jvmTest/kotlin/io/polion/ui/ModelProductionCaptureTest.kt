@@ -102,7 +102,6 @@ class ModelProductionCaptureTest {
                         capture("insights")
                         for (heading in listOf(
                             "Portfolio Performance",
-                            "Decisions",
                             "Portfolio Diversity",
                             "Gains Reporting",
                             "Asset Location",

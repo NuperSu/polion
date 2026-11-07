@@ -57,7 +57,7 @@ import io.polion.ui.model.ModelCoinIdentity
 import io.polion.ui.model.ModelCoinTab
 import io.polion.ui.model.ModelHoldingRow
 import io.polion.ui.model.ModelInsights
-import io.polion.ui.model.ModelInsightsState
+import io.polion.ui.model.ModelInsightsAction
 import io.polion.ui.model.ModelMain
 import io.polion.ui.model.ModelMainAction
 import io.polion.ui.model.ModelMetric
@@ -271,10 +271,10 @@ internal fun ModelWorkspace(
     var expanded by rememberSaveable { mutableStateOf(true) }
     var coinRange by rememberSaveable { mutableStateOf("1D") }
     var accounting by remember(app, selectedPortfolio, snapshot?.currency) { mutableStateOf<AccountingView?>(null) }
-    // The same report feeds the Portfolio performance cards and an owned coin's cost and gains.
+    // The same report feeds Portfolio performance, Insights gains and an owned coin's cost and gains.
     LaunchedEffect(app, selectedPortfolio, snapshot?.currency, selectedAsset?.asset, dataRevision, page) {
         val ownedCoin = selectedAsset != null && snapshot?.valuations?.any { it.asset == selectedAsset.asset } == true
-        if (ownedCoin || (page == Page.OVERVIEW && selectedAsset == null && snapshot != null)) {
+        if (ownedCoin || ((page == Page.OVERVIEW || page == Page.REPORTS) && selectedAsset == null && snapshot != null)) {
             accountingLoading = true
             accountingError = false
             try {
@@ -286,6 +286,23 @@ internal fun ModelWorkspace(
             } finally {
                 accountingLoading = false
             }
+        }
+    }
+    var worthAsset by rememberSaveable { mutableStateOf<String?>(null) }
+    var insightsData by remember(app, selectedPortfolio) { mutableStateOf<InsightsData?>(null) }
+    val rangeStart = chart.firstOrNull()?.atMillis
+    val rangeEnd = chart.lastOrNull()?.atMillis
+    // Insights calculations follow the history range on screen, so every section covers the same period.
+    LaunchedEffect(app, page, selectedPortfolio, rangeStart, rangeEnd, dataRevision) {
+        if (page == Page.REPORTS && rangeStart != null && rangeEnd != null && rangeEnd > rangeStart) {
+            insightsData =
+                withContext(host.dispatcher) {
+                    InsightsData(
+                        runCatching { app.moneyWeightedReturn(selectedPortfolio, rangeStart, rangeEnd) }.getOrNull(),
+                        runCatching { app.activityInsights(selectedPortfolio, rangeStart, rangeEnd) }.getOrNull(),
+                        runCatching { app.analytics(rangeEnd, selectedPortfolio) }.getOrNull(),
+                    )
+                }
         }
     }
     var prices by remember(app, selectedAsset?.asset, snapshot?.currency, coinRange) {
@@ -1014,22 +1031,34 @@ internal fun ModelWorkspace(
                         Spacer(Modifier.height(88.dp))
                     }
                     Page.REPORTS -> {
+                        val labels = mapOf(-1 to "1H", 1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", -2 to "YTD", 365 to "1Y", 0 to "ALL")
                         ModelInsights(
-                            ModelInsightsState(
-                                balance =
-                                    (
-                                        pricingSummary(
-                                            data.valuations,
-                                        ).total?.let { money(it, data.currency) } ?: "—"
-                                    ).hiddenIf(amountsHidden),
-                                portfolio =
-                                    data.ownership.portfolios
-                                        .find { it.id == selectedPortfolio }
-                                        ?.label ?: "All portfolios",
+                            insightsState(
+                                data,
+                                chart,
+                                labels[period] ?: "",
+                                labels.values.toList(),
+                                data.ownership.portfolios
+                                    .find { it.id == selectedPortfolio }
+                                    ?.label ?: "All portfolios",
+                                insightsData,
+                                accounting,
+                                amountsHidden,
+                                chartStyle,
+                                worthAsset,
+                                chartLoading,
                             ),
                             wide,
-                        ) { }
+                        ) { action ->
+                            when (action) {
+                                is ModelInsightsAction.Range -> labels.entries.find { it.value == action.label }?.let { onPeriod(it.key) }
+                                is ModelInsightsAction.Style -> onChartStyle(action.style)
+                                is ModelInsightsAction.WorthAsset -> worthAsset = action.id
+                                is ModelInsightsAction.OpenAsset -> data.valuations.find { it.asset.value == action.id }?.let(onAsset)
+                            }
+                        }
                         TextButton(onClick = { onAdvanced(Page.REPORTS) }) { Text("Reporting and accounting tools") }
+                        Spacer(Modifier.height(24.dp))
                     }
                     Page.ACCOUNTS -> {
                         AccountsWorkspace(
