@@ -86,6 +86,7 @@ class SettingsMenuTest {
                     general = it
                 },
                 onBiometric = { calls += "biometric:$it" },
+                onCoingeckoKey = { calls += "coingecko:$it" },
             )
         runDesktopComposeUiTest(width = 390, height = 1600) {
             setContent {
@@ -130,11 +131,20 @@ class SettingsMenuTest {
             onNodeWithTag("settings-security").performClick()
             onNodeWithTag("settings-biometric").performClick()
             onNodeWithTag("settings-back").performClick()
+            onNodeWithTag("settings-keys").performClick()
+            onNodeWithText("Not set · public request limit").assertExists()
+            onNodeWithTag("settings-coingecko-key").performClick()
+            onNodeWithTag("settings-coingecko-key-field").performTextReplacement("bad key")
+            onNodeWithTag("settings-coingecko-key-save").assertIsNotEnabled()
+            onNodeWithTag("settings-coingecko-key-field").performTextReplacement("CG-abcdefghijklmnop")
+            onNodeWithTag("settings-coingecko-key-save").performClick()
+            onNodeWithTag("settings-back").performClick()
             onNodeWithTag("settings-support").performClick()
             onNodeWithTag("settings-help").performClick()
+            onNodeWithTag("help-markets").assertExists()
             onNodeWithTag("help-wallets").assertExists()
             onNodeWithTag("help-backups").assertExists()
-            assertEquals(listOf("appearance:light", "biometric:true"), calls)
+            assertEquals(listOf("appearance:light", "biometric:true", "coingecko:CG-abcdefghijklmnop"), calls)
             assertEquals(
                 GeneralPreferences(LandingPage.PORTFOLIO, AssetId("EUR"), false, true, "Work phone"),
                 saved.last(),

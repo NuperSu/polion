@@ -143,7 +143,6 @@ internal fun WorkflowDialog(
     var automaticPriceConsent by remember { mutableStateOf(false) }
     var automaticPortfolioPrices by remember { mutableStateOf(false) }
     var automaticPriceStatus by remember { mutableStateOf<String?>(null) }
-    var priceApiKey by remember { mutableStateOf("") }
     var priceDays by rememberSaveable { mutableIntStateOf(90) }
     var fetchingPrice by remember { mutableStateOf(false) }
     var priceMessage by remember { mutableStateOf<String?>(null) }
@@ -578,14 +577,18 @@ internal fun WorkflowDialog(
                     )
                     Text("Allow CoinGecko price requests", modifier = Modifier.padding(top = 12.dp))
                 }
-                SecretField("CoinGecko Demo API key (session only)", priceApiKey) { priceApiKey = it }
+                Text("An optional CoinGecko API key from Settings › API Keys raises the request limit.", fontSize = 13.sp)
                 Choice("Price history range", listOf(90 to "90 days · hourly", 365 to "365 days · daily"), priceDays) { priceDays = it }
                 Button(
                     onClick = {
                         fetchingPrice = true
                         scope.launch {
-                            withContext(host.dispatcher) { app.setPriceSourceConsent(priceConsent) }
-                            host.fetchPriceHistory(AssetId("bitcoin:btc"), data.currency, priceDays, priceApiKey) { message ->
+                            val apiKey =
+                                withContext(host.dispatcher) {
+                                    app.setPriceSourceConsent(priceConsent)
+                                    app.coingeckoApiKey().orEmpty()
+                                }
+                            host.fetchPriceHistory(AssetId("bitcoin:btc"), data.currency, priceDays, apiKey) { message ->
                                 fetchingPrice = false
                                 priceMessage = message
                                 notify(message)

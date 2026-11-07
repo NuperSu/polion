@@ -40,12 +40,23 @@ internal val helpTopics =
             ),
         ),
         HelpTopic(
+            "Markets",
+            listOf(
+                "Main lists the top 250 coins by market cap, trending coins and the day's biggest movers among those 250, " +
+                    "from CoinGecko. Lists refresh when you pull down on Main, and with Auto-sync on, when they are older " +
+                    "than 15 minutes.",
+                "Without an API key CoinGecko allows only a few requests per minute; when it says to wait, Polion pauses for " +
+                    "a minute and keeps showing the last lists. A free Demo key in Settings › API Keys raises the limit.",
+            ),
+        ),
+        HelpTopic(
             "Privacy",
             listOf(
                 "Polion has no account and no server; your data stays on this device.",
                 "The wallet provider (blockstream.info unless you set your own) learns the addresses you track and your " +
-                    "IP address. Kraken receives Bitcoin price requests and your IP address. CoinGecko is contacted only " +
-                    "when you request historical prices with your own key.",
+                    "IP address. Kraken receives Bitcoin price requests and your IP address. CoinGecko receives your display " +
+                    "currency and IP address when market lists or price history load. Wallet addresses go only to the " +
+                    "wallet provider.",
             ),
         ),
         HelpTopic(

@@ -42,7 +42,7 @@ Each phase is separately executable; its exit gate is defined in its document. P
 - **Implemented and verified; user visual review pending** · [Phase 2 — Finish Portfolio and coin General with existing data](ui-model-phases/2-finish-portfolio-and-coin-general-with-existing-data.md)
 - **Implemented and verified; user visual review pending** · [Phase 3 — Implement the model's transaction system](ui-model-phases/3-implement-the-model-s-transaction-system.md)
 - **Implemented and verified; user visual review pending** · [Phase 4 — Finish Accounts, history refresh and recovery](ui-model-phases/4-finish-accounts-history-refresh-and-recovery.md)
-- **Not started** · [Phase 5 — Make Main a real market-discovery screen](ui-model-phases/5-make-main-a-real-market-discovery-screen.md)
+- **Implemented and verified; user visual review pending** · [Phase 5 — Make Main a real market-discovery screen](ui-model-phases/5-make-main-a-real-market-discovery-screen.md)
 - **Not started** · [Phase 6 — Implement Insights in the model's composition](ui-model-phases/6-implement-insights-in-the-model-s-composition.md)
 - **Not started** · [Phase 7 — Finish alerts, order books and CSV import](ui-model-phases/7-finish-alerts-order-books-and-csv-import.md)
 - **Not started** · [Phase 8 — Product acceptance and release](ui-model-phases/8-product-acceptance-and-release.md)

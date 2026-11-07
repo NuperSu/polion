@@ -46,7 +46,7 @@ private val green @Composable get() = MaterialTheme.colorScheme.primary
 /** Unavailable rows stay visible but dimmed and inert, so the menu shows what is planned without pretending it works. */
 private const val UNAVAILABLE_ALPHA = 0.38f
 
-enum class SettingsIcon { GENERAL, PORTFOLIO, NOTIFICATIONS, CONNECTIONS, SECURITY, DATA, SUPPORT }
+enum class SettingsIcon { GENERAL, PORTFOLIO, NOTIFICATIONS, CONNECTIONS, KEYS, SECURITY, DATA, SUPPORT }
 
 /** One top-level Settings destination: drawn icon, title and chevron. */
 @Composable
@@ -255,6 +255,12 @@ private fun DrawScope.drawSettingsIcon(
             drawArc(tint, 200f, 230f, false, Offset(w * 0.14f, w * 0.14f), Size(w * 0.72f, w * 0.72f), style = stroke)
             drawLine(tint, Offset(w * 0.78f, w * 0.12f), Offset(w * 0.8f, w * 0.34f), strokeWidth = stroke.width, cap = StrokeCap.Round)
             drawLine(tint, Offset(w * 0.8f, w * 0.34f), Offset(w * 0.58f, w * 0.32f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        }
+        SettingsIcon.KEYS -> {
+            drawCircle(tint, w * 0.18f, Offset(w * 0.3f, center.y), style = stroke)
+            drawLine(tint, Offset(w * 0.48f, center.y), Offset(w * 0.9f, center.y), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            drawLine(tint, Offset(w * 0.74f, center.y), Offset(w * 0.74f, w * 0.66f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            drawLine(tint, Offset(w * 0.86f, center.y), Offset(w * 0.86f, w * 0.62f), strokeWidth = stroke.width, cap = StrokeCap.Round)
         }
         SettingsIcon.SUPPORT -> {
             drawCircle(tint, w * 0.4f, center, style = stroke)

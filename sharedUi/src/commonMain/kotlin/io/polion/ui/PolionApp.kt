@@ -272,10 +272,12 @@ private fun Product(
     val dashboardRevision by host.dataRevision.collectAsState()
     var generalPreferences by remember(app) { mutableStateOf(GeneralPreferences()) }
     var biometric by remember(host) { mutableStateOf(host.biometricUnlock()) }
+    var hasCoingeckoKey by remember(app) { mutableStateOf(false) }
     LaunchedEffect(app, dashboardRevision, revision) {
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
         marketFavorites = withContext(host.dispatcher) { app.marketFavorites() }
         generalPreferences = withContext(host.dispatcher) { app.generalPreferences() }
+        hasCoingeckoKey = withContext(host.dispatcher) { app.coingeckoApiKey() != null }
         biometric = host.biometricUnlock()
     }
     // The saved landing page applies once per launch, and only if nothing has navigated away from Main yet.
@@ -332,6 +334,8 @@ private fun Product(
                 ?.marketCoins
                 ?.find { it.asset == state.detailAsset }
                 ?.detailValuation()
+            // A coin opened from the CoinGecko lists is not in the snapshot; it stays open across reloads.
+            ?: state.selectedAsset?.takeIf { it.asset == state.detailAsset && it.price?.id?.startsWith("coingecko:") == true }
             ?: if (state.snapshot == null || state.snapshotFilter.portfolio != state.requestedFilter().portfolio) {
                 state.selectedAsset
             } else {
@@ -398,8 +402,33 @@ private fun Product(
     }
 
     val priceScope = rememberCoroutineScope()
+    var marketDisclosure by remember { mutableStateOf(false) }
+    var marketRefreshing by remember { mutableStateOf(false) }
 
-    fun refreshPrices() {
+    /** Asks for consent the first time; [quiet] refreshes report nothing unless they fail. */
+    fun refreshMarkets(
+        maxAgeMillis: Long = 60_000L,
+        quiet: Boolean = false,
+    ) {
+        if (marketRefreshing) return
+        marketRefreshing = true
+        priceScope.launch {
+            val consent = runCatching { withContext(host.dispatcher) { app.marketDataConsent() } }.getOrDefault(false)
+            if (!consent) {
+                marketRefreshing = false
+                if (!quiet) marketDisclosure = true
+                return@launch
+            }
+            host.refreshMarkets(maxAgeMillis) { message ->
+                marketRefreshing = false
+                // Success messages start with "Market data"; a quiet refresh reports only problems.
+                if (!quiet || !message.startsWith("Market data")) presenter.notify(message)
+            }
+        }
+    }
+
+    /** Without price consent this opens price setup, unless [promptForConsent] is false. */
+    fun refreshPrices(promptForConsent: Boolean = true) {
         if (priceRequested || pricePhase != PriceRefreshPhase.IDLE) return
         priceRequested = true
         priceScope.launch {
@@ -411,6 +440,10 @@ private fun Product(
                 snapshot?.ownership?.portfolios.orEmpty().any {
                     it.valuationCurrency in setOf("USD", "EUR", "GBP") && it.valuationCurrency !in allowedCurrencies
                 }
+            if (!promptForConsent && !consent) {
+                priceRequested = false
+                return@launch
+            }
             if (!consent || missingCurrencyConsent) {
                 priceRequested = false
                 if (missingCurrencyConsent) presenter.notify("Allow other portfolio currencies in price setup to refresh all portfolios.")
@@ -482,16 +515,43 @@ private fun Product(
     LaunchedEffect(presenter, snackbar) {
         presenter.messages.collect { snackbar.showSnackbar(it) }
     }
+    if (marketDisclosure) {
+        AlertDialog(
+            onDismissRequest = { marketDisclosure = false },
+            title = { Text("Load market data from CoinGecko?") },
+            text = {
+                Text(
+                    "Main shows the top 250 coins by market cap, trending coins and daily movers from CoinGecko. CoinGecko " +
+                        "receives your display currency and IP address; no wallet data is sent. Without an API key, CoinGecko " +
+                        "allows a few requests per minute; you can add a free key in Settings › API Keys.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        marketDisclosure = false
+                        priceScope.launch {
+                            withContext(host.dispatcher) { app.setMarketDataConsent(true) }
+                            refreshMarkets()
+                        }
+                    },
+                    modifier = Modifier.testTag("market-consent-confirm"),
+                ) { Text("Load") }
+            },
+            dismissButton = { TextButton(onClick = { marketDisclosure = false }) { Text("Cancel") } },
+        )
+    }
     if (automaticDisclosure) {
         AlertDialog(
             onDismissRequest = { automaticDisclosure = false },
             title = { Text("Turn on automatic refresh?") },
             text = {
                 Text(
-                    "Automatic refresh updates Bitcoin prices and wallet history on a schedule. Kraken receives Bitcoin pairs " +
-                        "for your portfolio currencies and your IP address; wallet addresses are not sent to Kraken. Your Bitcoin " +
-                        "provider receives watched addresses when wallet history refreshes, and only if you have allowed it. " +
-                        "Turning this off withdraws automatic price consent.",
+                    "Automatic refresh updates Bitcoin prices, market lists and wallet history on a schedule. Kraken receives " +
+                        "Bitcoin pairs for your portfolio currencies and your IP address; CoinGecko receives your display " +
+                        "currency and IP address; wallet addresses are sent to neither. Your Bitcoin provider receives watched " +
+                        "addresses when wallet history refreshes, and only if you have allowed it. Turning this off withdraws " +
+                        "automatic price consent.",
                 )
             },
             confirmButton = {
@@ -615,7 +675,7 @@ private fun Product(
                     wifiOnlyRefreshSupported = host.wifiOnlyRefreshSupported,
                     assetPreference = assetPreference,
                     showPortfolioChart = generalPreferences.showPortfolioChart,
-                    refreshing = pricePhase == PriceRefreshPhase.RUNNING,
+                    refreshing = pricePhase == PriceRefreshPhase.RUNNING || marketRefreshing,
                     refreshQueued = pricePhase == PriceRefreshPhase.QUEUED,
                     syncStatus = syncStatus,
                     favorites = marketFavorites,
@@ -645,7 +705,16 @@ private fun Product(
                             }
                         }
                     },
-                    onRefresh = ::refreshPrices,
+                    // On Main, refresh updates market lists and, when allowed, prices; the load card asks for market consent.
+                    onRefresh = {
+                        if (page == Page.HOME && selectedAsset == null) {
+                            refreshMarkets(quiet = true)
+                            refreshPrices(promptForConsent = false)
+                        } else {
+                            refreshPrices()
+                        }
+                    },
+                    onMarketRefresh = { age -> refreshMarkets(age, quiet = age > 60_000L) },
                     onAdd = {
                         modelEditingId = null
                         modelManual = false
@@ -736,6 +805,18 @@ private fun Product(
                                 onSetup = onSetup,
                                 onRemoveExample = { execute("Example data removed") { app.removeExampleData() } },
                                 onGeneral = ::saveGeneral,
+                                onCoingeckoKey = { key ->
+                                    hasCoingeckoKey = key != null
+                                    execute(
+                                        if (key ==
+                                            null
+                                        ) {
+                                            "CoinGecko key removed"
+                                        } else {
+                                            "CoinGecko key saved"
+                                        },
+                                    ) { app.setCoingeckoApiKey(key) }
+                                },
                                 onBiometric = { enabled ->
                                     host.setBiometricUnlock(enabled) { result ->
                                         biometric = host.biometricUnlock()
@@ -744,7 +825,7 @@ private fun Product(
                                 },
                             ),
                             general = generalPreferences,
-                            device = SettingsDevice(host.defaultDeviceName, biometric),
+                            device = SettingsDevice(host.defaultDeviceName, biometric, hasCoingeckoKey),
                         ) {
                             snapshot?.let { data ->
                                 AccountsWorkspace(

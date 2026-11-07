@@ -30,6 +30,7 @@ import io.polion.core.application.AssetListPreference
 import io.polion.core.application.AssetSort
 import io.polion.core.application.AssetValuation
 import io.polion.core.application.HistoryPoint
+import io.polion.core.application.MarketOverview
 import io.polion.core.application.MarketPricePoint
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
@@ -49,8 +50,6 @@ import io.polion.ui.model.ModelInsights
 import io.polion.ui.model.ModelInsightsState
 import io.polion.ui.model.ModelMain
 import io.polion.ui.model.ModelMainAction
-import io.polion.ui.model.ModelMainState
-import io.polion.ui.model.ModelMarketCoin
 import io.polion.ui.model.ModelMetric
 import io.polion.ui.model.ModelPage
 import io.polion.ui.model.ModelPortfolioHoldings
@@ -108,9 +107,35 @@ internal fun ModelWorkspace(
     onAccountTool: (AccountTool) -> Unit = {},
     onTransaction: (EffectiveActivity) -> Unit = {},
     statusContent: @Composable () -> Unit = {},
+    onMarketRefresh: (maxAgeMillis: Long) -> Unit = {},
     settingsContent: (@Composable ColumnScope.(onAdvanced: (Page) -> Unit) -> Unit)? = null,
 ) {
     val transactionScope = rememberCoroutineScope()
+    var marketOverview by remember(app) { mutableStateOf<MarketOverview?>(null) }
+    LaunchedEffect(app, dataRevision, snapshot?.currency) {
+        marketOverview =
+            try {
+                withContext(host.dispatcher) { app.marketOverview() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                marketOverview
+            }
+    }
+    // With Auto-sync on, opening Main refreshes market lists older than the scheduled age, once per launch.
+    var marketOpenChecked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(page, marketOverview, preferences.automaticRefresh) {
+        val overview = marketOverview
+        if (page == Page.HOME && overview != null && !marketOpenChecked && overview.consent && preferences.automaticRefresh) {
+            marketOpenChecked = true
+            val observed = overview.markets?.observedAtMillis
+            val now =
+                kotlin.time.Clock.System
+                    .now()
+                    .toEpochMilliseconds()
+            if (observed == null || now - observed >= MARKET_SCHEDULED_AGE_MILLIS) onMarketRefresh(MARKET_SCHEDULED_AGE_MILLIS)
+        }
+    }
     var transactionSearch by rememberSaveable { mutableStateOf("") }
     var transactionType by rememberSaveable { mutableStateOf("All") }
     var transactionStatus by rememberSaveable { mutableStateOf("All") }
@@ -251,7 +276,8 @@ internal fun ModelWorkspace(
     LaunchedEffect(app, selectedAsset?.asset, snapshot?.currency, coinRange, dataRevision, priceRetry) {
         val asset = selectedAsset?.asset
         val quote = snapshot?.currency
-        if (asset != null && quote != null) {
+        // Market-only coins have no saved prices; their page uses the CoinGecko listing instead.
+        if (asset != null && quote != null && !asset.value.startsWith("coingecko:")) {
             val duration =
                 when (coinRange) {
                     "1H" -> 3_600_000L
@@ -386,6 +412,12 @@ internal fun ModelWorkspace(
             val asset = selectedAsset
             val symbol = asset.metadata?.symbol ?: asset.asset.value
             val tracked = data.valuations.any { it.asset == asset.asset }
+            val listing =
+                marketOverview?.let { overview -> overview.markets?.items?.find { overview.assetKeys[it.coinId] == asset.asset } }
+            // Without two saved observations, the CoinGecko 7-day sparkline draws the chart.
+            val useListing =
+                listing != null && marketOverview?.currency == data.currency && observationCount < 2 && listing.sparkline.size >= 2
+            val listingPoints = if (useListing) sparklinePoints(listing.sparkline, 61) else emptyList()
             val quantity =
                 if (!tracked) {
                     "—"
@@ -412,6 +444,13 @@ internal fun ModelWorkspace(
                         ) +
                             if (tracked) {
                                 coinAccountingMetrics(accounting, asset)
+                            } else if (listing != null) {
+                                listOf(
+                                    ModelMetric("24h Change", percentChange(listing.change24h)),
+                                    ModelMetric("7d Change", percentChange(listing.change7d)),
+                                    ModelMetric("Market Cap", listing.marketCap?.let { money(it, data.currency) } ?: "—"),
+                                    ModelMetric("Market Cap Rank", listing.rank?.let { "#$it" } ?: "—"),
+                                )
                             } else {
                                 listOf(
                                     ModelMetric("Total Gains", "—"),
@@ -422,9 +461,18 @@ internal fun ModelWorkspace(
                             },
                     breakdownExpanded = expanded,
                     tab = ModelCoinTab.valueOf(tab),
-                    price = asset.price?.let { quotePrice(it.price.value, it.price.quoteAssetId) } ?: "—",
+                    price =
+                        asset.price?.let {
+                            if (asset.asset.value.startsWith("coingecko:")) {
+                                marketPrice(it.price.value, it.price.quoteAssetId)
+                            } else {
+                                quotePrice(it.price.value, it.price.quoteAssetId)
+                            }
+                        } ?: "—",
                     change =
-                        if (observationCount >= 2) {
+                        if (useListing) {
+                            "Price change · 7D · ${percentChange(listing?.change7d)}"
+                        } else if (observationCount >= 2) {
                             unitPriceChange(observed.firstOrNull(), observed.lastOrNull(), coinRange)
                         } else {
                             "Price change · $coinRange · —"
@@ -438,10 +486,20 @@ internal fun ModelWorkspace(
                             val provider = if (it.manual) "Manual quote" else it.providerId?.value ?: "Provider"
                             "$provider · ${asset.priceStatus.name.lowercase()} · observed $observedAt"
                         } ?: "Price unavailable",
-                    selectedRange = coinRange,
-                    chartPoints = priceCoordinates,
-                    chartTopLabel = observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—",
-                    chartBottomLabel = observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—",
+                    selectedRange = if (useListing) "1W" else coinRange,
+                    chartPoints = if (useListing) listingPoints else priceCoordinates,
+                    chartTopLabel =
+                        if (useListing) {
+                            listing?.sparkline?.maxOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
+                        } else {
+                            observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
+                        },
+                    chartBottomLabel =
+                        if (useListing) {
+                            listing?.sparkline?.minOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
+                        } else {
+                            observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
+                        },
                     transactionMetrics =
                         timeline?.metrics
                             ?: listOf(
@@ -453,7 +511,8 @@ internal fun ModelWorkspace(
                     alerts = emptyList(),
                     orderSource = "Unavailable",
                     orderRows = emptyList(),
-                    enabledRanges = setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
+                    enabledRanges = if (useListing) setOf("1W") else setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
+                    canAddTransaction = !asset.asset.value.startsWith("coingecko:"),
                     transactionEmpty = if (timelineLoading) "Loading saved transactions…" else "No matching transactions",
                     alertsUnavailable = "Price alerts are unavailable.",
                     orderUnavailable = "Order book data is unavailable.",
@@ -542,7 +601,14 @@ internal fun ModelWorkspace(
                     ) { Text("More transactions") }
                 },
             )
-            if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL) {
+            if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL && asset.asset.value.startsWith("coingecko:")) {
+                Text(
+                    "Price, 7-day chart and market figures from CoinGecko, updated " +
+                        (marketOverview?.markets?.observedAtMillis?.let(::relativeAgo) ?: "earlier") +
+                        ". Polion records transactions for Bitcoin only.",
+                    modifier = Modifier.testTag("coin-market-source"),
+                )
+            } else if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL) {
                 Text(
                     "Saved as-of unit prices · ${prices.mapNotNull { it.price?.id }.distinct().size} observations",
                     modifier =
@@ -584,44 +650,32 @@ internal fun ModelWorkspace(
         } else {
             when (page) {
                 Page.HOME -> {
-                    val markets =
-                        data.marketCoins.map { coin ->
-                            ModelMarketCoin(
-                                identity(coin.asset.value, coin.metadata?.symbol, coin.metadata?.name),
-                                "${quotePrice(
-                                    coin.price.price.value,
-                                    coin.price.price.quoteAssetId,
-                                )} · ${coin.priceStatus.name.lowercase()}",
-                                "—",
-                            )
-                        }
                     ModelMain(
-                        ModelMainState(
-                            topCoins = markets,
-                            favorites =
-                                markets.filter { market ->
-                                    data.marketCoins.any {
-                                        it.asset in favorites &&
-                                            it.asset.value == market.identity.id
-                                    }
-                                },
-                            topCoinsTitle = "Saved prices",
-                            topCoinsEyebrow = "LOCAL MARKET DATA",
-                            topCoinsEmptyMessage = "No saved prices yet",
-                            favoritesEmptyMessage = "No favorites yet",
-                            canToggleFavorites = true,
+                        marketMainState(
+                            marketOverview,
+                            data.marketCoins,
+                            favorites,
+                            kotlin.time.Clock.System
+                                .now()
+                                .toEpochMilliseconds(),
                         ),
                         wide,
                     ) { action ->
-                        if (action is ModelMainAction.ToggleFavorite) {
-                            onFavorite(
-                                io.polion.core.model
-                                    .AssetId(action.identity.id),
-                            )
-                        }
-                        if (action is ModelMainAction.OpenCoin) {
-                            data.marketCoins.find { it.asset.value == action.identity.id }?.let { coin ->
-                                onAsset(data.valuations.find { it.asset == coin.asset } ?: coin.detailValuation())
+                        when (action) {
+                            is ModelMainAction.ToggleFavorite -> onFavorite(AssetId(action.identity.id))
+                            is ModelMainAction.LoadMarkets -> onMarketRefresh(60_000L)
+                            is ModelMainAction.OpenCoin -> {
+                                val key = AssetId(action.identity.id)
+                                val owned = data.valuations.find { it.asset == key }
+                                val saved = data.marketCoins.find { it.asset == key }
+                                val overview = marketOverview
+                                val listing = overview?.markets?.items?.find { overview.assetKeys[it.coinId] == key }
+                                val trend = overview?.trending?.items?.find { overview.assetKeys[it.coinId] == key }
+                                (
+                                    owned ?: saved?.detailValuation()
+                                        ?: listing?.detailValuation(key, overview.currency, overview.markets!!.observedAtMillis)
+                                        ?: trend?.detailValuation(key, overview.currency, overview.trending!!.observedAtMillis)
+                                )?.let(onAsset)
                             }
                         }
                     }
@@ -818,14 +872,15 @@ internal fun ModelWorkspace(
     }
 }
 
-private fun identity(
+/** Bitcoin keeps its orange mark; other coins get a stable colour derived from their ID. */
+internal fun identity(
     id: String,
     symbol: String?,
     name: String?,
 ) = ModelCoinIdentity(
     symbol ?: id,
     name ?: symbol ?: id,
-    Color(0xFFF7931A),
+    if (symbol == "BTC") Color(0xFFF7931A) else Color.hsv((id.hashCode().mod(360)).toFloat(), .55f, .8f),
     (
         symbol
             ?: id

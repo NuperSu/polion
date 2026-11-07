@@ -3,6 +3,7 @@ package io.polion.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -53,12 +54,15 @@ internal class SettingsActions(
     val onRemoveExample: () -> Unit = {},
     val onGeneral: (GeneralPreferences) -> Unit = {},
     val onBiometric: (Boolean) -> Unit = {},
+    /** Null removes the key. */
+    val onCoingeckoKey: (String?) -> Unit = {},
 )
 
 /** Device facts Settings shows but does not own. */
 internal data class SettingsDevice(
     val defaultName: String = "This device",
     val biometric: BiometricUnlock = BiometricUnlock.UNSUPPORTED,
+    val hasCoingeckoKey: Boolean = false,
 )
 
 private val currencies = listOf("USD" to "US dollar (USD)", "EUR" to "Euro (EUR)", "GBP" to "British pound (GBP)")
@@ -199,6 +203,61 @@ internal fun ColumnScope.ProductSettings(
             ) { actions.onWifi(it) }
             SettingsActionRow("Connections FAQ", tag = "settings-connections-help") { section = "help" }
         }
+        "keys" -> {
+            SettingsSubHeader("API Keys", back)
+            SettingsSectionLabel("Exchanges")
+            SettingsNote("Exchange accounts are planned. Kraken prices need no key.")
+            SettingsActionRow("Add Exchange API Key", enabled = false)
+            SettingsSectionLabel("External services")
+            var editing by remember { mutableStateOf(false) }
+            SettingsValueRow(
+                "CoinGecko",
+                if (device.hasCoingeckoKey) "Demo key added" else "Not set · public request limit",
+                tag = "settings-coingecko-key",
+            ) { editing = true }
+            SettingsNote(
+                "Market lists and price history work without a key. A free CoinGecko Demo key raises the request limit. " +
+                    "Keys stay on this device and are not included in backups.",
+            )
+            if (editing) {
+                var key by remember { mutableStateOf("") }
+                val valid = key.trim().matches(Regex("[A-Za-z0-9_-]{10,100}"))
+                AlertDialog(
+                    onDismissRequest = { editing = false },
+                    title = { Text("CoinGecko API key") },
+                    text = {
+                        OutlinedTextField(
+                            key,
+                            { key = it },
+                            singleLine = true,
+                            label = { Text("Demo API key") },
+                            isError = key.isNotEmpty() && !valid,
+                            visualTransformation =
+                                androidx.compose.ui.text.input
+                                    .PasswordVisualTransformation(),
+                            modifier = Modifier.testTag("settings-coingecko-key-field"),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(enabled = valid, onClick = {
+                            editing = false
+                            actions.onCoingeckoKey(key.trim())
+                        }, modifier = Modifier.testTag("settings-coingecko-key-save")) { Text("Save") }
+                    },
+                    dismissButton = {
+                        Row {
+                            if (device.hasCoingeckoKey) {
+                                TextButton(onClick = {
+                                    editing = false
+                                    actions.onCoingeckoKey(null)
+                                }, modifier = Modifier.testTag("settings-coingecko-key-remove")) { Text("Remove") }
+                            }
+                            TextButton(onClick = { editing = false }) { Text("Cancel") }
+                        }
+                    },
+                )
+            }
+        }
         "security" -> {
             SettingsSubHeader("Security", back)
             SettingsSwitchRow(
@@ -312,6 +371,7 @@ internal fun ColumnScope.ProductSettings(
             SettingsMenuRow(SettingsIcon.PORTFOLIO, "Portfolio", "settings-portfolio") { section = "portfolio" }
             SettingsMenuRow(SettingsIcon.NOTIFICATIONS, "Notifications", "settings-notifications") { section = "notifications" }
             SettingsMenuRow(SettingsIcon.CONNECTIONS, "Connections", "settings-connections") { section = "connections" }
+            SettingsMenuRow(SettingsIcon.KEYS, "API Keys", "settings-keys") { section = "keys" }
             SettingsMenuRow(SettingsIcon.SECURITY, "Security", "settings-security") { section = "security" }
             SettingsMenuRow(SettingsIcon.DATA, "Devices & Data", "settings-data") { section = "data" }
             SettingsMenuRow(SettingsIcon.SUPPORT, "Support", "settings-support") { section = "support" }
