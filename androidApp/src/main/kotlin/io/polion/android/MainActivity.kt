@@ -430,6 +430,27 @@ private class AndroidHost(
         if (lockStore.hasLock) locked.value = true
     }
 
+    override fun eraseAndRemoveLock(onResult: (String) -> Unit) {
+        executor.execute {
+            val success =
+                runCatching {
+                    app.value?.let { application ->
+                        application.wipe()
+                        application.setAutomaticRefresh(false)
+                        reconcileRefreshPreferences(application)
+                    }
+                    lockStore.remove()
+                }.isSuccess
+            main.post {
+                if (success) {
+                    locked.value = false
+                    dataRevision.update { it + 1 }
+                }
+                onResult(if (success) "Local data erased and privacy lock removed" else "Could not finish erasing; retry")
+            }
+        }
+    }
+
     override fun unlock(
         password: String,
         onResult: (UnlockResult) -> Unit,

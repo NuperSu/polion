@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -1105,6 +1106,7 @@ internal fun ActivityDialog(
 
 @Composable
 internal fun LockScreen(host: PlatformActions) {
+    var forgot by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -1126,7 +1128,41 @@ internal fun LockScreen(host: PlatformActions) {
                 }
             }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Unlocking…" else "Unlock") }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = { forgot = true }, enabled = !busy, modifier = Modifier.testTag("lock-forgot")) {
+                Text("Forgot password?")
+            }
         }
+    }
+    if (forgot) {
+        var typed by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { if (!busy) forgot = false },
+            title = { Text("Erase this device's Polion data?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "The password cannot be recovered. You can erase this device's Polion data and remove the lock, " +
+                            "then restore an encrypted backup if you have one. Funds on the blockchain are unaffected.",
+                    )
+                    OutlinedTextField(typed, { typed = it }, label = { Text("Type ERASE to confirm") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = typed == "ERASE" && !busy,
+                    onClick = {
+                        busy = true
+                        host.eraseAndRemoveLock { message ->
+                            busy = false
+                            forgot = false
+                            error = message.takeUnless { it.startsWith("Local data erased") }
+                        }
+                    },
+                    modifier = Modifier.testTag("lock-erase-confirm"),
+                ) { Text("Erase and remove lock") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { forgot = false }) { Text("Cancel") } },
+        )
     }
 }
 

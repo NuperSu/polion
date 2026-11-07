@@ -156,4 +156,12 @@ interface PlatformActions {
     )
 
     fun removeLockPassword(onResult: (String) -> Unit)
+
+    /**
+     * Recovery for a forgotten lock password or a lost lock key: erases this device's Polion data, turns automatic refresh
+     * off and removes the lock. Data can come back only from an encrypted backup.
+     */
+    fun eraseAndRemoveLock(onResult: (String) -> Unit) {
+        onResult("Erasing locked data is not available here.")
+    }
 }
