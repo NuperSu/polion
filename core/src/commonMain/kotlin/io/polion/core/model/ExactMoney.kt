@@ -67,9 +67,22 @@ class ExactInteger private constructor(
         val ZERO = ExactInteger("0")
 
         fun parse(text: String): ExactInteger {
-            require(text.matches(Regex("-?[0-9]+"))) { "Expected a base-10 integer" }
+            // A character scan instead of a regular expression: every stored amount is parsed through here.
+            require(isInteger(text, 0, text.length)) { "Expected a base-10 integer" }
             val magnitude = text.removePrefix("-").trimStart('0').ifEmpty { "0" }
             return ExactInteger(if (text.startsWith('-') && magnitude != "0") "-$magnitude" else magnitude)
+        }
+
+        /** True when text[from, until) is an optional minus sign followed by at least one ASCII digit. */
+        internal fun isInteger(
+            text: String,
+            from: Int,
+            until: Int,
+        ): Boolean {
+            val start = if (until > from && text[from] == '-') from + 1 else from
+            if (start >= until) return false
+            for (i in start until until) if (text[i] !in '0'..'9') return false
+            return true
         }
 
         private fun signed(
@@ -176,8 +189,16 @@ data class ExactDecimal(
 
     companion object {
         fun parse(text: String): ExactDecimal {
-            require(text.matches(Regex("-?[0-9]+(\\.[0-9]+)?"))) { "Expected a plain decimal" }
             val point = text.indexOf('.')
+            require(
+                if (point < 0) {
+                    ExactInteger.isInteger(text, 0, text.length)
+                } else {
+                    ExactInteger.isInteger(text, 0, point) &&
+                        point + 1 < text.length &&
+                        (point + 1 until text.length).all { text[it] in '0'..'9' }
+                },
+            ) { "Expected a plain decimal" }
             return ExactDecimal(ExactInteger.parse(text.replace(".", "")), if (point < 0) 0 else text.length - point - 1)
         }
     }

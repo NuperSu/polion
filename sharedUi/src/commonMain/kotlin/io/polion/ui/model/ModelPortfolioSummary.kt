@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -63,6 +64,8 @@ data class ModelPortfolioSummaryState(
     /** Values and times for the interactive chart; without it the plain [chartPoints] line is drawn. */
     val chart: ChartData? = null,
     val chartStyle: ChartStyle = ChartStyle.LINE,
+    /** A new range is loading; the previous chart and change stay visible, dimmed. */
+    val loading: Boolean = false,
 )
 
 enum class ModelChangeTone { POSITIVE, NEGATIVE, NEUTRAL }
@@ -162,7 +165,7 @@ fun ModelPortfolioSummary(
             Text(it, color = colors.muted, fontSize = 15.sp, modifier = Modifier.testTag("portfolio-secondary-balance"))
         }
         state.changeLabel?.let { Text(it, color = colors.muted, fontSize = 12.sp) }
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.alpha(if (state.loading) .4f else 1f), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(state.change, color = changeColor, fontSize = 17.sp)
             Text(
                 state.percentChange,
@@ -182,7 +185,7 @@ fun ModelPortfolioSummary(
             ModelInteractiveChart(
                 state.chart,
                 state.chartStyle,
-                Modifier.testTag("portfolio-chart").fillMaxWidth().height(
+                Modifier.testTag("portfolio-chart").alpha(if (state.loading) .4f else 1f).fillMaxWidth().height(
                     if (wide) {
                         280.dp
                     } else if (short) {

@@ -73,7 +73,12 @@ class PriceSeriesLookupTest {
                         preferLatest = true,
                     )
                 val expected = times.map { market.lookup(btc, usd, it, knownAt, policy(it)) }
-                assertEquals(expected, market.lookupSeries(btc, usd, times, knownAt, ::policy), "seed $seed")
+                assertEquals(
+                    expected,
+                    market.lookupSeries(btc, usd, times, knownAt, ::policy, rowsPerInstant = Long.MAX_VALUE),
+                    "window $seed",
+                )
+                assertEquals(expected, market.lookupSeries(btc, usd, times, knownAt, ::policy, rowsPerInstant = 0), "per instant $seed")
             }
         }
     }

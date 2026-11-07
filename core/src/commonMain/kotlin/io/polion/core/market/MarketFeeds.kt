@@ -13,7 +13,6 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /** One coin from CoinGecko's market list, ranked by market capitalisation. Percent changes are display figures. */
@@ -59,9 +58,11 @@ object CoingeckoMarkets {
             "https://(coin-images|assets)\\.coingecko\\.com/coins/images/[0-9]+/(thumb|small|large|standard)/[A-Za-z0-9._%+-]+(\\?[0-9]+)?",
         )
 
+    private val SIZE = Regex("/(thumb|large|standard)/")
+    private val CURRENCY = Regex("[a-z]{3,4}")
+
     /** CoinGecko's own logo URL in the small size; anything from another host is ignored. */
-    fun logoUrl(url: String?): String? =
-        url?.takeIf { it.length <= 300 && it.matches(IMAGE) }?.replace(Regex("/(thumb|large|standard)/"), "/small/")
+    fun logoUrl(url: String?): String? = url?.takeIf { it.length <= 300 && it.matches(IMAGE) }?.replace(SIZE, "/small/")
 
     private val COIN_ID = Regex("[a-z0-9][a-z0-9-]{0,99}")
 
@@ -69,7 +70,7 @@ object CoingeckoMarkets {
         baseUrl: String,
         currency: String,
     ): String {
-        require(currency.matches(Regex("[a-z]{3,4}")))
+        require(currency.matches(CURRENCY))
         return "$baseUrl/coins/markets?vs_currency=$currency&order=market_cap_desc&per_page=$MARKET_SIZE&page=1" +
             "&sparkline=true&price_change_percentage=1h,24h,7d"
     }
@@ -256,7 +257,8 @@ class MarketFeedRepository(
                             coin.change1h?.let { put("c1h", it) }
                             coin.change24h?.let { put("c24h", it) }
                             coin.change7d?.let { put("c7d", it) }
-                            put("spark", buildJsonArray { coin.sparkline.forEach { add(JsonPrimitive(it)) } })
+                            // One string instead of 168 JSON numbers per coin keeps the cached list quick to read.
+                            put("spark", coin.sparkline.joinToString(","))
                             coin.image?.let { put("image", it) }
                         },
                     )
@@ -297,7 +299,11 @@ class MarketFeedRepository(
                 coin.string("c1h")?.toDoubleOrNull(),
                 coin.string("c24h")?.toDoubleOrNull(),
                 coin.string("c7d")?.toDoubleOrNull(),
-                coin["spark"]?.jsonArray?.mapNotNull { it.jsonPrimitive.content.toDoubleOrNull() }.orEmpty(),
+                coin
+                    .string("spark")
+                    ?.split(',')
+                    ?.mapNotNull { it.toDoubleOrNull() }
+                    .orEmpty(),
                 CoingeckoMarkets.logoUrl(coin.string("image")),
             )
         }

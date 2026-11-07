@@ -1920,7 +1920,9 @@ class PortfolioApplication(
             marketFeeds.deviceSetting("market_feed_error"),
             marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > now() },
             coingeckoApiKey() != null,
-            ids.associateWith { marketAssetKey(it) },
+            market.providerMappings(ProviderId(CoingeckoPrices.PROVIDER_ID)).let { mapped ->
+                ids.associateWith { id -> if (id == "bitcoin") BITCOIN_ASSET else mapped[id] ?: AssetId("coingecko:$id") }
+            },
         )
     }
 

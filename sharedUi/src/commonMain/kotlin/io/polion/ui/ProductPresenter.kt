@@ -175,44 +175,34 @@ internal class ProductPresenter(
         if (cached != null &&
             cached.currency == selected.snapshot?.currency &&
             currentTime >= cached.at &&
-            currentTime - cached.at < 60_000L
+            currentTime - cached.at < CHART_CACHE_MILLIS
         ) {
             update { copy(chart = cached.points, chartCurrency = cached.currency, chartLoading = false, chartError = false) }
             return
         }
+        prefetch?.cancel()
         update { copy(chartLoading = true, chartError = false) }
         try {
-            val loaded =
-                withContext(dispatcher) {
-                    invalidate(hostRevision)
-                    val end = now()
-                    val start =
-                        historyRangeStart(
-                            selected.period,
-                            end,
-                            if (selected.period == 0) queries.firstHistoryActivity(selected.selectedPortfolio) else null,
-                        )
-                    // Enough samples for a smooth line and about two dozen candles of four samples each.
-                    val intervals =
-                        when (selected.period) {
-                            -1 -> 60
-                            1 -> 96
-                            7 -> 84
-                            30 -> 90
-                            90 -> 90
-                            else -> 104
-                        }
-                    val currency = queries.currency(selected.selectedPortfolio)
-                    currency to
-                        queries.history(
-                            (0..intervals).map { start + (end - start) / intervals * it + ((end - start) % intervals) * it / intervals },
-                            selected.selectedPortfolio,
-                        )
-                }
+            val started = now()
+            val loaded = withContext(dispatcher) { computeChart(selected.period, selected.selectedPortfolio, hostRevision) }
             if (request == chartRequest) {
-                if (charts.size >= 12) charts.remove(charts.keys.first())
-                charts[key] = CachedChart(now(), loaded.second, loaded.first)
+                cacheChart(key, loaded)
                 update { copy(chart = loaded.second, chartCurrency = loaded.first) }
+                println("polion:CHART_LOADED period=${selected.period} ms=${now() - started}")
+                // Other ranges load in the background, one at a time, so switching to them is immediate.
+                prefetch =
+                    scope.launch {
+                        for (period in listOf(1, 7, 30, -1, 90, -2, 365, 0)) {
+                            if (request != chartRequest) break
+                            val other = key.copy(period = period)
+                            if (period == selected.period || charts[other]?.let { now() - it.at < CHART_CACHE_MILLIS } == true) continue
+                            val points =
+                                runCatching {
+                                    withContext(dispatcher) { computeChart(period, selected.selectedPortfolio, hostRevision) }
+                                }.getOrNull() ?: break
+                            if (request == chartRequest) cacheChart(other, points)
+                        }
+                    }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -224,6 +214,43 @@ internal class ProductPresenter(
         } finally {
             if (request == chartRequest) update { copy(chartLoading = false) }
         }
+    }
+
+    private var prefetch: kotlinx.coroutines.Job? = null
+
+    private fun cacheChart(
+        key: ChartKey,
+        loaded: Pair<io.polion.core.model.AssetId, List<HistoryPoint>>,
+    ) {
+        if (charts.size >= 12 && key !in charts) charts.remove(charts.keys.first())
+        charts[key] = CachedChart(now(), loaded.second, loaded.first)
+    }
+
+    /** Samples the range ending now; runs on the database dispatcher. */
+    private fun computeChart(
+        period: Int,
+        portfolio: PortfolioId?,
+        hostRevision: Long,
+    ): Pair<io.polion.core.model.AssetId, List<HistoryPoint>> {
+        invalidate(hostRevision)
+        val end = now()
+        val start = historyRangeStart(period, end, if (period == 0) queries.firstHistoryActivity(portfolio) else null)
+        // Enough samples for a smooth line and about two dozen candles of four samples each.
+        val intervals =
+            when (period) {
+                -1 -> 60
+                1 -> 96
+                7 -> 84
+                30 -> 90
+                90 -> 90
+                else -> 104
+            }
+        val currency = queries.currency(portfolio)
+        return currency to
+            queries.history(
+                (0..intervals).map { start + (end - start) / intervals * it + ((end - start) % intervals) * it / intervals },
+                portfolio,
+            )
     }
 
     /** Bind existing rendering callbacks without giving them ownership of the screen state. */
@@ -376,3 +403,6 @@ private fun applicationQueries(app: PortfolioApplication): ProductQueries =
 
         override fun currency(portfolio: PortfolioId?) = app.displayCurrency(portfolio)
     }
+
+/** Charts depend on the data revision as well, so a cached range is reused for at most five minutes. */
+private const val CHART_CACHE_MILLIS = 300_000L

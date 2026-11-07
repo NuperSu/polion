@@ -858,6 +858,7 @@ internal fun ModelWorkspace(
                                         amountsHidden,
                                     ) { portfolioChartData(chart, data.currency, amountsHidden) },
                                 chartStyle = chartStyle,
+                                loading = chartLoading,
                             ),
                             wide,
                             short,

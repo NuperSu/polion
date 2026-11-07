@@ -20,14 +20,79 @@ import java.io.File
 /** Exercises the actual Android SQLite and crypto bindings using disposable fixture databases. */
 class ReliabilityInstrumentation : Instrumentation() {
     private var livePrices = false
+    private var benchmark = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         livePrices = arguments?.getString("live_prices") == "true"
+        benchmark = arguments?.getString("benchmark") == "chart"
         start()
     }
 
+    /**
+     * Times the queries behind a chart period change on a copy of this user's database, without the UI. Run with
+     * `-e benchmark chart`; results are milliseconds in the instrumentation output.
+     */
+    private fun chartBenchmark() {
+        val results = Bundle()
+        val source = targetContext.getDatabasePath("portfolio.sqlite")
+        val copy = File(targetContext.cacheDir, "chart-benchmark.sqlite")
+        try {
+            check(source.exists()) { "No portfolio database for this user" }
+            source.copyTo(copy, overwrite = true)
+            listOf("-wal", "-shm").forEach { suffix ->
+                File(source.path + suffix).takeIf { it.exists() }?.copyTo(File(copy.path + suffix), overwrite = true)
+            }
+
+            fun <T> time(
+                name: String,
+                block: () -> T,
+            ): T {
+                val start = System.nanoTime()
+                val value = block()
+                results.putLong(name, (System.nanoTime() - start) / 1_000_000L)
+                return value
+            }
+            AndroidSqliteDatabase(copy.path).use { db ->
+                val app = time("open") { PortfolioApplication(db, System::currentTimeMillis) }
+                time("snapshot") { app.snapshot() }
+                time("snapshotAgain") { app.snapshot() }
+                time("trivialQueries100") { repeat(100) { db.query("SELECT value FROM application_settings WHERE key='currency'") } }
+                val end = System.currentTimeMillis()
+                repeat(2) { round ->
+                    for ((label, days, intervals) in listOf(Triple("1D", 1L, 96), Triple("1W", 7L, 84), Triple("1M", 30L, 90), Triple("1Y", 365L, 104))) {
+                        val start = end - days * 86_400_000L
+                        val times = (0..intervals).map { start + (end - start) / intervals * it }
+                        time("history$label.$round") { app.historySeries(times, null) }
+                    }
+                }
+                time("currency") { app.displayCurrency(null) }
+                time("firstActivity") { app.firstHistoryActivity(null) }
+                time("priceSeries97") {
+                    app.priceSeries(io.polion.core.bitcoin.BITCOIN_ASSET, app.currency(), (0..96).map { end - 86_400_000L + 900_000L * it })
+                }
+                time("marketOverview") { app.marketOverview() }
+                time("marketOverviewAgain") { app.marketOverview() }
+                time("accountingReport") { app.accountingReport(null) }
+                time("reload+snapshot") {
+                    app.reload()
+                    app.snapshot()
+                }
+            }
+            finish(Activity.RESULT_OK, results)
+        } catch (failure: Exception) {
+            results.putString("error", failure.toString())
+            finish(Activity.RESULT_CANCELED, results)
+        } finally {
+            listOf("", "-wal", "-shm", "-journal").forEach { File(copy.path + it).delete() }
+        }
+    }
+
     override fun onStart() {
+        if (benchmark) {
+            chartBenchmark()
+            return
+        }
         val results = Bundle()
         var failures = 0
         val checks =

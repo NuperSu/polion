@@ -18,6 +18,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_25
     }
     sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin"))
+    buildTypes {
+        release {
+            // R8 removes Compose's debug overhead; without it the UI runs several times slower than shipped builds.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Local release builds use the debug key so they install over development builds. Store signing is part of L7.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
     buildFeatures { compose = true }
     lint { warningsAsErrors = true }
 }
