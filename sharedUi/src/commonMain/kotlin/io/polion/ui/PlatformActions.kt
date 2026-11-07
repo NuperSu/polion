@@ -45,6 +45,9 @@ fun refreshSchedulePlan(
 const val WALLET_REFRESH_INTERVAL_MILLIS = 30L * 60_000L
 const val PRICE_REFRESH_INTERVAL_MILLIS = 60L * 60_000L
 
+/** Scheduled and on-open market refreshes skip feeds younger than this; a manual refresh uses one minute. */
+const val MARKET_SCHEDULED_AGE_MILLIS = 15L * 60_000L
+
 /**
  * Delay before the next scheduled run. It is zero when there is no successful run or the last one is due, so a run
  * never repeats on app start within the interval after a success.
@@ -170,6 +173,17 @@ interface PlatformActions {
         onResult("Erasing locked data is not available here.")
     }
 
+    /**
+     * Refreshes CoinGecko market feeds older than [maxAgeMillis] in the background, then bumps [dataRevision]. Needs market
+     * data consent.
+     */
+    fun refreshMarkets(
+        maxAgeMillis: Long = 60_000L,
+        onResult: (String) -> Unit,
+    ) {
+        onResult("Market data is unavailable on this host.")
+    }
+
     /** Shown in Settings when the user has not named this device. */
     val defaultDeviceName: String get() = "This device"
 
@@ -198,3 +212,14 @@ enum class BiometricUnlock {
     OFF,
     ON,
 }
+
+/** Hosts report a market refresh with the same wording. */
+fun marketRefreshMessage(result: io.polion.core.application.MarketRefreshResult): String =
+    when (result.failure) {
+        null -> if (result.updatedFeeds == 0) "Market data is up to date." else "Market data updated."
+        io.polion.core.market.CoingeckoProviderFailure.RATE_LIMITED ->
+            "CoinGecko is limiting requests. Try again in a minute, or add a free API key in Settings."
+        io.polion.core.market.CoingeckoProviderFailure.ACCESS_DENIED -> "CoinGecko rejected the API key. Check it in Settings › API Keys."
+        io.polion.core.market.CoingeckoProviderFailure.OFFLINE -> "Could not reach CoinGecko. Showing saved market data."
+        else -> "CoinGecko returned data Polion could not read. Showing saved market data."
+    }

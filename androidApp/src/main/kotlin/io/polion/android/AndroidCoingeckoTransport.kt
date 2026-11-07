@@ -10,7 +10,7 @@ import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URI
 
-/** Requests approved CoinGecko historical price endpoints over HTTPS. */
+/** Requests approved CoinGecko price-history and market-feed endpoints over HTTPS. */
 class AndroidCoingeckoTransport(
     private val baseUrl: String = "https://api.coingecko.com/api/v3",
     private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
@@ -23,6 +23,13 @@ class AndroidCoingeckoTransport(
     private companion object {
         val HISTORY_PATH = Regex("[a-z0-9][a-z0-9-]*/history\\?date=[0-9]{2}-[0-9]{2}-[0-9]{4}&localization=false")
         val CHART_PATH = Regex("[a-z0-9][a-z0-9-]*/market_chart\\?vs_currency=[a-z]{3,4}&days=(1|7|30|90|365)")
+        val MARKETS_PATH =
+            Regex("coins/markets\\?vs_currency=[a-z]{3,4}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=1h,24h,7d")
+        const val TRENDING_PATH = "search/trending"
+
+        /** The top-250 list with sparklines is about 1 MB. */
+        const val FEED_LIMIT = 4 * 1024 * 1024
+        const val HISTORY_LIMIT = 1024 * 1024
     }
 
     private val paced = PacedCoingeckoTransport(CoingeckoTransport(::request), { System.nanoTime() / 1_000_000L })
@@ -45,6 +52,25 @@ class AndroidCoingeckoTransport(
         }
     }
 
+    /**
+     * Market feeds are not paced here: the application refreshes them at most once a minute and pauses after a rate limit.
+     */
+    @Synchronized
+    fun feed(
+        url: String,
+        apiKey: String?,
+    ): String {
+        val path = url.removePrefix("${baseUrl.trimEnd('/')}/")
+        require(url != path && (path.matches(MARKETS_PATH) || path == TRENDING_PATH)) { "Unsupported CoinGecko request" }
+        require(apiKey == null || apiKey.length <= 512 && apiKey.all { it.code in 33..126 }) { "Invalid API key" }
+        activeApiKey = apiKey.orEmpty()
+        try {
+            return fetch(url, FEED_LIMIT)
+        } finally {
+            activeApiKey = ""
+        }
+    }
+
     private fun request(url: String): String {
         val prefix = "${baseUrl.trimEnd('/')}/coins/"
         require(
@@ -52,6 +78,13 @@ class AndroidCoingeckoTransport(
         ) {
             "Unsupported CoinGecko request"
         }
+        return fetch(url, HISTORY_LIMIT)
+    }
+
+    private fun fetch(
+        url: String,
+        limit: Int,
+    ): String {
         val connection = openConnection(url)
         try {
             if (activeApiKey.isNotEmpty()) connection.setRequestProperty("x-cg-demo-api-key", activeApiKey)
@@ -70,7 +103,7 @@ class AndroidCoingeckoTransport(
                     val count = input.read(buffer)
                     if (count < 0) break
                     total += count
-                    require(total <= 1024 * 1024) { "CoinGecko response too large" }
+                    if (total > limit) throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray().toString(Charsets.UTF_8)

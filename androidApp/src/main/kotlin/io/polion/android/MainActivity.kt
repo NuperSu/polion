@@ -120,6 +120,13 @@ private class AndroidHost(
             android.provider.Settings.Global.getString(activity.contentResolver, android.provider.Settings.Global.DEVICE_NAME)
                 ?.takeIf { it.isNotBlank() } ?: android.os.Build.MODEL
 
+    override fun refreshMarkets(
+        maxAgeMillis: Long,
+        onResult: (String) -> Unit,
+    ) {
+        MarketFeedRefresher.refresh(activity, maxAgeMillis) { message -> main.post { if (!closed) onResult(message) } }
+    }
+
     override fun biometricUnlock(): BiometricUnlock = biometrics.status(lockStore.hasLock)
 
     override fun setBiometricUnlock(

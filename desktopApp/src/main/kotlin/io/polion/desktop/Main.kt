@@ -13,6 +13,7 @@ import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.model.TrackingTargetId
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.ui.MARKET_SCHEDULED_AGE_MILLIS
 import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
@@ -21,6 +22,7 @@ import io.polion.ui.SyncStatus
 import io.polion.ui.UnlockResult
 import io.polion.ui.WALLET_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.cooldownDelayMillis
+import io.polion.ui.marketRefreshMessage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -555,6 +557,41 @@ internal class DesktopHost(
             }
     }
 
+    override fun refreshMarkets(
+        maxAgeMillis: Long,
+        onResult: (String) -> Unit,
+    ) {
+        if (closing.get()) {
+            onResult("The app is closing.")
+            return
+        }
+        try {
+            priceExecutor.execute {
+                val message =
+                    synchronized(priceGate) {
+                        if (priceRestorePaused || closing.get()) {
+                            "Market refresh is paused while data is restored."
+                        } else {
+                            runCatching {
+                                JvmSqliteDatabase(file.toString()).use { connection ->
+                                    marketRefreshMessage(
+                                        PortfolioApplication(
+                                            connection,
+                                            System::currentTimeMillis,
+                                        ).refreshMarketFeeds(priceTransport::feed, maxAgeMillis),
+                                    )
+                                }
+                            }.getOrElse { "Could not refresh market data." }
+                        }
+                    }
+                dataRevision.update { it + 1 }
+                SwingUtilities.invokeLater { onResult(message) }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            onResult("Could not schedule a market refresh.")
+        }
+    }
+
     override fun refreshAutomaticPrices(onResult: (String) -> Unit) {
         if (closing.get() || !manualPricePending.compareAndSet(false, true)) {
             onResult("A price refresh is already queued or the app is closing.")
@@ -605,6 +642,10 @@ internal class DesktopHost(
                                 }
                             application.refreshAutomaticPriceSet(transport) { check(!closing.get() && !priceRestorePaused) }
                             application.recordAutomaticPriceStatus(true)
+                            // Market lists ride on the same schedule; a failure here never fails the price refresh.
+                            if (application.marketDataConsent()) {
+                                runCatching { application.refreshMarketFeeds(priceTransport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
+                            }
                         } catch (failure: Exception) {
                             if (!closing.get() &&
                                 !priceRestorePaused
