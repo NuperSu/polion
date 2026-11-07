@@ -2030,7 +2030,8 @@ class PortfolioApplication(
     private fun sameWalletSource(
         first: String,
         second: String,
-    ): Boolean = first == second || runCatching { bitcoinWallet(first).address(0, 0) == bitcoinWallet(second).address(0, 0) }.getOrDefault(false)
+    ): Boolean =
+        first == second || runCatching { bitcoinWallet(first).address(0, 0) == bitcoinWallet(second).address(0, 0) }.getOrDefault(false)
 
     /**
      * Saves a consented public wallet and optional ownership records as one local change, and returns the wallet ID that
@@ -2176,10 +2177,6 @@ class PortfolioApplication(
     }
 
     /**
-     * An address that another account (or another wallet) already tracks cannot join this wallet. The message names that
-     * account so the user can remove the standalone address there and retry.
-     */
-    /**
      * Standalone copies of a wallet address that the wallet's owner tracks in another account. Discovery moves them into
      * the wallet, because the wallet now covers that address; another owner's copy stays a conflict.
      */
@@ -2201,6 +2198,10 @@ class PortfolioApplication(
         }
     }
 
+    /**
+     * An address that another account (or another wallet) already tracks cannot join this wallet, unless it is a
+     * standalone copy the same owner keeps (see [adoptableAddresses]). The message names that account.
+     */
     private fun discoveryConflict(
         snapshot: OwnershipSnapshot,
         address: String,

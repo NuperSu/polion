@@ -219,8 +219,18 @@ internal fun BitcoinConnectDialog(
                             .snapshot()
                             .ownership.targets
                             .firstOrNull { it.id == walletId }
-                            ?.let { wallet -> app.snapshot().ownership.accounts.firstOrNull { it.id == wallet.accountId }?.label }
-                    notify("This wallet is already tracked${resumedAccount?.let { " in \"$it\"" } ?: ""}; fetching its addresses and history again.")
+                            ?.let { wallet ->
+                                app
+                                    .snapshot()
+                                    .ownership.accounts
+                                    .firstOrNull { it.id == wallet.accountId }
+                                    ?.label
+                            }
+                    notify(
+                        "This wallet is already tracked${resumedAccount?.let {
+                            " in \"$it\""
+                        } ?: ""}; fetching its addresses and history again.",
+                    )
                 }
                 discover(walletId)
             } catch (

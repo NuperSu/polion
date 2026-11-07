@@ -226,16 +226,31 @@ class BitcoinWalletTest {
                 ),
             )
             assertTrue(app.refreshBitcoin(transport).all { it == JobState.COMPLETED })
-            app.saveTarget(TrackingTarget(walletId, walletAccount, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+            app.saveTarget(
+                TrackingTarget(walletId, walletAccount, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"),
+            )
 
             val discovered = app.discoverBitcoinWallet(walletId, transport)
 
             assertTrue(discovered.notice!!.contains("Moved 1 address from \"ledger\""), discovered.notice)
-            assertTrue(app.snapshot().ownership.targets.none { it.id == TrackingTargetId("standalone") })
+            assertTrue(
+                app
+                    .snapshot()
+                    .ownership.targets
+                    .none { it.id == TrackingTargetId("standalone") },
+            )
             val states = app.refreshBitcoin(transport)
             assertTrue(states.isNotEmpty() && states.all { it == JobState.COMPLETED }, states.toString())
             val overview = app.accountOverview().associateBy { it.account.id }
-            assertEquals("1000", overview.getValue(walletAccount).holdings.single().amount.atomicUnits.toString())
+            assertEquals(
+                "1000",
+                overview
+                    .getValue(walletAccount)
+                    .holdings
+                    .single()
+                    .amount.atomicUnits
+                    .toString(),
+            )
             assertTrue(overview[oldAccount]?.holdings.orEmpty().isEmpty())
             assertEquals(1, app.snapshot().activityTotal)
         }
@@ -255,7 +270,12 @@ class BitcoinWalletTest {
             val discovered = app.discoverBitcoinWallet(walletId, transport)
             assertEquals(1, discovered.usedAddresses)
             val usedAddress = bitcoinWallet(xpub).address(0, 1)
-            assertTrue(app.snapshot().ownership.targets.any { it.identity.canonicalKey == usedAddress })
+            assertTrue(
+                app
+                    .snapshot()
+                    .ownership.targets
+                    .any { it.identity.canonicalKey == usedAddress },
+            )
             val states = app.refreshBitcoin(transport)
             assertTrue(states.isNotEmpty() && states.all { it == JobState.COMPLETED }, states.toString())
             assertEquals(1, app.snapshot().activityTotal)
@@ -317,7 +337,13 @@ class BitcoinWalletTest {
             assertEquals(4, app.discoverBitcoinWallet(retriedId, unused, 2, 3).addresses)
             // A wallet that already has addresses is resumed, not imported twice.
             assertEquals(retriedId, app.saveBitcoinWallet(target.copy(id = TrackingTargetId("w3"))))
-            assertEquals(1, app.snapshot().ownership.targets.count { it.role == TargetRole.WALLET })
+            assertEquals(
+                1,
+                app
+                    .snapshot()
+                    .ownership.targets
+                    .count { it.role == TargetRole.WALLET },
+            )
         }
     }
 
@@ -334,14 +360,24 @@ class BitcoinWalletTest {
                 id: String,
                 account: String,
                 expression: String = xpub,
-            ) = TrackingTarget(TrackingTargetId(id), AccountId(account), TargetIdentity(BITCOIN_MAINNET, "wallet", expression), TargetRole.WALLET, "ledger")
+            ) = TrackingTarget(
+                TrackingTargetId(id),
+                AccountId(account),
+                TargetIdentity(BITCOIN_MAINNET, "wallet", expression),
+                TargetRole.WALLET,
+                "ledger",
+            )
             val tracked = app.saveBitcoinWallet(wallet("w1", "a"))
             val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
             app.discoverBitcoinWallet(tracked, unused, 2, 3)
             // An earlier failed import saved the same key under another text form, as an empty wallet in a second account.
             app.saveTarget(wallet("w2", "dup", "wpkh($xpub/0/*)"))
 
-            val resumed = app.saveBitcoinWallet(wallet("w3", "new"), newAccount = Account(AccountId("new"), owner, "ledger", AccountKind.WALLET))
+            val resumed =
+                app.saveBitcoinWallet(
+                    wallet("w3", "new"),
+                    newAccount = Account(AccountId("new"), owner, "ledger", AccountKind.WALLET),
+                )
 
             assertEquals(tracked, resumed)
             val ownership = app.snapshot().ownership
