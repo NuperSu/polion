@@ -107,6 +107,20 @@ internal class DesktopHost(
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
     override val hasLock: Boolean get() = lockStore.hasLock
+
+    // Read once from the environment or /etc/hostname; a DNS lookup could block the UI thread.
+    override val defaultDeviceName: String by lazy {
+        (
+            System.getenv("HOSTNAME")
+                ?: runCatching {
+                    java.nio.file.Files
+                        .readString(
+                            java.nio.file.Path
+                                .of("/etc/hostname"),
+                        )
+                }.getOrNull()
+        )?.trim()?.takeIf { it.isNotEmpty() && it.length <= 40 } ?: "This computer"
+    }
     private val file = directory.resolve("portfolio.sqlite")
     private val verifierFile = directory.resolve("lock-verifier")
     private val lockStore = SecureLockStore(verifierFile)

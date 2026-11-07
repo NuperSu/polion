@@ -46,7 +46,7 @@ private val green @Composable get() = MaterialTheme.colorScheme.primary
 /** Unavailable rows stay visible but dimmed and inert, so the menu shows what is planned without pretending it works. */
 private const val UNAVAILABLE_ALPHA = 0.38f
 
-enum class SettingsIcon { GENERAL, VIEW, PORTFOLIO, NOTIFICATIONS, CONNECTIONS, SECURITY, DATA, SUPPORT }
+enum class SettingsIcon { GENERAL, PORTFOLIO, NOTIFICATIONS, CONNECTIONS, SECURITY, DATA, SUPPORT }
 
 /** One top-level Settings destination: drawn icon, title and chevron. */
 @Composable
@@ -222,14 +222,6 @@ private fun DrawScope.drawSettingsIcon(
             }
             drawCircle(tint, w * 0.3f, center, style = stroke)
             drawCircle(tint, w * 0.11f, center, style = stroke)
-        }
-        SettingsIcon.VIEW -> {
-            val eye = Path()
-            eye.moveTo(w * 0.06f, center.y)
-            eye.quadraticTo(center.x, w * 0.12f, w * 0.94f, center.y)
-            eye.quadraticTo(center.x, w * 0.88f, w * 0.06f, center.y)
-            drawPath(eye, tint, style = stroke)
-            drawCircle(tint, w * 0.12f, center, style = stroke)
         }
         SettingsIcon.PORTFOLIO -> {
             drawRoundRect(tint, Offset(w * 0.08f, w * 0.3f), Size(w * 0.84f, w * 0.58f), CornerRadius(w * 0.08f), style = stroke)

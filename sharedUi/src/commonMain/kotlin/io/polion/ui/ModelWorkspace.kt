@@ -82,6 +82,7 @@ internal fun ModelWorkspace(
     preferences: RefreshPreferences,
     wifiOnlyRefreshSupported: Boolean,
     assetPreference: io.polion.core.application.AssetListPreference,
+    showPortfolioChart: Boolean = true,
     refreshing: Boolean,
     refreshQueued: Boolean,
     syncStatus: SyncStatus,
@@ -628,6 +629,16 @@ internal fun ModelWorkspace(
                 Page.OVERVIEW -> {
                     PortfolioSelector(data, selectedPortfolio, onPortfolio)
                     val summary = pricingSummary(data.valuations)
+                    // The secondary total is shown only when it covers the same holdings as the main total.
+                    val secondary =
+                        data.secondaryCurrency?.let { code ->
+                            val other = pricingSummary(data.secondaryValuations)
+                            if (other.total != null && other.missing == summary.missing) {
+                                money(other.total, code)
+                            } else {
+                                "${code.value} price not available yet"
+                            }
+                        }
                     val exactValues = chart.map(::historyTotal)
                     val values = exactValues.map { it?.toString()?.toDoubleOrNull() }
                     val finite = values.filterNotNull().filter { it.isFinite() }
@@ -665,6 +676,8 @@ internal fun ModelWorkspace(
                             ranges = labels.values.toList(),
                             chartTopLabel = exactValues.filterNotNull().maxOrNull()?.let { money(it, data.currency) } ?: "—",
                             chartBottomLabel = exactValues.filterNotNull().minOrNull()?.let { money(it, data.currency) } ?: "—",
+                            secondaryBalance = secondary,
+                            showChart = showPortfolioChart,
                         ),
                         wide,
                         short,

@@ -88,7 +88,9 @@ import io.polion.core.application.AssetAllocation
 import io.polion.core.application.AssetListPreference
 import io.polion.core.application.AssetSort
 import io.polion.core.application.AssetValuation
+import io.polion.core.application.GeneralPreferences
 import io.polion.core.application.HistoryPoint
+import io.polion.core.application.LandingPage
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.application.SourceStatus
@@ -268,9 +270,29 @@ private fun Product(
     val snapshotFilter = presenter.state.snapshotFilter
     var revision by presenter.field({ it.revision }) { presenter.update { copy(revision = it) } }
     val dashboardRevision by host.dataRevision.collectAsState()
+    var generalPreferences by remember(app) { mutableStateOf(GeneralPreferences()) }
+    var biometric by remember(host) { mutableStateOf(host.biometricUnlock()) }
     LaunchedEffect(app, dashboardRevision, revision) {
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
         marketFavorites = withContext(host.dispatcher) { app.marketFavorites() }
+        generalPreferences = withContext(host.dispatcher) { app.generalPreferences() }
+        biometric = host.biometricUnlock()
+    }
+    // The saved landing page applies once per launch, and only if nothing has navigated away from Main yet.
+    var landingApplied by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(app) {
+        if (!landingApplied) {
+            val landing = withContext(host.dispatcher) { app.generalPreferences().landing }
+            landingApplied = true
+            if (page == Page.HOME) {
+                page =
+                    when (landing) {
+                        LandingPage.MAIN -> Page.HOME
+                        LandingPage.PORTFOLIO -> Page.OVERVIEW
+                        LandingPage.INSIGHTS -> Page.REPORTS
+                    }
+            }
+        }
     }
     LaunchedEffect(revision) {
         if (revision != 0) onLocalDataChanged()
@@ -436,6 +458,22 @@ private fun Product(
         if (enabled) automaticDisclosure = true else changeAutomaticRefresh(false)
     }
 
+    fun saveGeneral(updated: GeneralPreferences) {
+        val previous = generalPreferences
+        generalPreferences = updated
+        execute("Settings saved") {
+            if (updated.landing != previous.landing) app.setLandingPage(updated.landing)
+            if (updated.secondaryCurrency != previous.secondaryCurrency) app.setSecondaryCurrency(updated.secondaryCurrency)
+            if (updated.showPortfolioChart != previous.showPortfolioChart) app.setShowPortfolioChart(updated.showPortfolioChart)
+            if (updated.zeroBasisRewards != previous.zeroBasisRewards) app.setZeroBasisRewards(updated.zeroBasisRewards)
+            if (updated.deviceName != previous.deviceName) app.setDeviceName(updated.deviceName)
+        }
+        // A new secondary currency needs its own Bitcoin price; fetch it now when automatic prices are allowed.
+        if (updated.secondaryCurrency != null && updated.secondaryCurrency != previous.secondaryCurrency && preferences.automaticRefresh) {
+            refreshPrices()
+        }
+    }
+
     fun saveAssetPreference(preference: AssetListPreference) =
         execute("Asset display saved") {
             app.setAssetListPreference(preference)
@@ -576,6 +614,7 @@ private fun Product(
                     preferences = preferences,
                     wifiOnlyRefreshSupported = host.wifiOnlyRefreshSupported,
                     assetPreference = assetPreference,
+                    showPortfolioChart = generalPreferences.showPortfolioChart,
                     refreshing = pricePhase == PriceRefreshPhase.RUNNING,
                     refreshQueued = pricePhase == PriceRefreshPhase.QUEUED,
                     syncStatus = syncStatus,
@@ -696,7 +735,16 @@ private fun Product(
                                 },
                                 onSetup = onSetup,
                                 onRemoveExample = { execute("Example data removed") { app.removeExampleData() } },
+                                onGeneral = ::saveGeneral,
+                                onBiometric = { enabled ->
+                                    host.setBiometricUnlock(enabled) { result ->
+                                        biometric = host.biometricUnlock()
+                                        presenter.notify(result)
+                                    }
+                                },
                             ),
+                            general = generalPreferences,
+                            device = SettingsDevice(host.defaultDeviceName, biometric),
                         ) {
                             snapshot?.let { data ->
                                 AccountsWorkspace(

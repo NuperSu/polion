@@ -1,6 +1,7 @@
 package io.polion.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
@@ -8,6 +9,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,7 +23,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.AssetListPreference
+import io.polion.core.application.GeneralPreferences
+import io.polion.core.application.LandingPage
 import io.polion.core.application.PortfolioSnapshot
+import io.polion.core.model.AssetId
 import io.polion.ui.model.SettingsActionRow
 import io.polion.ui.model.SettingsIcon
 import io.polion.ui.model.SettingsMenuRow
@@ -46,11 +51,28 @@ internal class SettingsActions(
     val onRemoveLock: () -> Unit,
     val onSetup: (Boolean) -> Unit,
     val onRemoveExample: () -> Unit = {},
+    val onGeneral: (GeneralPreferences) -> Unit = {},
+    val onBiometric: (Boolean) -> Unit = {},
+)
+
+/** Device facts Settings shows but does not own. */
+internal data class SettingsDevice(
+    val defaultName: String = "This device",
+    val biometric: BiometricUnlock = BiometricUnlock.UNSUPPORTED,
 )
 
 private val currencies = listOf("USD" to "US dollar (USD)", "EUR" to "Euro (EUR)", "GBP" to "British pound (GBP)")
 
-/** Settings as a list of destinations; each opens its own page. Rows for features that do not exist yet are dimmed. */
+private fun currencyLabel(code: String?) = currencies.firstOrNull { it.first == code }?.second ?: code.orEmpty()
+
+private val LandingPage.label get() =
+    when (this) {
+        LandingPage.MAIN -> "Main"
+        LandingPage.PORTFOLIO -> "Portfolio"
+        LandingPage.INSIGHTS -> "Insights"
+    }
+
+/** Settings as a list of destinations; each opens its own page. Rows for features scheduled for a later phase are dimmed. */
 @Composable
 internal fun ColumnScope.ProductSettings(
     data: PortfolioSnapshot?,
@@ -61,6 +83,8 @@ internal fun ColumnScope.ProductSettings(
     hasLock: Boolean,
     onAdvanced: (Page) -> Unit,
     actions: SettingsActions,
+    general: GeneralPreferences = GeneralPreferences(),
+    device: SettingsDevice = SettingsDevice(),
     connections: @Composable () -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf("") }
@@ -68,14 +92,11 @@ internal fun ColumnScope.ProductSettings(
     when (section) {
         "general" -> {
             SettingsSubHeader("General", back)
-            SettingsValueRow("Language", "English", enabled = false)
             var currencyMenu by remember { mutableStateOf(false) }
             Box {
-                SettingsValueRow(
-                    "Local Fiat Currency",
-                    currencies.firstOrNull { it.first == data?.currency?.value }?.second ?: data?.currency?.value.orEmpty(),
-                    tag = "settings-currency",
-                ) { currencyMenu = true }
+                SettingsValueRow("Local Fiat Currency", currencyLabel(data?.currency?.value), tag = "settings-currency") {
+                    currencyMenu = true
+                }
                 DropdownMenu(currencyMenu, { currencyMenu = false }) {
                     currencies.forEach { (code, label) ->
                         DropdownMenuItem(text = { Text(label) }, onClick = {
@@ -85,17 +106,44 @@ internal fun ColumnScope.ProductSettings(
                     }
                 }
             }
-            SettingsValueRow("Secondary Fiat Currency", "None", enabled = false)
-            SettingsValueRow("Default Landing", "Main", enabled = false)
+            var secondaryMenu by remember { mutableStateOf(false) }
+            Box {
+                SettingsValueRow(
+                    "Secondary Fiat Currency",
+                    general.secondaryCurrency?.let { currencyLabel(it.value) } ?: "None",
+                    tag = "settings-secondary-currency",
+                ) { secondaryMenu = true }
+                DropdownMenu(secondaryMenu, { secondaryMenu = false }) {
+                    (listOf<Pair<String?, String>>(null to "None") + currencies.filter { it.first != data?.currency?.value })
+                        .forEach { (code, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    secondaryMenu = false
+                                    actions.onGeneral(general.copy(secondaryCurrency = code?.let(::AssetId)))
+                                },
+                                modifier = Modifier.testTag("settings-secondary-${code ?: "none"}"),
+                            )
+                        }
+                }
+            }
+            var landingMenu by remember { mutableStateOf(false) }
+            Box {
+                SettingsValueRow("Default Landing", general.landing.label, tag = "settings-landing") { landingMenu = true }
+                DropdownMenu(landingMenu, { landingMenu = false }) {
+                    LandingPage.entries.forEach { landing ->
+                        DropdownMenuItem(
+                            text = { Text(landing.label) },
+                            onClick = {
+                                landingMenu = false
+                                actions.onGeneral(general.copy(landing = landing))
+                            },
+                            modifier = Modifier.testTag("settings-landing-${landing.name.lowercase()}"),
+                        )
+                    }
+                }
+            }
             SettingsActionRow("Prices and price sources", tag = "settings-prices") { actions.onDialog("price") }
-        }
-        "view" -> {
-            SettingsSubHeader("View Options", back)
-            Text("Theme", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
-            AppearanceSelector(appearance, actions.onAppearance)
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.padding(top = 12.dp))
-            SettingsSwitchRow("Monochrome Asset Icons", checked = false, enabled = false)
-            SettingsSwitchRow("Invert Red/Green", checked = false, enabled = false)
         }
         "portfolio" -> {
             SettingsSubHeader("Portfolio", back)
@@ -105,18 +153,22 @@ internal fun ColumnScope.ProductSettings(
             SettingsSwitchRow("Hide small holdings", assetPreference.hideSmall, tag = "settings-hide-small") {
                 actions.onAssetPreference(assetPreference.copy(hideSmall = it))
             }
-            SettingsSwitchRow("Show portfolio chart", checked = true, enabled = false)
+            SettingsSwitchRow("Show portfolio chart", general.showPortfolioChart, tag = "settings-show-chart") {
+                actions.onGeneral(general.copy(showPortfolioChart = it))
+            }
             SettingsSwitchRow(
-                "Use 0 cost basis for forks, mining and airdrops",
-                checked = false,
-                enabled = false,
-                description = "Profit calculations would use zero cost basis for these receipts instead of their market value.",
-            )
+                "Use 0 cost basis for rewards",
+                general.zeroBasisRewards,
+                description =
+                    "Transactions recorded as rewards, such as mining, staking, forks and airdrops, count with zero cost " +
+                        "instead of their recorded value. Their recorded value is kept.",
+                tag = "settings-zero-basis",
+            ) { actions.onGeneral(general.copy(zeroBasisRewards = it)) }
             SettingsActionRow("Classification rules", tag = "settings-rules") { actions.onDialog("rule") }
         }
         "notifications" -> {
             SettingsSubHeader("Notifications", back)
-            SettingsNote("Notifications and price alerts are not available yet.")
+            SettingsNote("Notifications and price alerts are planned.")
             SettingsSectionLabel("Portfolio")
             SettingsSwitchRow("Daily Portfolio Update", false, enabled = false, description = "Daily portfolio performance and top movers")
             SettingsSectionLabel("Market Data")
@@ -145,7 +197,7 @@ internal fun ColumnScope.ProductSettings(
                 enabled = wifiOnlyRefreshSupported,
                 tag = "wifi-only-refresh",
             ) { actions.onWifi(it) }
-            SettingsActionRow("Connections FAQ", enabled = false)
+            SettingsActionRow("Connections FAQ", tag = "settings-connections-help") { section = "help" }
         }
         "security" -> {
             SettingsSubHeader("Security", back)
@@ -156,12 +208,50 @@ internal fun ColumnScope.ProductSettings(
                 tag = "settings-lock",
             ) { if (it) actions.onDialog("lock") else actions.onRemoveLock() }
             SettingsActionRow("Lock now", enabled = hasLock, tag = "settings-lock-now") { actions.onLockNow() }
-            SettingsSwitchRow("Fingerprint Authentication", false, enabled = false)
+            SettingsSwitchRow(
+                "Fingerprint Authentication",
+                device.biometric == BiometricUnlock.ON,
+                enabled = hasLock && device.biometric in setOf(BiometricUnlock.ON, BiometricUnlock.OFF),
+                description =
+                    when {
+                        device.biometric == BiometricUnlock.UNSUPPORTED -> "Not available on this device. Unlock with your password."
+                        device.biometric == BiometricUnlock.NOT_ENROLLED -> "Add a fingerprint in your device settings first."
+                        !hasLock -> "Turn on Passcode Lock first."
+                        else -> "Unlock with a fingerprint; the password still works."
+                    },
+                tag = "settings-biometric",
+            ) { actions.onBiometric(it) }
         }
         "data" -> {
             SettingsSubHeader("Devices & Data", back)
             SettingsSectionLabel("Devices")
-            SettingsValueRow("Device Name", "This device", enabled = false)
+            var naming by remember { mutableStateOf(false) }
+            SettingsValueRow("Device Name", general.deviceName ?: device.defaultName, tag = "settings-device-name") { naming = true }
+            if (naming) {
+                var name by remember { mutableStateOf(general.deviceName ?: device.defaultName) }
+                val valid = name.trim().length <= 40 && name.none { it.isISOControl() }
+                AlertDialog(
+                    onDismissRequest = { naming = false },
+                    title = { Text("Device name") },
+                    text = {
+                        OutlinedTextField(
+                            name,
+                            { name = it },
+                            singleLine = true,
+                            isError = !valid,
+                            supportingText = { Text("Up to 40 characters. Leave empty to use \"${device.defaultName}\".") },
+                            modifier = Modifier.testTag("settings-device-name-field"),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(enabled = valid, onClick = {
+                            naming = false
+                            actions.onGeneral(general.copy(deviceName = name.trim().takeIf { it.isNotEmpty() && it != device.defaultName }))
+                        }, modifier = Modifier.testTag("settings-device-name-save")) { Text("Save") }
+                    },
+                    dismissButton = { TextButton(onClick = { naming = false }) { Text("Cancel") } },
+                )
+            }
             SettingsActionRow("Transfer Data", enabled = false)
             SettingsActionRow("Sync Data", enabled = false)
             SettingsSectionLabel("Data")
@@ -199,14 +289,26 @@ internal fun ColumnScope.ProductSettings(
         }
         "support" -> {
             SettingsSubHeader("Support", back)
+            SettingsActionRow("Help", tag = "settings-help") { section = "help" }
             SettingsActionRow("Resume setup", tag = "settings-resume-setup") { actions.onSetup(false) }
             SettingsActionRow("Restart setup", tag = "settings-restart-setup") { actions.onSetup(true) }
-            SettingsActionRow("Help and FAQ", enabled = false)
-            SettingsActionRow("Contact support", enabled = false)
+        }
+        "help" -> {
+            SettingsSubHeader("Help", back)
+            SettingsHelp()
         }
         else -> {
+            Column(Modifier.padding(vertical = 12.dp)) {
+                Text(
+                    "Theme",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+                AppearanceSelector(appearance, actions.onAppearance)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
             SettingsMenuRow(SettingsIcon.GENERAL, "General", "settings-general") { section = "general" }
-            SettingsMenuRow(SettingsIcon.VIEW, "View Options", "settings-view") { section = "view" }
             SettingsMenuRow(SettingsIcon.PORTFOLIO, "Portfolio", "settings-portfolio") { section = "portfolio" }
             SettingsMenuRow(SettingsIcon.NOTIFICATIONS, "Notifications", "settings-notifications") { section = "notifications" }
             SettingsMenuRow(SettingsIcon.CONNECTIONS, "Connections", "settings-connections") { section = "connections" }
