@@ -34,7 +34,11 @@ internal class BiometricLock(
     fun status(hasLock: Boolean): BiometricUnlock {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return BiometricUnlock.UNSUPPORTED
         val manager = activity.getSystemService(BiometricManager::class.java) ?: return BiometricUnlock.UNSUPPORTED
-        return when (manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+        // A status check must never take the app down; any platform failure means fingerprint unlock is unavailable.
+        val result =
+            runCatching { manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) }
+                .getOrElse { return BiometricUnlock.UNSUPPORTED }
+        return when (result) {
             BiometricManager.BIOMETRIC_SUCCESS ->
                 if (hasLock && preferences.getBoolean(ENABLED, false)) BiometricUnlock.ON else BiometricUnlock.OFF
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> BiometricUnlock.NOT_ENROLLED
