@@ -95,6 +95,9 @@ class RefreshWorker(
                                         transport,
                                         providerEndpoint = endpoint,
                                     ).notice
+                            } else if (!verifyOrder) {
+                                // Wallets without addresses, or with a used address in the trailing gap, are discovered first.
+                                app.discoverPendingBitcoinWallets(transport, endpoint).joinToString(" ").ifEmpty { null }
                             } else {
                                 null
                             }

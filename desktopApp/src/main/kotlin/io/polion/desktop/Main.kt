@@ -388,6 +388,8 @@ internal class DesktopHost(
         ) { application ->
             runCatching {
                 val endpoint = application.sourceEndpoint()
+                // Wallets without addresses, or with a used address in the trailing gap, are discovered first.
+                val discoveryNotes = application.discoverPendingBitcoinWallets(bitcoinTransport(application, endpoint), endpoint)
                 val states =
                     application.refreshBitcoin(
                         bitcoinTransport(application, endpoint),
@@ -419,7 +421,7 @@ internal class DesktopHost(
                                 recoverHistory -> "History recovery complete; coverage remains unverified"
                                 application.lastRefreshSkipped() -> "Checked for new activity; none found."
                                 else -> "Sync complete; coverage remains unverified"
-                            },
+                            } + discoveryNotes.joinToString("") { " $it" },
                         )
                 }
             }.getOrElse {

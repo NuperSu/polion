@@ -2342,6 +2342,69 @@ class PortfolioApplication(
         return BitcoinWalletDiscovery(children.size, used, listOfNotNull(scopeNotice, movedNotice).joinToString(" ").ifEmpty { null })
     }
 
+    /**
+     * Wallets that need address discovery before a history refresh: enabled wallets with no addresses yet (for example
+     * after an interrupted import) and wallets whose last applied scan saw a used address inside the trailing gap, so
+     * later addresses may now be in use. History refresh only scans addresses that discovery has added.
+     */
+    fun bitcoinWalletsNeedingDiscovery(gapLimit: Int = 20): List<TrackingTargetId> {
+        val catalog = ownership.load()
+        val archived =
+            catalog.accounts
+                .filter { "polion:archived" in it.tags }
+                .map { it.id }
+                .toSet()
+        val counts = acceptedScan()?.counts.orEmpty()
+        return catalog.targets
+            .filter {
+                it.enabled &&
+                    it.role == TargetRole.WALLET &&
+                    it.identity.networkId == BITCOIN_MAINNET &&
+                    it.identity.kind == "wallet" &&
+                    it.accountId !in archived
+            }.filter { wallet ->
+                val children = catalog.targets.filter { it.walletId == wallet.id }
+                if (children.isEmpty()) return@filter true
+                val prefix = "bitcoin-wallet-child-" + sha256(wallet.id.value) + ":"
+                children
+                    .mapNotNull { child ->
+                        val position =
+                            child.id.value
+                                .removePrefix(prefix)
+                                .split(':')
+                        val branch = position.getOrNull(0)?.toIntOrNull()
+                        val index = position.getOrNull(1)?.toIntOrNull()
+                        if (branch == null || index == null) null else Triple(branch, index, child.identity.canonicalKey)
+                    }.groupBy { it.first }
+                    .values
+                    .any { branch ->
+                        val last = branch.maxOf { it.second }
+                        branch.any { (_, index, address) ->
+                            val seen = counts[address]
+                            index > last - gapLimit && seen != null && (seen.first > 0 || seen.second > 0)
+                        }
+                    }
+            }.map { it.id }
+    }
+
+    /**
+     * Discovers [bitcoinWalletsNeedingDiscovery] before a history refresh. A wallet that cannot be discovered because of an
+     * address conflict or the discovery limit is skipped with its message, so other wallets still refresh; provider
+     * failures propagate and stop the refresh.
+     */
+    fun discoverPendingBitcoinWallets(
+        transport: EsploraTransport,
+        providerEndpoint: String = sourceEndpoint(),
+        gapLimit: Int = 20,
+    ): List<String> =
+        bitcoinWalletsNeedingDiscovery(gapLimit).mapNotNull { walletId ->
+            try {
+                discoverBitcoinWallet(walletId, transport, gapLimit, providerEndpoint = providerEndpoint).notice
+            } catch (failure: IllegalArgumentException) {
+                failure.message ?: "A wallet could not be discovered; retry from its connection."
+            }
+        }
+
     fun savePortfolio(value: Portfolio) =
         updateOwnership {
             it.copy(

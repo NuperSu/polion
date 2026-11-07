@@ -256,6 +256,50 @@ class BitcoinWalletTest {
         }
     }
 
+    @Test fun walletSavedWithoutDiscoveryIsDiscoveredBeforeTheNextRefresh() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 15552000000L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            val walletId = TrackingTargetId("w")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.setSourceConsent(true)
+            // An import whose discovery never ran leaves a wallet without addresses, which history refresh cannot scan.
+            app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+            assertEquals(listOf(walletId), app.bitcoinWalletsNeedingDiscovery())
+            val transport = fundedProvider()
+
+            assertTrue(app.discoverPendingBitcoinWallets(transport).isEmpty())
+            assertTrue(app.refreshBitcoin(transport).all { it == JobState.COMPLETED })
+
+            assertEquals(1, app.snapshot().activityTotal)
+            assertTrue(app.bitcoinWalletsNeedingDiscovery().isEmpty())
+        }
+    }
+
+    @Test fun usedAddressInTheTrailingGapCallsForDiscoveryAgain() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 15552000000L }
+            val owner = OwnerId("o")
+            val account = AccountId("a")
+            val walletId = TrackingTargetId("w")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.setSourceConsent(true)
+            app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+            val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
+            // With a gap of 2, discovery stops after receive addresses 0 and 1.
+            app.discoverBitcoinWallet(walletId, unused, 2, 3)
+            assertTrue(app.bitcoinWalletsNeedingDiscovery(gapLimit = 2).isEmpty())
+
+            // Receive address 1 is now used, so the gap after it is no longer verified.
+            assertTrue(app.refreshBitcoin(fundedProvider()).all { it == JobState.COMPLETED })
+
+            assertEquals(listOf(walletId), app.bitcoinWalletsNeedingDiscovery(gapLimit = 2))
+        }
+    }
+
     @Test fun discoveredXpubWithHistoryCompletesRefresh() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 15552000000L }
