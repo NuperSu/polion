@@ -1424,8 +1424,11 @@ class PortfolioApplication(
 
     fun automaticPriceStatus(): String? = setting("automatic_price_status")
 
-    /** Epoch millis of the last successful automatic price refresh, or null when none has completed. */
-    fun automaticPriceLastSuccessMillis(): Long? = setting("automatic_price_last_success")?.toLongOrNull()
+    /**
+     * Epoch millis of the last finished automatic price refresh, successful or not, or null when none has finished.
+     * Schedules wait an interval from this time, so a failing provider is not asked again on every app start.
+     */
+    fun automaticPriceLastRunMillis(): Long? = setting("automatic_price_last_run")?.toLongOrNull()
 
     fun recordAutomaticPriceSchedulingFailure() =
         db.transaction {
@@ -1437,7 +1440,7 @@ class PortfolioApplication(
         rateLimited: Boolean = false,
     ) = db.transaction {
         if (automaticPriceConsent()) {
-            if (success) putSetting("automatic_price_last_success", now().toString())
+            putSetting("automatic_price_last_run", now().toString())
             putSetting(
                 "automatic_price_status",
                 if (success) {

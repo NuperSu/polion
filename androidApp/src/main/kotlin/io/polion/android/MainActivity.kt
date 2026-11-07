@@ -361,7 +361,7 @@ private class AndroidHost(
             plan.prices,
             plan.wifiOnly,
             application.automaticPriceConsent(),
-            cooldownDelayMillis(application.automaticPriceLastSuccessMillis(), PRICE_REFRESH_INTERVAL_MILLIS, now),
+            cooldownDelayMillis(application.automaticPriceLastRunMillis(), PRICE_REFRESH_INTERVAL_MILLIS, now),
         )
     }
 

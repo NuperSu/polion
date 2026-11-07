@@ -183,15 +183,17 @@ class AutomaticPriceWorkflowTest {
         }
     }
 
-    @Test fun successfulPriceRefreshRecordsTheCooldownStartOnly() {
+    @Test fun everyFinishedPriceRefreshStartsTheCooldown() {
         JvmSqliteDatabase(":memory:").use { db ->
-            val app = PortfolioApplication(db) { now }
+            var clock = now
+            val app = PortfolioApplication(db) { clock }
             app.setAutomaticRefresh(true)
-            assertEquals(null, app.automaticPriceLastSuccessMillis())
+            assertEquals(null, app.automaticPriceLastRunMillis())
             app.recordAutomaticPriceStatus(success = true)
-            assertEquals(now, app.automaticPriceLastSuccessMillis())
+            assertEquals(now, app.automaticPriceLastRunMillis())
+            clock = now + 1000
             app.recordAutomaticPriceStatus(success = false)
-            assertEquals(now, app.automaticPriceLastSuccessMillis())
+            assertEquals(now + 1000, app.automaticPriceLastRunMillis())
         }
     }
 

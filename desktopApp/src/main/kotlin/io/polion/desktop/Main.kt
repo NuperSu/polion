@@ -476,7 +476,7 @@ internal class DesktopHost(
             if (enabled && refreshPreferences().automaticRefresh && app.value.automaticPriceConsent() && !closing.get()) {
                 val delay =
                     cooldownDelayMillis(
-                        app.value.automaticPriceLastSuccessMillis(),
+                        app.value.automaticPriceLastRunMillis(),
                         PRICE_REFRESH_INTERVAL_MILLIS,
                         System.currentTimeMillis(),
                     )

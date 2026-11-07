@@ -146,7 +146,6 @@ internal fun WorkflowDialog(
     var priceDays by rememberSaveable { mutableIntStateOf(90) }
     var fetchingPrice by remember { mutableStateOf(false) }
     var priceMessage by remember { mutableStateOf<String?>(null) }
-    var background by remember { mutableStateOf(host.backgroundRefreshEnabled()) }
     var candidates by remember { mutableStateOf<List<ReconciliationCandidate>>(emptyList()) }
     var transferLinks by remember { mutableStateOf<List<TransferLink>>(emptyList()) }
     var transferConflicts by remember { mutableStateOf<List<TransferLinkConflict>>(emptyList()) }
@@ -617,14 +616,10 @@ internal fun WorkflowDialog(
                     Checkbox(consent, { consent = it }, modifier = Modifier.testTag("bitcoin-source-consent"))
                     Text("I allow public address queries to this endpoint", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
                 }
-                Row {
-                    Switch(background, { background = it })
-                    Text(
-                        "Automatic refresh (history ~30 min, prices hourly)",
-                        Modifier.weight(1f).padding(start = 12.dp, top = 8.dp),
-                        fontSize = 13.sp,
-                    )
-                }
+                Text(
+                    "Automatic refresh of prices and wallet history is set in Settings.",
+                    fontSize = 13.sp,
+                )
                 Text(
                     "Android may defer background work. Desktop refresh runs while Polion is open. Network errors preserve saved data. Pending activity is provisional, and source history is not independently verified.",
                     fontSize = 12.sp,
@@ -644,9 +639,8 @@ internal fun WorkflowDialog(
                             withContext(host.dispatcher) {
                                 app.setSourceEndpoint(address)
                                 app.setSourceConsent(consent)
-                                host.setBackgroundRefresh(
-                                    background,
-                                )
+                                // Reschedule from the saved switch; this dialog does not change it.
+                                host.updateRefreshPreferences(host.refreshPreferences())
                             }
                         }.fold({
                             sourceSaved(address, consent)
@@ -795,7 +789,7 @@ internal fun WorkflowDialog(
                     onClick = {
                         execute("Local portfolio data erased") {
                             app.wipe()
-                            host.setBackgroundRefresh(false)
+                            applyAutomaticRefresh(app, host, false)
                         }
                         close()
                     },
