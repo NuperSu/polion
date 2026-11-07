@@ -2164,6 +2164,14 @@ private fun HealthCard(
                 fontSize = 12.sp,
             )
         }
+        if (data.sourceStatus.pendingCapped > 0) {
+            Text(
+                "${data.sourceStatus.pendingCapped} address(es) have more unconfirmed transactions than the provider lists; " +
+                    "50 are shown and the rest appear once they confirm.",
+                color = Orange,
+                fontSize = 12.sp,
+            )
+        }
         TextButton(onClick = onUtxoReview, contentPadding = PaddingValues(0.dp)) {
             Text("Review UTXO comparison →", fontSize = 12.sp)
         }

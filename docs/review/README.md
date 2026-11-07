@@ -68,4 +68,9 @@ Verified with `:core:jvmTest`, `:sharedUi:jvmTest`, `:desktopApp:test`, `ktlintC
 - **CORE-9 fixed.** A zero historical CoinGecko quote is treated as missing.
 - **PLAT-5 fixed for the reported sites.** Preferences, favorites, price-refresh consent and refresh details load on the host dispatcher; favorites save in the background.
 - **PLAT-6 fixed.** The lock screen offers erase-and-remove-lock after typed confirmation, so a backup can be restored.
-- **PLAT-7 partial.** Desktop connections wait up to five seconds for a writer, and HTTP 502/503/504 count as temporary and fail over. WAL, the 5 MiB response cap, the custom-endpoint chain check and mempool saturation remain open.
+- **PLAT-7 fixed.**
+  - Desktop connections wait up to five seconds for a writer and use write-ahead logging, as Android already does. Restore refuses to replace the database while a write-ahead log is still open.
+  - HTTP 502/503/504 count as temporary and fail over.
+  - Responses may be up to 16 MiB; a larger one fails with its own message instead of a generic error.
+  - A changed custom endpoint must return the mainnet genesis block before it is saved. Endpoints saved earlier are not re-checked.
+  - An address with more than 50 unconfirmed transactions syncs: confirmed history is complete, the 50 listed pending transactions are accepted, and Data health says that more exist.

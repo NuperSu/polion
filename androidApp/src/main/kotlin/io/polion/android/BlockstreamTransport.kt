@@ -47,8 +47,8 @@ class BlockstreamTransport(
         require(
             (
                 path.startsWith("/address/") || path == "/blocks/tip/hash" || path == "/blocks/tip/height" ||
-                    path.matches(Regex("/block/[0-9a-f]{64}(/txids)?")) ||
-                    path.matches(Regex("/block-height/[0-9]+"))
+                    path.matches(BLOCK_PATH) ||
+                    path.matches(HEIGHT_PATH)
             ) &&
                 !path.contains("..") &&
                 !path.contains('?') &&
@@ -76,7 +76,7 @@ class BlockstreamTransport(
                         val count = input.read(buffer)
                         if (count < 0) break
                         total += count
-                        require(total <= 5 * 1024 * 1024) { "Provider response too large" }
+                        if (total > MAX_RESPONSE_BYTES) throw BitcoinProviderException(BitcoinProviderFailure.RESPONSE_TOO_LARGE)
                         output.write(buffer, 0, count)
                     }
                     output.toByteArray()
@@ -103,3 +103,9 @@ class BlockstreamTransport(
         return if (timestamp < 0) null else (timestamp - System.currentTimeMillis()).coerceAtLeast(0)
     }
 }
+
+private val BLOCK_PATH = Regex("/block/[0-9a-f]{64}(/txids)?")
+private val HEIGHT_PATH = Regex("/block-height/[0-9]+")
+
+/** A history page holds up to 25 full transactions; very large consolidations can exceed several megabytes. */
+private const val MAX_RESPONSE_BYTES = 16 * 1024 * 1024

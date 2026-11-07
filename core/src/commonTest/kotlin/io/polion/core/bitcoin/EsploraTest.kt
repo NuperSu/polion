@@ -75,7 +75,7 @@ class EsploraTest {
     }
 
     @Test
-    fun paginatesConfirmedHistoryAndFlagsMempoolLimit() {
+    fun paginatesConfirmedHistoryAndTreatsTheMempoolLimitAsComplete() {
         val chain = (0 until 25).joinToString(",") { tx(true).replace(id, it.toString(16).padStart(64, '0')) }
         val pending = (25 until 75).joinToString(",") { tx(false).replace(id, it.toString(16).padStart(64, '0')) }
         val fetcher =
@@ -94,7 +94,8 @@ class EsploraTest {
         assertEquals(75, first.observations.size)
         val second = fetcher.fetch(request.copy(cursor = first.nextCursor))
         assertEquals(null, second.nextCursor)
-        assertEquals(Coverage.PARTIAL, second.coverage)
+        // Confirmed history is complete; the scan records separately that only 50 pending transactions were listed.
+        assertEquals(Coverage.COMPLETE, second.coverage)
     }
 
     @Test

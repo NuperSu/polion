@@ -1,5 +1,7 @@
 package io.polion.core.bitcoin
 
+import io.polion.core.model.isCanonicalUnsigned
+
 /** A deliberately limited mainnet public wallet expression. */
 class BitcoinWallet internal constructor(
     val canonical: String,
@@ -75,7 +77,7 @@ fun bitcoinWallet(input: String): BitcoinWallet {
     val fixed = if (ranged) suffix.dropLast(1) else suffix
     val path =
         fixed.map {
-            require(it.matches(Regex("0|[1-9][0-9]*"))) { "Only unhardened numeric derivation and a final wildcard are supported" }
+            require(it.isCanonicalUnsigned()) { "Only unhardened numeric derivation and a final wildcard are supported" }
             it.toLongOrNull()?.takeIf { n -> n < 0x80000000L }?.toInt()
                 ?: throw IllegalArgumentException("Derivation index is out of range")
         }

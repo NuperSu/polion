@@ -348,6 +348,11 @@ internal fun BitcoinHistoryDialog(
         busy = true
         scope.launch {
             try {
+                endpointProblem(host, data.sourceEndpoint, endpoint.trim(), consent)?.let {
+                    error = it
+                    busy = false
+                    return@launch
+                }
                 val scheduled =
                     withContext(host.dispatcher) {
                         app.configureBitcoinSource(endpoint.trim(), consent)
@@ -433,4 +438,15 @@ internal fun BitcoinHistoryDialog(
             }) { Text("Cancel") }
         })
     }
+}
+
+/** A changed custom endpoint is checked for Bitcoin mainnet before it is saved; the default endpoint is mainnet. */
+internal suspend fun endpointProblem(
+    host: PlatformActions,
+    previous: String,
+    endpoint: String,
+    consent: Boolean,
+): String? {
+    if (!consent || endpoint == previous || endpoint == io.polion.core.application.DEFAULT_ENDPOINT) return null
+    return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { host.checkBitcoinEndpoint(endpoint) }
 }

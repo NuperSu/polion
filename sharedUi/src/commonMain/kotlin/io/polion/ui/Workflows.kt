@@ -639,6 +639,10 @@ internal fun WorkflowDialog(
                         return
                     }
                     scope.launch {
+                        endpointProblem(host, data.sourceEndpoint, address, consent)?.let {
+                            error = it
+                            return@launch
+                        }
                         runCatching {
                             withContext(host.dispatcher) {
                                 app.setSourceEndpoint(address)

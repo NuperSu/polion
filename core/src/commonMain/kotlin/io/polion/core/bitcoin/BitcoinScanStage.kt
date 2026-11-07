@@ -4,6 +4,7 @@ import io.polion.core.ledger.ActivityRepository
 import io.polion.core.ledger.ActivityStatus
 import io.polion.core.model.AccountId
 import io.polion.core.model.ActivityId
+import io.polion.core.model.isHash64
 import io.polion.core.storage.RawObservation
 import io.polion.core.storage.SqliteDatabase
 import io.polion.core.storage.Store
@@ -153,7 +154,7 @@ class BitcoinScanStage(
                 val hash = if (confirmed) status.getValue("block_hash").jsonPrimitive.content else null
                 val height = if (confirmed) status.getValue("block_height").jsonPrimitive.long else null
                 if (hash != null) {
-                    require(hash.matches(Regex("[0-9a-f]{64}")) && height != null && height >= 0)
+                    require(hash.isHash64() && height != null && height >= 0)
                     db.execute("INSERT OR IGNORE INTO bitcoin_scan_blocks VALUES (?, ?, 0)", listOf(hash, height.toString()))
                     val recorded =
                         db
@@ -216,7 +217,7 @@ class BitcoinScanStage(
             val height = block[1]!!.toLong()
             val payload = transport.get("/block/$hash/txids")
             val txids = Json.parseToJsonElement(payload).jsonArray.map { it.jsonPrimitive.content }
-            require(txids.isNotEmpty() && txids.all { it.matches(Regex("[0-9a-f]{64}")) } && txids.distinct().size == txids.size)
+            require(txids.isNotEmpty() && txids.all { it.isHash64() } && txids.distinct().size == txids.size)
             val indices = txids.withIndex().associate { it.value to it.index }
             var after = ""
             var blockSaved = false
@@ -295,7 +296,7 @@ class BitcoinScanStage(
         onBlock: (validated: Int, total: Int) -> Unit = { _, _ -> },
     ) {
         val session = requireNotNull(session()) { "Resumable block validation requires a pending scan" }
-        require(anchor.height >= session.anchorHeight && anchor.hash.matches(Regex("[0-9a-f]{64}")))
+        require(anchor.height >= session.anchorHeight && anchor.hash.isHash64())
         require(
             db.query("SELECT 1 FROM bitcoin_scan_blocks WHERE height>? LIMIT 1", listOf(anchor.height.toString())).isEmpty(),
         ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }

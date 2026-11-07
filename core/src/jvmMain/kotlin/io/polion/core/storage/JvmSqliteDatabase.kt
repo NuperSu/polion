@@ -9,6 +9,9 @@ class JvmSqliteDatabase(
         DriverManager.getConnection("jdbc:sqlite:$path").apply {
             // The desktop opens several connections to one file; a writer makes the others wait instead of failing at once.
             createStatement().use { it.execute("PRAGMA busy_timeout = 5000") }
+            // Write-ahead logging lets readers continue while a sync writes, as Android's driver already does. The last
+            // connection to close checkpoints and removes the -wal file, so a closed database is one self-contained file.
+            if (path != ":memory:") createStatement().use { it.executeQuery("PRAGMA journal_mode = WAL").close() }
         }
     private val lock = Any()
 

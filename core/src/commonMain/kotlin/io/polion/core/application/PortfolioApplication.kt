@@ -68,6 +68,7 @@ import io.polion.core.model.Rational
 import io.polion.core.model.SourceId
 import io.polion.core.model.SyncJobId
 import io.polion.core.model.TrackingTargetId
+import io.polion.core.model.isHash64
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
 import io.polion.core.ownership.Owner
@@ -223,6 +224,8 @@ data class SourceStatus(
     val utxoMismatchCount: Int = 0,
     /** False when the latest accepted scan could not obtain the provider UTXO comparison. */
     val utxoComparisonAvailable: Boolean = true,
+    /** Addresses with more unconfirmed transactions than the provider lists; the rest appear once they confirm. */
+    val pendingCapped: Int = 0,
 )
 
 data class BitcoinScanProgress(
@@ -302,6 +305,12 @@ data class GeneralPreferences(
     /** Charts draw candles instead of a line. */
     val candleCharts: Boolean = false,
 )
+
+/** The default public Esplora endpoint. */
+const val DEFAULT_ENDPOINT = "https://blockstream.info/api"
+
+/** The most unconfirmed transactions Esplora returns for one address. */
+const val MEMPOOL_PAGE = 50L
 
 /** Privacy lock delays offered in Settings: immediately, 1, 5 and 15 minutes, and 1 hour. */
 val LOCK_DELAYS = listOf(0L, 60_000L, 300_000L, 900_000L, 3_600_000L)
@@ -404,6 +413,7 @@ class PortfolioApplication(
                 setting("source_in_progress") == "true",
                 bitcoinUtxoReview(limit = 1).total,
                 setting("utxo_comparison_available") != "false",
+                setting("pending_capped")?.toIntOrNull() ?: 0,
             ),
             setting("sample_data") == "true",
             ledger.activities.count {
@@ -1060,7 +1070,7 @@ class PortfolioApplication(
             )
         }
         val startTip = transport.get("/blocks/tip/hash").trim()
-        require(startTip.matches(Regex("[0-9a-f]{64}"))) { "Invalid chain tip" }
+        require(startTip.isHash64()) { "Invalid chain tip" }
         val anchor = Json.parseToJsonElement(transport.get("/block/$startTip")).jsonObject
         require(anchor.getValue("id").jsonPrimitive.content == startTip) { "Invalid chain anchor" }
         val anchorHeight = anchor.getValue("height").jsonPrimitive.long
@@ -1098,7 +1108,7 @@ class PortfolioApplication(
                 throw BitcoinProviderException(BitcoinProviderFailure.LAGGING_CHAIN)
             }
             val canonical = transport.get("/block-height/${previousCheckpoint.height}").trim()
-            require(canonical.matches(Regex("[0-9a-f]{64}"))) { "Invalid checkpoint response" }
+            require(canonical.isHash64()) { "Invalid checkpoint response" }
             if (canonical != previousCheckpoint.hash) {
                 checkpointCanonical = false
                 val continuity =
@@ -1242,10 +1252,17 @@ class PortfolioApplication(
                     scan.mempoolDigest != null && scan.mempoolDigest == sha256(transport.get("/address/${scan.address}/txs/mempool"))
                 },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+            // Esplora lists at most 50 unconfirmed transactions per address; seeing exactly that many of a larger pool is
+            // complete for what the provider can show, and the page was already recorded as partial coverage.
             require(
-                scanned.all { scan -> summary(scan.address) == bitcoinStage.seenCounts(scan.address) },
+                scanned.all { scan ->
+                    val (chain, pending) = summary(scan.address)
+                    val (seenChain, seenPending) = bitcoinStage.seenCounts(scan.address)
+                    chain == seenChain && (pending == seenPending || pending > MEMPOOL_PAGE && seenPending == MEMPOOL_PAGE)
+                },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
             val acceptedCounts = scanned.associate { it.address to bitcoinStage.seenCounts(it.address) }
+            val pendingCapped = scanned.count { scan -> summary(scan.address).second > MEMPOOL_PAGE }
             require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
@@ -1330,6 +1347,7 @@ class PortfolioApplication(
                     graphState = stagedGraph::state,
                 )
                 putSetting("utxo_comparison_available", (mismatchCount != null).toString())
+                putSetting("pending_capped", pendingCapped.toString())
                 mismatchCount?.let { putSetting("utxo_mismatch_count", it.toString()) }
                 bitcoinStage.clearInTransaction()
                 putSetting("bitcoin_accepted_scan", acceptedScanJson(fingerprint, acceptedCounts, verifyBlockPositions))
@@ -1825,7 +1843,7 @@ class PortfolioApplication(
             .query("SELECT key, value FROM application_settings WHERE key LIKE 'provider_endpoint:%'")
             .associate { it[0]!!.removePrefix("provider_endpoint:") to it[1]!! }
 
-    fun sourceEndpoint(): String = setting("source_endpoint") ?: "https://blockstream.info/api"
+    fun sourceEndpoint(): String = setting("source_endpoint") ?: DEFAULT_ENDPOINT
 
     fun configureBitcoinSource(
         endpoint: String,

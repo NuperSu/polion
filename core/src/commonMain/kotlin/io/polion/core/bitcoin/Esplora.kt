@@ -20,6 +20,8 @@ import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.NetworkId
 import io.polion.core.model.SourceRecordId
+import io.polion.core.model.isCanonicalUnsigned
+import io.polion.core.model.isHash64
 import io.polion.core.storage.RawObservation
 import io.polion.core.storage.sha256
 import kotlinx.serialization.json.Json
@@ -58,7 +60,7 @@ class EsploraHistoryFetcher(
         val prefix = "/address/$address/txs"
         val partial = request.cursor?.startsWith("partial:") == true
         val cursor = request.cursor?.substringAfter(':')
-        require(cursor == null || cursor.matches(Regex("[0-9a-f]{64}")))
+        require(cursor == null || cursor.isHash64())
         val mempool = if (cursor == null) parseArray(transport.get("$prefix/mempool")) else JsonArray(emptyList())
         require(mempool.size <= 50)
         val chain = parseArray(transport.get("$prefix/chain" + (cursor?.let { "/$it" } ?: "")))
@@ -70,7 +72,9 @@ class EsploraHistoryFetcher(
         require(parsed.all { tx -> (tx.inputs + tx.outputs).any { it.address == address } }) { "Unrelated transaction in address history" }
         val ids = parsed.map { it.id }
         require(ids.distinct().size == ids.size) { "Duplicate transaction in page" }
-        val isPartial = partial || mempool.size == 50
+        // Esplora lists at most 50 unconfirmed transactions; the confirmed history is still complete, and later ones
+        // appear once they confirm. The scan records which addresses hit that limit.
+        val isPartial = partial
         val next = if (chain.size == 25) (if (isPartial) "partial:" else "chain:") + ids.last() else null
         val observations =
             txs.mapIndexed { index, tx ->
@@ -102,7 +106,7 @@ private fun JsonObject.amount(key: String): ExactInteger {
     val number = getValue(key).jsonPrimitive
     require(!number.isString)
     val text = number.content
-    require(text.matches(Regex("0|[1-9][0-9]*")))
+    require(text.isCanonicalUnsigned())
     return ExactInteger.parse(text)
 }
 
@@ -124,7 +128,7 @@ private fun output(value: JsonObject): Output = Output(value["scriptpubkey_addre
 
 private fun parseTransaction(value: JsonObject): Transaction {
     val id = value.str("txid")
-    require(id.matches(Regex("[0-9a-f]{64}")))
+    require(id.isHash64())
     val vin = value.getValue("vin").jsonArray
     require(vin.isNotEmpty())
     val coinbase = vin.any { it.jsonObject["is_coinbase"]?.jsonPrimitive?.boolean == true }
@@ -251,7 +255,7 @@ class BitcoinDecoder(
             if (order.first() == "bitcoin-order") {
                 val height = order[1].toLong()
                 val index = order[2].toInt()
-                require(height >= 0 && index >= 0 && order[3].matches(Regex("[0-9a-f]{64}")))
+                require(height >= 0 && index >= 0 && order[3].isHash64())
                 val status =
                     Json
                         .parseToJsonElement(observation.payload)

@@ -2,6 +2,7 @@ package io.polion.core.bitcoin
 
 import io.polion.core.model.AccountId
 import io.polion.core.model.ExactInteger
+import io.polion.core.model.isCanonicalUnsigned
 import io.polion.core.storage.sha256
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -130,7 +131,7 @@ private fun JsonObject.flag(key: String): Boolean = this[key]?.takeIf { it != Js
 
 private fun JsonObject.satoshis(key: String): ExactInteger {
     val number = getValue(key).jsonPrimitive
-    require(!number.isString && number.content.matches(Regex("0|[1-9][0-9]*"))) { "Invalid amount" }
+    require(!number.isString && number.content.isCanonicalUnsigned()) { "Invalid amount" }
     return ExactInteger.parse(number.content)
 }
 

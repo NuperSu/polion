@@ -66,6 +66,16 @@ class BitcoinChainAcceptanceTest {
         /** An unconfirmed transaction paying the address that the provider reports once [pendingTransaction] is set. */
         var pendingTransaction = false
 
+        /** More unconfirmed transactions than Esplora lists: the summary counts all of them, the list stops at 50. */
+        var busyMempool = 0
+
+        private fun busy(index: Int): String =
+            """
+            {"txid":"${index.toString(16).padStart(64, 'd')}","vin":[{"txid":"${"e".repeat(64)}","vout":$index,
+            "prevout":{"scriptpubkey_address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT","value":1000}}],
+            "vout":[{"scriptpubkey_address":"$address","value":250}],"fee":750,"status":{"confirmed":false}}
+            """.trimIndent().replace("\n", "")
+
         private fun transaction(
             id: String,
             height: Long,
@@ -98,7 +108,15 @@ class BitcoinChainAcceptanceTest {
                     path == "/block/${canonical(tipHeight)}" -> """{"id":"${canonical(tipHeight)}","height":$tipHeight}"""
                     path.startsWith("/block-height/") -> canonical(path.removePrefix("/block-height/").toLong())
                     path == "/address/$address" ->
-                        """{"chain_stats":{"tx_count":${if (extraTransaction) 2 else 1}},"mempool_stats":{"tx_count":${if (pendingTransaction) 1 else 0}}}"""
+                        """{"chain_stats":{"tx_count":${if (extraTransaction) 2 else 1}},"mempool_stats":{"tx_count":${if (busyMempool > 0) {
+                            busyMempool
+                        } else if (pendingTransaction) {
+                            1
+                        } else {
+                            0
+                        }}}}"""
+                    path == "/address/$address/txs/mempool" && busyMempool > 0 ->
+                        "[${(0 until minOf(busyMempool, 50)).joinToString(",") { busy(it) }}]"
                     path == "/address/$address/txs/mempool" -> if (pendingTransaction) "[${pending()}]" else "[]"
                     path == "/address/$address/txs/chain" -> "[${chainPayloads().joinToString(",")}]"
                     path == "/address/$address/txs/chain/$txid" -> "[]"
@@ -179,6 +197,21 @@ class BitcoinChainAcceptanceTest {
             assertFalse(app.lastRefreshSkipped())
             assertTrue("/address/$address/txs/chain" in provider.calls, provider.calls.toString())
             assertEquals(2, app.snapshot().activityTotal)
+        }
+    }
+
+    @Test
+    fun anAddressWithMoreUnconfirmedTransactionsThanEsploraListsStillCompletes() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = ChainProvider()
+            provider.busyMempool = 60
+            // Confirmed history is complete; the 50 visible pending transactions are accepted and the cap is recorded.
+            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            val snapshot = app.snapshot()
+            assertEquals(50, snapshot.pendingCount)
+            assertEquals(1, snapshot.sourceStatus.pendingCapped)
+            assertEquals(null, snapshot.sourceStatus.lastError)
         }
     }
 

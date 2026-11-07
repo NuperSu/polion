@@ -190,6 +190,12 @@ interface PlatformActions {
     /** Saves the lock delay for this device; one of [io.polion.core.application.LOCK_DELAYS]. Main thread. */
     fun setLockDelay(millis: Long) {}
 
+    /**
+     * Asks a custom Esplora endpoint for its block 0 and returns a message when it is unreachable or not Bitcoin mainnet,
+     * or null when it is. Blocking; call off the main thread.
+     */
+    fun checkBitcoinEndpoint(endpoint: String): String? = null
+
     /** Shown in Settings when the user has not named this device. */
     val defaultDeviceName: String get() = "This device"
 

@@ -1,6 +1,7 @@
 package io.polion.core.backup
 
 import io.polion.core.bitcoin.BitcoinScanStage
+import io.polion.core.model.isLowerIdentifier
 import io.polion.core.storage.SqliteDatabase
 
 /**
@@ -42,7 +43,7 @@ class PortableBackup(
 
     init {
         require(tables.isNotEmpty() && tables.distinct().size == tables.size)
-        require(tables.all { it.matches(Regex("[a-z][a-z0-9_]*")) && !it.contains("secret") && !it.contains("credential") })
+        require(tables.all { it.isLowerIdentifier() && !it.contains("secret") && !it.contains("credential") })
     }
 
     /** Streams one consistent snapshot of every durable table into [sink]. */
@@ -64,7 +65,7 @@ class PortableBackup(
             val metadata = db.query("PRAGMA table_info($table)")
             require(metadata.none { (it[2] ?: "").uppercase().contains("BLOB") }) { "Binary columns require an explicit backup codec" }
             val columns = metadata.map { it[1]!! }
-            require(columns.isNotEmpty() && columns.all { it.matches(Regex("[a-z][a-z0-9_]*")) })
+            require(columns.isNotEmpty() && columns.all { it.isLowerIdentifier() })
             out.field(table)
             out.field(columns.size.toString())
             columns.forEach(out::field)

@@ -296,6 +296,8 @@ private class AndroidHost(
                 synchronized(AutomaticPriceGate.lock) {
                     db.close()
                     try {
+                                // Another connection still holding a write-ahead log would replay it into the restored file.
+                                check(walIsEmpty(file)) { "Polion is still writing; retry the restore" }
                         Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
                         swapped = true
                     } finally {
@@ -532,6 +534,16 @@ private class AndroidHost(
         onResult(if (success) "Privacy lock removed" else "Could not remove privacy lock")
     }
 
+    override fun checkBitcoinEndpoint(endpoint: String): String? =
+        try {
+            io.polion.core.bitcoin.requireMainnetEndpoint(BlockstreamTransport(endpoint))
+            null
+        } catch (failure: io.polion.core.bitcoin.BitcoinProviderException) {
+            failure.reason.userMessage
+        } catch (_: Exception) {
+            "Could not check this endpoint. Use an HTTPS Esplora API address."
+        }
+
     override fun lock() {
         if (lockStore.hasLock) locked.value = true
     }
@@ -608,4 +620,10 @@ private class AndroidHost(
         closed = true
         executor.execute { if (::db.isInitialized) db.close() }
     }
+}
+
+/** True when [database] has no pending write-ahead log, so the file alone holds every committed change. */
+internal fun walIsEmpty(database: java.nio.file.Path): Boolean {
+    val wal = database.resolveSibling("${database.fileName}-wal")
+    return !java.nio.file.Files.exists(wal) || java.nio.file.Files.size(wal) == 0L
 }
