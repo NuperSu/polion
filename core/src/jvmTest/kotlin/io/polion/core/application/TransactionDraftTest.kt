@@ -156,6 +156,31 @@ class TransactionDraftTest {
         }
     }
 
+    @Test fun zeroBasisRewardsReplaceOnlyRewardCostAndAreReversible() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 10000L }
+            setup(app)
+            app.saveTransaction(draft("buy", TransactionType.BUY, "1", "100", time = 2000))
+            app.saveTransaction(draft("reward", TransactionType.REWARD, "0.1", "120", time = 3000))
+            app.saveTransaction(draft("unpriced", TransactionType.REWARD, "0.2", time = 3500))
+            app.saveTransaction(draft("sell", TransactionType.SELL, "1.3", "150", time = 4000))
+
+            fun report() = app.accountingReport().report
+            // The unpriced reward has unknown basis, so the gain is unknown until the policy gives it zero.
+            assertNull(report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
+
+            app.setZeroBasisRewards(true)
+            assertTrue(app.generalPreferences().zeroBasisRewards)
+            val zero = report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }
+            // Proceeds 195; basis 100 bought + 0 for both rewards.
+            assertEquals(Rational.of("95"), zero.gain)
+
+            app.setZeroBasisRewards(false)
+            assertNull(report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
+            assertEquals(TransactionType.REWARD, app.transactionDraft(ActivityId("reward"))?.type)
+        }
+    }
+
     @Test fun failedTreatmentWriteRollsBackAllLegsNotesAndDraft() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }

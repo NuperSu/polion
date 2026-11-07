@@ -95,6 +95,47 @@ class PortfolioApplicationTest {
     }
 
     @Test
+    fun generalPreferencesPersistThroughRestartAndBackup() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 1000L }
+            assertEquals(GeneralPreferences(), app.generalPreferences())
+            app.setLandingPage(LandingPage.INSIGHTS)
+            app.setSecondaryCurrency(AssetId("EUR"))
+            app.setShowPortfolioChart(false)
+            app.setZeroBasisRewards(true)
+            app.setDeviceName("  Anton's Pixel  ")
+            assertFails { app.setSecondaryCurrency(AssetId("JPY")) }
+            assertFails { app.setDeviceName("two\nlines") }
+            assertFails { app.setDeviceName("x".repeat(41)) }
+            val expected = GeneralPreferences(LandingPage.INSIGHTS, AssetId("EUR"), false, true, "Anton's Pixel")
+            assertEquals(expected, PortfolioApplication(db) { 1000L }.generalPreferences())
+            val backup = app.exportBackup("fixture-password".toCharArray())
+            JvmSqliteDatabase(":memory:").use { staging ->
+                app.restoreToStaging(staging, backup, "fixture-password".toCharArray())
+                assertEquals(expected, PortfolioApplication(staging) { 1000L }.generalPreferences())
+            }
+            app.setSecondaryCurrency(null)
+            app.setDeviceName(" ")
+            assertEquals(expected.copy(secondaryCurrency = null, deviceName = null), app.generalPreferences())
+        }
+    }
+
+    @Test
+    fun secondaryCurrencyIsRefreshedAndValuesTheSameBalances() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 1000L }
+            app.setCurrency(AssetId("USD"))
+            app.setSecondaryCurrency(AssetId("EUR"))
+            assertEquals(listOf("USD", "EUR"), app.automaticPriceCurrencies().map { it.value })
+            val snapshot = app.snapshot()
+            assertEquals(AssetId("EUR"), snapshot.secondaryCurrency)
+            assertEquals(snapshot.valuations.map { it.amount }, snapshot.secondaryValuations.map { it.amount })
+            app.setSecondaryCurrency(AssetId("USD"))
+            assertEquals(null, app.snapshot().secondaryCurrency)
+        }
+    }
+
+    @Test
     fun csvEscapesSpreadsheetFormulasWithoutChangingSignedAmounts() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 15552000000L }

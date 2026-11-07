@@ -254,12 +254,29 @@ data class PortfolioSnapshot(
     val sourceConsent: Boolean,
     val activityNetworks: List<String> = emptyList(),
     val marketCoins: List<MarketCoin> = emptyList(),
+    /** The same balances valued in the secondary currency from Settings; null when none is chosen or it equals [currency]. */
+    val secondaryCurrency: AssetId? = null,
+    val secondaryValuations: List<AssetValuation> = emptyList(),
 )
 
 /** Wallet discovery refused an address because another account already tracks it. The message is safe to show. */
 class BitcoinDiscoveryConflict(
     message: String,
 ) : IllegalArgumentException(message)
+
+enum class LandingPage { MAIN, PORTFOLIO, INSIGHTS }
+
+data class GeneralPreferences(
+    val landing: LandingPage = LandingPage.MAIN,
+    val secondaryCurrency: AssetId? = null,
+    val showPortfolioChart: Boolean = true,
+    val zeroBasisRewards: Boolean = false,
+    /** Null means the host's own device name. */
+    val deviceName: String? = null,
+)
+
+/** Fiat currencies with automatic Kraken prices. */
+val DISPLAY_CURRENCIES = listOf("USD", "EUR", "GBP")
 
 /** Shared persisted workflows. A source connector is required before coverage can be complete. */
 class PortfolioApplication(
@@ -313,6 +330,7 @@ class PortfolioApplication(
         val fullBalance = holdings.current(coverage, at)
         val balance = fullBalance.copy(quantities = fullBalance.quantities.filterKeys { it.account in selected })
         val currency = filter.portfolio?.let { id -> AssetId(catalog.portfolios.single { it.id == id }.valuationCurrency) } ?: currency()
+        val secondary = generalPreferences().secondaryCurrency?.takeIf { it != currency }
         val candidates =
             ledger.activities
                 .filter { item ->
@@ -376,6 +394,8 @@ class PortfolioApplication(
                 val result = market.lookup(asset, currency, at, at, pricePolicy(current = true))
                 result.observation?.let { MarketCoin(asset, market.metadataAt(asset, at), result.status, it) }
             },
+            secondary,
+            secondary?.let { valuations(balance, it, at, pricePolicy(current = true)) }.orEmpty(),
         )
     }
 
@@ -645,6 +665,22 @@ class PortfolioApplication(
         }
     }
 
+    /** Reward acquisitions become known zero-cost lots in the report currency; other treatments are unchanged. */
+    private fun withZeroBasisRewards(
+        activity: Activity,
+        saved: List<io.polion.core.accounting.Treatment>,
+        quote: AssetId,
+    ): List<io.polion.core.accounting.Treatment> {
+        val rewards = activity.movements.filter { it.role == io.polion.core.ledger.MovementRole.REWARD }.map { it.id }.toSet()
+        return saved.map { treatment ->
+            if (treatment is io.polion.core.accounting.Treatment.Acquire && treatment.movement in rewards) {
+                treatment.copy(cost = QuoteValue(quote, Rational.ZERO), opening = false)
+            } else {
+                treatment
+            }
+        }
+    }
+
     fun accountingReport(portfolio: PortfolioId? = null): AccountingView {
         ensureDefaultAssets()
         val catalog = ownership.load()
@@ -654,6 +690,7 @@ class PortfolioApplication(
         val orderingUncertain = mutableListOf<ActivityId>()
         val currencyMismatch = mutableListOf<ActivityId>()
         val quote = portfolioCurrency(portfolio)
+        val zeroBasisRewards = generalPreferences().zeroBasisRewards
         val priceAt = now()
         val confirmedLedger = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
         // Replay each owner's full inventory before selecting accounts, preserving transferred lot age and basis.
@@ -684,7 +721,7 @@ class PortfolioApplication(
                 confirmed.forEach { entry ->
                     val activity = entry.activity
                     try {
-                        val saved = treatments.load(activity.id)
+                        val saved = treatments.load(activity.id).let { if (zeroBasisRewards) withZeroBasisRewards(activity, it, quote) else it }
                         if (saved.isEmpty()) {
                             if (affectsSelection(activity)) missing.add(activity.id)
                             incompleteAssets.addAll(ownerAssets(activity))
@@ -1490,16 +1527,16 @@ class PortfolioApplication(
             putSetting("automatic_price_scope", if (accepted) "all" else "default")
         }
 
-    /** Default and saved portfolio currencies supported by the automatic Bitcoin provider. */
+    /** Default, secondary and saved portfolio currencies supported by the automatic Bitcoin provider. */
     fun automaticPriceCurrencies(): List<AssetId> =
         (
-            listOf(currency()) +
+            listOf(currency()) + listOfNotNull(generalPreferences().secondaryCurrency) +
                 if (automaticPortfolioPriceConsent()) {
                     db.query("SELECT DISTINCT currency FROM portfolios").map { AssetId(requireNotNull(it.single())) }
                 } else {
                     emptyList()
                 }
-        ).filter { it.value in setOf("USD", "EUR", "GBP") }
+        ).filter { it.value in DISPLAY_CURRENCIES }
             .distinct()
 
     fun refreshAutomaticPriceSet(
@@ -1807,6 +1844,49 @@ class PortfolioApplication(
             "asset_list_preference",
             "${preference.sort.name}:${if (preference.hideEmpty) 1 else 0}:${if (preference.hideSmall) 1 else 0}",
         )
+    }
+
+    /** Display and accounting preferences from Settings; stored in `application_settings`, so backups include them. */
+    fun generalPreferences(): GeneralPreferences =
+        GeneralPreferences(
+            landing = LandingPage.entries.firstOrNull { it.name == setting("landing_page") } ?: LandingPage.MAIN,
+            secondaryCurrency = setting("secondary_currency")?.takeIf { it in DISPLAY_CURRENCIES }?.let(::AssetId),
+            showPortfolioChart = setting("show_portfolio_chart") != "false",
+            zeroBasisRewards = setting("zero_basis_rewards") == "true",
+            deviceName = setting("device_name"),
+        )
+
+    fun setLandingPage(page: LandingPage) = putSetting("landing_page", page.name)
+
+    /** Null removes the secondary currency. Automatic price refresh also fetches the chosen currency. */
+    fun setSecondaryCurrency(currency: AssetId?) =
+        db.transaction {
+            if (currency == null) {
+                db.execute("DELETE FROM application_settings WHERE key='secondary_currency'")
+            } else {
+                require(currency.value in DISPLAY_CURRENCIES) { "Unsupported currency" }
+                putSetting("secondary_currency", currency.value)
+            }
+            putSetting("automatic_price_generation", priceRequestNonce())
+        }
+
+    fun setShowPortfolioChart(show: Boolean) = putSetting("show_portfolio_chart", show.toString())
+
+    /**
+     * Acquisitions recorded as rewards (mining, staking, forks, airdrops) count with zero cost basis instead of their
+     * recorded value. The recorded value is kept, so turning this off restores it; reports replay with the current choice.
+     */
+    fun setZeroBasisRewards(enabled: Boolean) = putSetting("zero_basis_rewards", enabled.toString())
+
+    /** Null or blank restores the host's default device name. */
+    fun setDeviceName(name: String?) {
+        val trimmed = name?.trim().orEmpty()
+        if (trimmed.isEmpty()) {
+            db.execute("DELETE FROM application_settings WHERE key='device_name'")
+        } else {
+            require(trimmed.length <= 40 && trimmed.none { it.isISOControl() }) { "Use up to 40 characters on one line" }
+            putSetting("device_name", trimmed)
+        }
     }
 
     fun dashboardWidgets(): List<DashboardWidgetPreference> {
