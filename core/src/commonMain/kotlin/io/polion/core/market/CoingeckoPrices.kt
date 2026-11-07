@@ -28,7 +28,8 @@ object CoingeckoPrices {
         val prices = market["current_price"]?.takeIf { it !is JsonNull }?.jsonObject ?: return null
         val value = prices[quoteCurrency]?.takeIf { it !is JsonNull }?.jsonPrimitive ?: return null
         if (value.isString || !value.content.matches(DECIMAL)) return null
-        return ExactDecimal.parse(value.content)
+        // A zero quote is not a price; it is treated like a missing one.
+        return ExactDecimal.parse(value.content).takeIf { it.coefficient.sign > 0 }
     }
 
     private val DECIMAL = Regex("(0|[1-9][0-9]*)(\\.[0-9]+)?")

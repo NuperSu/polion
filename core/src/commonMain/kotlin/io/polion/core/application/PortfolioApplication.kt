@@ -1851,7 +1851,8 @@ class PortfolioApplication(
         balance: BalanceView,
         currency: AssetId,
         knownAt: Long,
-        policy: PricePolicy = pricePolicy(),
+        // Same rule everywhere: a balance within 24 hours of now uses the short current-price window.
+        policy: PricePolicy = pricePolicy(current = balance.atMillis >= knownAt - 86_400_000L),
     ): List<AssetValuation> =
         balance.quantities.entries
             .groupBy { it.key.asset }

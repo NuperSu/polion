@@ -26,7 +26,7 @@ class CoingeckoPricesTest {
 
     @Test fun parsesQuotedHistoricalPriceExactly() {
         assertEquals(ExactDecimal.parse("34567.891"), CoingeckoPrices.parseHistorical(history("34567.891"), "usd"))
-        assertEquals(ExactDecimal.parse("0"), CoingeckoPrices.parseHistorical(history("0"), "usd"))
+        assertNull(CoingeckoPrices.parseHistorical(history("0"), "usd"))
     }
 
     @Test fun missingOrMalformedQuotesAreNeverZero() {

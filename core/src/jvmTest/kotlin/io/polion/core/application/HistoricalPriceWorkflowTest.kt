@@ -107,7 +107,8 @@ class HistoricalPriceWorkflowTest {
                     .single()
                     .priceStatus,
             )
-            assertEquals(PriceStatus.FRESH, app.history(clock).single().priceStatus)
+            // The same quote at the same instant has one status on every view.
+            assertEquals(PriceStatus.STALE, app.history(clock).single().priceStatus)
             assertEquals(
                 PriceStatus.STALE,
                 app
