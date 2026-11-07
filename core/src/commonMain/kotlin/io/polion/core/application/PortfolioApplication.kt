@@ -2605,6 +2605,39 @@ class PortfolioApplication(
             db.query("SELECT value FROM application_settings WHERE key='currency'").singleOrNull()?.single() ?: "USD",
         )
 
+    /**
+     * Retires the example records. The ledger is append-only, so example transactions are reversed rather than deleted;
+     * example prices are withdrawn so they cannot override real quotes; the example account is archived and the example
+     * portfolio removed; an owner still named "Example owner" becomes "Personal". Each step can be repeated, and the
+     * example flag is cleared last, so an interrupted removal can be retried.
+     */
+    fun removeExampleData() {
+        require(setting("sample_data") == "true") { "No example data to remove" }
+        val at = now().toString()
+        db.transaction {
+            db.query("SELECT id FROM market_prices WHERE manual=1 AND id LIKE 'demo-price-%'").forEach { row ->
+                db.execute("INSERT OR IGNORE INTO market_override_withdrawals VALUES (?, ?, ?)", listOf(row.single(), at, at))
+            }
+        }
+        activities
+            .current()
+            .filter { it.manual && it.id.value.startsWith("demo-") && it.status != io.polion.core.ledger.ActivityStatus.REVERSED }
+            .forEach { activities.save(it.copy(status = io.polion.core.ledger.ActivityStatus.REVERSED)) }
+        val example = AccountId("demo-wallet")
+        if (ownership.load().accounts.any { it.id == example && "polion:archived" !in it.tags }) archiveAccount(example)
+        updateOwnership { catalog ->
+            catalog.copy(
+                portfolios = catalog.portfolios.filterNot { it.id.value == "demo-portfolio" },
+                owners =
+                    catalog.owners.map {
+                        if (it.id.value == "demo-owner" && it.label == "Example owner") it.copy(label = "Personal") else it
+                    },
+            )
+        }
+        db.execute("DELETE FROM application_settings WHERE key='sample_data'")
+        invalidate()
+    }
+
     /** Seeds example records only when the portfolio is empty and the user explicitly requests them. */
     fun seedDemo() {
         require(ownership.load().owners.isEmpty() && activities.current().isEmpty()) { "Example data requires an empty portfolio" }
