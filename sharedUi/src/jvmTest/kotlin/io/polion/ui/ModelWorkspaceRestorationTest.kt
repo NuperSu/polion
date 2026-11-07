@@ -180,8 +180,7 @@ class ModelWorkspaceRestorationTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { PolionApp(app, host) }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").performTextInput("demo-deposit")
                     onNodeWithText("Back").performClick()
@@ -193,8 +192,7 @@ class ModelWorkspaceRestorationTest {
                     onNodeWithText("Back").performClick()
                     onNodeWithText("Search transactions").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("model-back").performClick()
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("demo-deposit").assertIsDisplayed()
                 }
@@ -349,8 +347,7 @@ class ModelWorkspaceRestorationTest {
                             CompositionLocalProvider(LocalSaveableStateRegistry provides registry) { PolionApp(app, host) }
                         }
                     }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNode(hasText("Deposit") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
                         .performScrollTo()

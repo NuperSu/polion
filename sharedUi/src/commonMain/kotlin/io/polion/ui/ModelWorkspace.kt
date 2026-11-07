@@ -344,7 +344,7 @@ internal fun ModelWorkspace(
             showBack = selectedAsset != null || page == Page.ACCOUNTS || page == Page.SETTINGS,
             refreshing = refreshing,
             refreshQueued = refreshQueued,
-            menuItems = listOf("Accounts", "Settings", "Advanced tools", "Refresh details"),
+            menuItems = listOf("Settings"),
             dark = dark,
         ),
         onPage = {
@@ -360,9 +360,7 @@ internal fun ModelWorkspace(
         onBack = { if (selectedAsset != null) onAsset(null) else onBackAux() },
         onMenu = {
             when (it) {
-                "Accounts" -> onPage(Page.ACCOUNTS)
                 "Settings" -> onPage(Page.SETTINGS)
-                "Advanced tools" -> onAdvanced(Page.MORE)
                 else -> onRefreshDetails()
             }
         },

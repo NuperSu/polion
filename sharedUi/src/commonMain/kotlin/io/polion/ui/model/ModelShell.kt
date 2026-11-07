@@ -221,9 +221,24 @@ private fun ModelHeader(
                 Modifier
                     .size(40.dp)
                     .clickable {
-                        if (back) onBack() else expanded = true
-                    }.semantics { contentDescription = if (back) "Back" else "Settings and tools" }
-                    .testTag(if (back) "model-back" else "model-menu"),
+                        // A single destination opens directly instead of through a one-item menu.
+                        if (back) {
+                            onBack()
+                        } else if (menuItems.size == 1) {
+                            menu(menuItems.single())
+                        } else {
+                            expanded = true
+                        }
+                    }.semantics {
+                        contentDescription =
+                            if (back) {
+                                "Back"
+                            } else if (menuItems.size == 1) {
+                                menuItems.single()
+                            } else {
+                                "Settings and tools"
+                            }
+                    }.testTag(if (back) "model-back" else "model-menu"),
                 contentAlignment = Alignment.Center,
             ) {
                 if (back) Text("‹", fontSize = 32.sp) else ModelIcon("settings", Modifier.size(24.dp), MaterialTheme.colorScheme.onSurface)

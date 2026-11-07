@@ -107,10 +107,9 @@ class PhaseFourAccountsTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Accounts").performClick()
-                    waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("account-demo-wallet").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("account-demo-wallet").performScrollTo().performClick()
+                    openConnections()
+                    waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("connection-demo-wallet").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("connection-demo-wallet").performScrollTo().performClick()
                     onNodeWithTag("account-archive-action").performScrollTo()
                     val output = File("build/phase4-account-previews").apply { mkdirs() }
                     ImageIO.write(
@@ -129,7 +128,7 @@ class PhaseFourAccountsTest {
                             .contains("polion:archived")
                     }
                     waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("account-archive-action").fetchSemanticsNodes().isEmpty() }
-                    onNodeWithTag("account-demo-wallet").performScrollTo().performClick()
+                    onNodeWithTag("connection-demo-wallet").performScrollTo().performClick()
                     onNodeWithTag("account-archive-action").performScrollTo().performClick()
                     onNodeWithTag("confirm-account-archive").performClick()
                     waitUntil(timeoutMillis = 10000) {
@@ -140,11 +139,12 @@ class PhaseFourAccountsTest {
                             .tags
                             .contains("polion:archived")
                     }
-                    onNodeWithTag("account-demo-wallet").performScrollTo().performClick()
+                    onNodeWithTag("connection-demo-wallet").performScrollTo().performClick()
                     onNodeWithText("Review UTXOs").performScrollTo().performClick()
                     onNodeWithText("UTXO comparison details").assertIsDisplayed()
                     onNodeWithText("Close").performClick()
-                    onNodeWithTag("accounts-refresh-history").performScrollTo().performClick()
+                    onNodeWithTag("connection-demo-wallet").performScrollTo().performClick()
+                    onNodeWithTag("account-refresh-history").performScrollTo().performClick()
                     onNodeWithTag("history-recovery").performScrollTo().performClick()
                     assertEquals(0, host.recovery)
                     ImageIO.write(

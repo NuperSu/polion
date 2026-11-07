@@ -67,8 +67,7 @@ class OnboardingHandoffUiTest {
                         onNodeWithText(if (choice.workflow == SourceWorkflow.BITCOIN_PUBLIC_WALLET) "Cancel" else "Close")
                             .performScrollTo()
                             .performClick()
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Advanced tools").performClick()
+                        openAdvancedTools()
                         onNodeWithTag("workspace-menu").performClick()
                         onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("destination-HOME").performClick()
@@ -128,8 +127,7 @@ class OnboardingHandoffUiTest {
                         waitUntil(timeoutMillis = 10_000) {
                             onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Advanced tools").performClick()
+                        openAdvancedTools()
                         onNodeWithTag("workspace-menu").performClick()
                         onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("page-content").performScrollToNode(hasText("Resume setup"))

@@ -51,8 +51,7 @@ class AdaptiveLayoutUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
                     }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("compact-navigation").assertIsDisplayed()
                     onNodeWithTag("workspace-rail").assertDoesNotExist()
                     onNodeWithTag("workspace-menu").performClick()
@@ -103,8 +102,7 @@ class AdaptiveLayoutUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Opening your portfolio").fetchSemanticsNodes().isEmpty()
                     }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     for (destination in compactDestinations) {
                         val node = onNodeWithTag("destination-${destination.name}")
                         node.assertIsDisplayed()

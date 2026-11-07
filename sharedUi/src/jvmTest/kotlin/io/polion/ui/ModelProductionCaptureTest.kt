@@ -113,12 +113,10 @@ class ModelProductionCaptureTest {
                             onNodeWithTag("model-content").performScrollToNode(hasText(heading))
                             capture("insights-${heading.lowercase().replace(' ', '-')}")
                         }
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Accounts").performClick()
+                        openConnections()
                         capture("accounts")
                         onNodeWithTag("model-back").performClick()
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Settings").performClick()
+                        openSettings()
                         capture("settings")
                     }
                 }

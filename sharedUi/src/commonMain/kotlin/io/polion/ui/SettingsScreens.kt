@@ -1,9 +1,7 @@
 package io.polion.ui
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -17,15 +15,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.AssetListPreference
 import io.polion.core.application.PortfolioSnapshot
-import io.polion.core.ownership.TargetRole
 import io.polion.ui.model.SettingsActionRow
-import io.polion.ui.model.SettingsCard
 import io.polion.ui.model.SettingsIcon
 import io.polion.ui.model.SettingsMenuRow
 import io.polion.ui.model.SettingsNote
@@ -45,9 +39,6 @@ internal class SettingsActions(
     val onDialog: (String) -> Unit,
     val onExportCsv: () -> Unit,
     val onConnect: () -> Unit,
-    val onWalletHistory: () -> Unit,
-    val onAccounts: () -> Unit,
-    val onRefreshHistory: () -> Unit,
     val onLockNow: () -> Unit,
     val onRemoveLock: () -> Unit,
     val onSetup: (Boolean) -> Unit,
@@ -66,6 +57,7 @@ internal fun ColumnScope.ProductSettings(
     hasLock: Boolean,
     onAdvanced: (Page) -> Unit,
     actions: SettingsActions,
+    connections: @Composable () -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf("") }
     val back = { section = "" }
@@ -117,7 +109,6 @@ internal fun ColumnScope.ProductSettings(
                 description = "Profit calculations would use zero cost basis for these receipts instead of their market value.",
             )
             SettingsActionRow("Classification rules", tag = "settings-rules") { actions.onDialog("rule") }
-            SettingsActionRow("Manage portfolios and accounts", tag = "settings-accounts") { actions.onAccounts() }
         }
         "notifications" -> {
             SettingsSubHeader("Notifications", back)
@@ -136,48 +127,21 @@ internal fun ColumnScope.ProductSettings(
         "connections" -> {
             SettingsSubHeader("Connections", back)
             SettingsSectionLabel("All connections")
-            val connections = connections(data)
-            if (connections.isEmpty()) {
-                SettingsNote("No wallets or addresses yet.")
-            } else {
-                SettingsCard {
-                    connections.forEachIndexed { index, connection ->
-                        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-                            Text(connection.first, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                            Text(connection.second, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-                        }
-                        if (index < connections.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                    }
-                }
-            }
-            Text(
-                lastSynced(data),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 8.dp).testTag("settings-last-synced"),
-            )
-            SettingsActionRow("Sync wallet history now", tag = "settings-sync-now") { actions.onRefreshHistory() }
+            connections()
             SettingsSectionLabel("More")
             SettingsActionRow("Add New Connection", tag = "settings-add-connection") { actions.onConnect() }
             SettingsSwitchRow(
                 "Auto-sync",
                 preferences.automaticRefresh,
-                description = "Prices hourly and wallet history every 30 minutes. Unchanged wallets are only checked.",
+                description = "Prices hourly and wallets every 30 minutes",
             ) { actions.onAutomatic(it) }
             SettingsSwitchRow(
                 "Wi-Fi only in background",
                 preferences.wifiOnly,
-                description =
-                    if (wifiOnlyRefreshSupported) {
-                        "Background jobs use an unmetered network. Manual refresh uses the current connection."
-                    } else {
-                        "Applies to Android background jobs. Desktop refresh uses the current connection."
-                    },
+                enabled = wifiOnlyRefreshSupported,
                 tag = "wifi-only-refresh",
             ) { actions.onWifi(it) }
-            SettingsActionRow("Wallet history and recovery", tag = "settings-wallet-history") { actions.onWalletHistory() }
-            SettingsActionRow("Provider and source settings", tag = "settings-source") { actions.onDialog("sync") }
-            SettingsActionRow("Manage accounts", tag = "settings-manage-accounts") { actions.onAccounts() }
+            SettingsActionRow("Connections FAQ", enabled = false)
         }
         "security" -> {
             SettingsSubHeader("Security", back)
@@ -210,7 +174,6 @@ internal fun ColumnScope.ProductSettings(
             SettingsSubHeader("Support", back)
             SettingsActionRow("Resume setup", tag = "settings-resume-setup") { actions.onSetup(false) }
             SettingsActionRow("Restart setup", tag = "settings-restart-setup") { actions.onSetup(true) }
-            SettingsActionRow("Advanced tools", tag = "settings-advanced") { onAdvanced(Page.SETTINGS) }
             SettingsActionRow("Help and FAQ", enabled = false)
             SettingsActionRow("Contact support", enabled = false)
         }
@@ -233,26 +196,18 @@ internal fun ColumnScope.ProductSettings(
     }
 }
 
-/** Active wallets and standalone addresses, labelled by their account. */
-private fun connections(data: PortfolioSnapshot?): List<Pair<String, String>> {
-    val ownership = data?.ownership ?: return emptyList()
-    val accounts = ownership.accounts.associateBy { it.id }
-    return ownership.targets
-        .filter { it.enabled && (it.role == TargetRole.WALLET || it.role == TargetRole.LEAF && it.walletId == null) }
-        .filter { target -> accounts[target.accountId]?.tags?.contains("polion:archived") != true }
-        .map { target ->
-            val kind = if (target.role == TargetRole.WALLET) "Bitcoin wallet" else "Bitcoin address"
-            (accounts[target.accountId]?.label ?: target.label) to "$kind · ${target.label}"
-        }
-}
+/** "just now", "5 minutes ago", "3 hours ago" or "2 days ago" for a past epoch-millis time. */
+internal fun relativeAgo(millis: Long): String {
+    val minutes = ((Clock.System.now().toEpochMilliseconds() - millis) / 60_000L).coerceAtLeast(0)
 
-private fun lastSynced(data: PortfolioSnapshot?): String {
-    val last = data?.sourceStatus?.lastSuccessfulRefresh ?: return "Wallet history has not synced yet."
-    val minutes = ((Clock.System.now().toEpochMilliseconds() - last) / 60_000L).coerceAtLeast(0)
+    fun plural(
+        count: Long,
+        unit: String,
+    ) = "$count $unit${if (count == 1L) "" else "s"} ago"
     return when {
-        minutes < 1 -> "Wallet history last synced just now."
-        minutes < 60 -> "Wallet history last synced $minutes minute${if (minutes == 1L) "" else "s"} ago."
-        minutes < 48 * 60 -> "Wallet history last synced ${minutes / 60} hour${if (minutes / 60 == 1L) "" else "s"} ago."
-        else -> "Wallet history last synced ${minutes / (24 * 60)} days ago."
+        minutes < 1 -> "just now"
+        minutes < 60 -> plural(minutes, "minute")
+        minutes < 48 * 60 -> plural(minutes / 60, "hour")
+        else -> plural(minutes / (24 * 60), "day")
     }
 }

@@ -673,9 +673,6 @@ private fun Product(
                                     }
                                 },
                                 onConnect = { modelConnect = true },
-                                onWalletHistory = { modelHistory = true },
-                                onAccounts = { page = Page.ACCOUNTS },
-                                onRefreshHistory = { host.refresh { presenter.notify(it) } },
                                 onLockNow = host::lock,
                                 onRemoveLock = {
                                     host.removeLockPassword {
@@ -685,7 +682,32 @@ private fun Product(
                                 },
                                 onSetup = onSetup,
                             ),
-                        )
+                        ) {
+                            snapshot?.let { data ->
+                                AccountsWorkspace(
+                                    app,
+                                    host,
+                                    data,
+                                    selectedPortfolio,
+                                    dashboardRevision + revision,
+                                    syncStatus,
+                                    onConnect = { modelConnect = true },
+                                    onHistory = { modelHistory = true },
+                                    onAdvanced = openAdvanced,
+                                    onChanged = { execute("Account updated; saved history retained") {} },
+                                    onTool = { tool ->
+                                        dialog =
+                                            when (tool) {
+                                                AccountTool.RULES -> "rule"
+                                                AccountTool.RECONCILIATION -> "reconcile"
+                                                AccountTool.UTXO -> "utxo"
+                                            }
+                                    },
+                                    compact = true,
+                                    onSync = { host.refresh { presenter.notify(it) } },
+                                )
+                            }
+                        }
                     },
                     onManual = { asset ->
                         modelEditingId = null

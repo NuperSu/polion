@@ -67,8 +67,7 @@ class RewriteAcceptanceTest {
                             )
                         }
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Advanced tools").performClick()
+                        openAdvancedTools()
                         onNodeWithTag("destination-HOME").performClick()
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                         onNodeWithText("Saved coins").assertIsDisplayed()
@@ -161,8 +160,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
@@ -215,8 +213,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("market-bitcoin:btc").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("market-bitcoin:btc").performClick()
@@ -258,8 +255,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
@@ -332,8 +328,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("↻").performClick()
@@ -362,8 +357,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("↻").performClick()
