@@ -63,3 +63,9 @@ Verified with `:core:jvmTest`, `:sharedUi:jvmTest`, `:desktopApp:test`, `ktlintC
 - **UI-1 fixed, not device-verified.** The product stays composed under the lock overlay. Back-navigation behind the lock is not yet blocked.
 - **UI-2 changed approach.** Closing a draft keeps it, which the Phase 3 contract and an existing test require. Drafts are now scoped by their starting coin, so an entry opened from another coin no longer reuses a stale draft. No test was added for the cross-coin case.
 - **UI-3 fixed.** The sync banner shows only running, failed or interrupted work. A failed run stays visible until the next run.
+- **CORE-5 fixed.** Settings > Devices & Data offers Remove example data. Example transactions are reversed (the ledger is append-only), example prices are withdrawn, and the example account is archived. The example portfolio is removed and the example owner renamed.
+- **CORE-6 fixed.** Valuations within 24 hours of now use the current-price window on every view.
+- **CORE-9 fixed.** A zero historical CoinGecko quote is treated as missing.
+- **PLAT-5 fixed for the reported sites.** Preferences, favorites, price-refresh consent and refresh details load on the host dispatcher; favorites save in the background.
+- **PLAT-6 fixed.** The lock screen offers erase-and-remove-lock after typed confirmation, so a backup can be restored.
+- **PLAT-7 partial.** Desktop connections wait up to five seconds for a writer, and HTTP 502/503/504 count as temporary and fail over. WAL, the 5 MiB response cap, the custom-endpoint chain check and mempool saturation remain open.
