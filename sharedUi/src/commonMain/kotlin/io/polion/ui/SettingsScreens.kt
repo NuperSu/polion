@@ -3,11 +3,13 @@ package io.polion.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.polion.core.application.AssetListPreference
@@ -42,6 +45,7 @@ internal class SettingsActions(
     val onLockNow: () -> Unit,
     val onRemoveLock: () -> Unit,
     val onSetup: (Boolean) -> Unit,
+    val onRemoveExample: () -> Unit = {},
 )
 
 private val currencies = listOf("USD" to "US dollar (USD)", "EUR" to "Euro (EUR)", "GBP" to "British pound (GBP)")
@@ -166,6 +170,29 @@ internal fun ColumnScope.ProductSettings(
             SettingsActionRow("Full Transaction History", tag = "settings-history") { onAdvanced(Page.ACTIVITY) }
             SettingsActionRow("Export Data (CSV)", tag = "settings-export") { actions.onExportCsv() }
             SettingsActionRow("CSV Import History", enabled = false)
+            if (data?.sampleData == true) {
+                var confirm by remember { mutableStateOf(false) }
+                SettingsActionRow("Remove example data", tag = "settings-remove-example") { confirm = true }
+                if (confirm) {
+                    AlertDialog(
+                        onDismissRequest = { confirm = false },
+                        title = { Text("Remove example data?") },
+                        text = {
+                            Text(
+                                "Example transactions are reversed and kept in history, example prices stop valuing your coins, " +
+                                    "and the example account and portfolio are removed from view. Your own records are unchanged.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirm = false
+                                actions.onRemoveExample()
+                            }, modifier = Modifier.testTag("settings-remove-example-confirm")) { Text("Remove") }
+                        },
+                        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+                    )
+                }
+            }
             SettingsActionRow("Erase local portfolio data", tag = "settings-erase", color = MaterialTheme.colorScheme.error) {
                 actions.onDialog("wipe")
             }

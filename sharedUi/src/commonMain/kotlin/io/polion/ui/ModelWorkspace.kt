@@ -580,8 +580,6 @@ internal fun ModelWorkspace(
                     }
                 }
             }
-            TextButton(onClick = { onAdvanced(Page.ACTIVITY) }) { Text("Review activity and corrections") }
-            TextButton(onClick = { onAdvanced(Page.OVERVIEW) }) { Text("Asset details and price tools") }
         } else {
             when (page) {
                 Page.HOME -> {
@@ -626,7 +624,6 @@ internal fun ModelWorkspace(
                             }
                         }
                     }
-                    TextButton(onClick = { onAdvanced(Page.HOME) }) { Text("Manage saved prices and favorites") }
                 }
                 Page.OVERVIEW -> {
                     PortfolioSelector(data, selectedPortfolio, onPortfolio)

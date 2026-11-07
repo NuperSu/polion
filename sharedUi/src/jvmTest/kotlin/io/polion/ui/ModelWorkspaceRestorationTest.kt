@@ -188,8 +188,6 @@ class ModelWorkspaceRestorationTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("coin-BTC").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("coin-BTC").performScrollTo().performClick()
                     onNodeWithTag("detail-Transactions").performScrollTo().performClick()
-                    onNodeWithText("Review activity and corrections").performScrollTo().performClick()
-                    onNodeWithText("Back").performClick()
                     onNodeWithText("Search transactions").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("model-back").performClick()
                     openAdvancedTools()

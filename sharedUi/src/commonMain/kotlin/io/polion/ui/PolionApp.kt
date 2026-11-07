@@ -695,6 +695,7 @@ private fun Product(
                                     }
                                 },
                                 onSetup = onSetup,
+                                onRemoveExample = { execute("Example data removed") { app.removeExampleData() } },
                             ),
                         ) {
                             snapshot?.let { data ->
