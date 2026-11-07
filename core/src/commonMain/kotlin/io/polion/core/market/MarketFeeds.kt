@@ -324,17 +324,25 @@ class MarketFeedRepository(
         listOf(feed, value.currency, value.observedAtMillis.toString(), items.toString()),
     )
 
+    /** Parsed feeds by feed and currency; reused while the stored copy has the same observation time. */
+    private val parsed = mutableMapOf<Pair<String, String>, MarketFeed<*>>()
+
     private fun <T> load(
         feed: String,
         currency: String,
         read: (JsonObject) -> T,
     ): MarketFeed<T>? {
+        val observed = observedAt(feed, currency) ?: return null
+        @Suppress("UNCHECKED_CAST")
+        (parsed[feed to currency] as MarketFeed<T>?)?.takeIf { it.observedAtMillis == observed }?.let { return it }
         val row =
             db
                 .query("SELECT observed_at, payload FROM $FEED_TABLE WHERE feed=? AND currency=?", listOf(feed, currency))
                 .singleOrNull() ?: return null
         val items = Json.parseToJsonElement(row[1]!!).jsonArray.mapNotNull { runCatching { read(it.jsonObject) }.getOrNull() }
-        return MarketFeed(currency, row[0]!!.toLong(), items)
+        val loaded: MarketFeed<T> = MarketFeed(currency, row[0]!!.toLong(), items)
+        parsed[feed to currency] = loaded
+        return loaded
     }
 
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content

@@ -460,25 +460,27 @@ internal fun ModelWorkspace(
                 val listingPoints = if (useListing) sparklinePoints(listing.sparkline, 61) else emptyList()
                 // Prices are public, so hidden amounts never mask this chart.
                 val coinChart =
-                    if (useListing) {
-                        val observedAt = marketOverview?.markets?.observedAtMillis ?: 0L
-                        val count = listing.sparkline.size
-                        ChartData(
-                            listing.sparkline,
-                            List(count) { observedAt - (count - 1 - it) * 3_600_000L },
-                            { sparklinePrice(it, data.currency) },
-                            { chartTime(it, 7 * 86_400_000L) },
-                        )
-                    } else if (observationCount >= 2) {
-                        val span = (prices.lastOrNull()?.atMillis ?: 0L) - (prices.firstOrNull()?.atMillis ?: 0L)
-                        ChartData(
-                            observedNumbers,
-                            prices.map { it.atMillis },
-                            { sparklinePrice(it, data.currency) },
-                            { chartTime(it, span) },
-                        )
-                    } else {
-                        null
+                    remember(useListing, listing, prices, data.currency, marketOverview?.markets?.observedAtMillis) {
+                        if (useListing) {
+                            val observedAt = marketOverview?.markets?.observedAtMillis ?: 0L
+                            val count = listing.sparkline.size
+                            ChartData(
+                                listing.sparkline,
+                                List(count) { observedAt - (count - 1 - it) * 3_600_000L },
+                                { sparklinePrice(it, data.currency) },
+                                { chartTime(it, 7 * 86_400_000L) },
+                            )
+                        } else if (observationCount >= 2) {
+                            val span = (prices.lastOrNull()?.atMillis ?: 0L) - (prices.firstOrNull()?.atMillis ?: 0L)
+                            ChartData(
+                                observedNumbers,
+                                prices.map { it.atMillis },
+                                { sparklinePrice(it, data.currency) },
+                                { chartTime(it, span) },
+                            )
+                        } else {
+                            null
+                        }
                     }
                 val quantity =
                     if (!tracked) {
@@ -849,7 +851,12 @@ internal fun ModelWorkspace(
                                 amountsHidden = amountsHidden,
                                 secondaryBalance = secondary,
                                 showChart = showPortfolioChart,
-                                chart = portfolioChartData(chart, data.currency, amountsHidden),
+                                chart =
+                                    remember(
+                                        chart,
+                                        data.currency,
+                                        amountsHidden,
+                                    ) { portfolioChartData(chart, data.currency, amountsHidden) },
                                 chartStyle = chartStyle,
                             ),
                             wide,

@@ -135,10 +135,11 @@ fun ModelInteractiveChart(
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val known = data.known
     val first = data.values.firstOrNull { it != null }
-    val candles = remember(data, style) { if (style == ChartStyle.CANDLES) buildCandles(data) else emptyList() }
+    // Keyed on the numbers, not on the formatting lambdas, which callers may recreate on every recomposition.
+    val candles = remember(data.values, data.times, style) { if (style == ChartStyle.CANDLES) buildCandles(data) else emptyList() }
     val low = if (style == ChartStyle.CANDLES) candles.filterNotNull().minOfOrNull { it.low } else known.minOrNull()
     val high = if (style == ChartStyle.CANDLES) candles.filterNotNull().maxOfOrNull { it.high } else known.maxOrNull()
-    var selected by remember(data, style) { mutableStateOf<Int?>(null) }
+    var selected by remember(data.values, data.times, style) { mutableStateOf<Int?>(null) }
     val slots = if (style == ChartStyle.CANDLES) candles.size else data.values.size
 
     fun y(

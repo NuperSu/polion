@@ -57,6 +57,11 @@ class MarketRepository(
                     "Market schema is incomplete"
                 }
             }
+            // Each lookup asks for one source (manual or a provider); this index finds its newest row directly.
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS market_prices_source_time ON market_prices(base_asset, quote_asset, manual, provider, valid_at, observed_at)",
+            )
+            db.execute("CREATE INDEX IF NOT EXISTS market_withdrawals_price ON market_override_withdrawals(price_id, effective_at)")
         }
     }
 
@@ -150,6 +155,14 @@ class MarketRepository(
                 listOf(asset.value, atMillis.toString()),
             ).singleOrNull()
             ?.let { AssetMetadata(it[0]!!, it[1]!!, it[2]!!.toInt(), it[3]!!.toLong()) }
+
+    /** Every metadata version of [asset], newest first, for resolving many instants without one query each. */
+    fun metadataHistory(asset: AssetId): List<AssetMetadata> =
+        db
+            .query(
+                "SELECT symbol, name, decimals, effective_at FROM market_metadata WHERE asset_id=? ORDER BY effective_at DESC",
+                listOf(asset.value),
+            ).map { AssetMetadata(it[0]!!, it[1]!!, it[2]!!.toInt(), it[3]!!.toLong()) }
 
     fun mapProvider(
         provider: ProviderId,
@@ -300,40 +313,58 @@ class MarketRepository(
     ): PriceResult {
         require(base != quote)
 
-        fun latest(provider: ProviderId?): PriceObservation? {
-            val filter = if (provider == null) "p.manual=1" else "p.manual=0 AND p.provider=?"
-            val args =
-                listOf(
-                    base.value,
-                    quote.value,
-                    atMillis.toString(),
-                    knownAtMillis.toString(),
-                    atMillis.toString(),
-                    knownAtMillis.toString(),
-                ) +
-                    listOfNotNull(provider?.value)
-            val row =
-                db
-                    .query(
-                        "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p " +
-                            "WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) " +
-                            "AND p.observed_at<=CAST(? AS INTEGER) " +
-                            "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id " +
-                            "AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER)) AND $filter " +
-                            "ORDER BY p.valid_at DESC, p.observed_at DESC, p.id ASC LIMIT 1",
-                        args,
-                    ).singleOrNull() ?: return null
-            return PriceObservation(
-                row[0]!!,
-                Price(base, quote, ExactDecimal.parse(row[1]!!)),
-                row[2]?.let(::ProviderId),
-                row[3]!!.toLong(),
-                row[4]!!.toLong(),
-                row[5] == "1",
-            )
-        }
-        val observations = listOfNotNull(latest(null)) + policy.providerPriority.mapNotNull(::latest)
+        val observations =
+            listOfNotNull(latest(base, quote, atMillis, knownAtMillis, null)) +
+                policy.providerPriority.mapNotNull { latest(base, quote, atMillis, knownAtMillis, it) }
+        return select(observations, atMillis, policy)
+    }
 
+    /** The newest manual ([provider] null) or provider observation valid and known at the instant, if not withdrawn. */
+    private fun latest(
+        base: AssetId,
+        quote: AssetId,
+        atMillis: Long,
+        knownAtMillis: Long,
+        provider: ProviderId?,
+    ): PriceObservation? {
+        val filter = if (provider == null) "p.manual=1" else "p.manual=0 AND p.provider=?"
+        val args =
+            listOf(
+                base.value,
+                quote.value,
+                atMillis.toString(),
+                knownAtMillis.toString(),
+                atMillis.toString(),
+                knownAtMillis.toString(),
+            ) +
+                listOfNotNull(provider?.value)
+        val row =
+            db
+                .query(
+                    "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p " +
+                        "WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) " +
+                        "AND p.observed_at<=CAST(? AS INTEGER) " +
+                        "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id " +
+                        "AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER)) AND $filter " +
+                        "ORDER BY p.valid_at DESC, p.observed_at DESC, p.id ASC LIMIT 1",
+                    args,
+                ).singleOrNull() ?: return null
+        return PriceObservation(
+            row[0]!!,
+            Price(base, quote, ExactDecimal.parse(row[1]!!)),
+            row[2]?.let(::ProviderId),
+            row[3]!!.toLong(),
+            row[4]!!.toLong(),
+            row[5] == "1",
+        )
+    }
+
+    /** Chooses among the latest manual and per-provider observations exactly as [lookup] documents. */
+    private fun select(
+        observations: List<PriceObservation>,
+        atMillis: Long,
+        policy: PricePolicy,
+    ): PriceResult {
         fun isStale(observation: PriceObservation): Boolean =
             atMillis >= Long.MIN_VALUE + policy.maxAgeMillis && observation.validAtMillis < atMillis - policy.maxAgeMillis
         val selected =
@@ -348,6 +379,93 @@ class MarketRepository(
             ) ?: return PriceResult(PriceStatus.MISSING, null)
         val stale = isStale(selected)
         return PriceResult(if (stale) PriceStatus.STALE else PriceStatus.FRESH, selected)
+    }
+
+    /**
+     * [lookup] for many instants at once, with identical results. Observations valid within [windowMillis] before the
+     * earliest instant are read in one query and resolved in memory; an instant whose source has no usable observation
+     * in that window falls back to [lookup]'s per-instant query, so older or withdrawn data is handled the same way.
+     */
+    fun lookupSeries(
+        base: AssetId,
+        quote: AssetId,
+        times: List<Long>,
+        knownAtMillis: Long,
+        policyAt: (Long) -> PricePolicy,
+        windowMillis: Long = 2 * 86_400_000L,
+    ): List<PriceResult> {
+        require(base != quote)
+        if (times.isEmpty()) return emptyList()
+        val low = times.min().let { if (it >= Long.MIN_VALUE + windowMillis) it - windowMillis else Long.MIN_VALUE }
+        val high = times.max()
+        val rows =
+            db
+                .query(
+                    "SELECT id, value, provider, valid_at, observed_at, manual FROM market_prices WHERE base_asset=? AND quote_asset=? " +
+                        "AND valid_at>=CAST(? AS INTEGER) AND valid_at<=CAST(? AS INTEGER) AND observed_at<=CAST(? AS INTEGER)",
+                    listOf(base.value, quote.value, low.toString(), high.toString(), knownAtMillis.toString()),
+                ).map {
+                    PriceObservation(
+                        it[0]!!,
+                        Price(base, quote, ExactDecimal.parse(it[1]!!)),
+                        it[2]?.let(::ProviderId),
+                        it[3]!!.toLong(),
+                        it[4]!!.toLong(),
+                        it[5] == "1",
+                    )
+                }
+        val withdrawals =
+            db
+                .query(
+                    "SELECT w.price_id, w.effective_at FROM market_override_withdrawals w JOIN market_prices p ON p.id=w.price_id " +
+                        "WHERE p.base_asset=? AND p.quote_asset=? AND w.observed_at<=CAST(? AS INTEGER)",
+                    listOf(base.value, quote.value, knownAtMillis.toString()),
+                ).groupBy({ it[0]!! }, { it[1]!!.toLong() })
+                .mapValues { (_, at) -> at.min() }
+        val order = compareByDescending<PriceObservation> { it.validAtMillis }.thenByDescending { it.observedAtMillis }.thenBy { it.id }
+        // Manual observations form one source; provider observations one source per provider, as in [lookup].
+        val bySource = rows.groupBy { if (it.manual) null else it.providerId }.mapValues { (_, list) -> list.sortedWith(order) }
+        // A source with no observation before the window can never match there, so it needs no per-instant fallback.
+        val olderData = mutableMapOf<ProviderId?, Boolean>()
+
+        fun hasOlder(source: ProviderId?): Boolean =
+            olderData.getOrPut(source) {
+                val filter = if (source == null) "manual=1" else "manual=0 AND provider=?"
+                db
+                    .query(
+                        "SELECT 1 FROM market_prices WHERE base_asset=? AND quote_asset=? AND valid_at<CAST(? AS INTEGER) " +
+                            "AND observed_at<=CAST(? AS INTEGER) AND $filter LIMIT 1",
+                        listOf(base.value, quote.value, low.toString(), knownAtMillis.toString()) + listOfNotNull(source?.value),
+                    ).isNotEmpty()
+            }
+
+        fun inWindow(
+            source: ProviderId?,
+            at: Long,
+        ): PriceObservation? {
+            val list = bySource[source].orEmpty().filter { source != null || it.manual }
+            // Descending by validity: skip entries valid after this instant, then take the first not yet withdrawn.
+            var index: Int
+            var lo = 0
+            var hi = list.size
+            while (lo < hi) {
+                val mid = (lo + hi) / 2
+                if (list[mid].validAtMillis > at) lo = mid + 1 else hi = mid
+            }
+            index = lo
+            while (index < list.size) {
+                val candidate = list[index]
+                val withdrawnAt = withdrawals[candidate.id]
+                if (withdrawnAt == null || withdrawnAt > at) return candidate
+                index++
+            }
+            return if (hasOlder(source)) latest(base, quote, at, knownAtMillis, source) else null
+        }
+        return times.map { at ->
+            val policy = policyAt(at)
+            val sources = listOf<ProviderId?>(null) + policy.providerPriority
+            select(sources.mapNotNull { source -> inWindow(source, at) }, at, policy)
+        }
     }
 
     private fun requireAsset(id: AssetId) {

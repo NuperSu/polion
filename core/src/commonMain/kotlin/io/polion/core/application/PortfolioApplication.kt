@@ -54,6 +54,7 @@ import io.polion.core.market.MarketFeedRepository
 import io.polion.core.market.MarketRepository
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
+import io.polion.core.market.PriceResult
 import io.polion.core.market.PriceStatus
 import io.polion.core.model.AccountId
 import io.polion.core.model.ActivityId
@@ -498,6 +499,9 @@ class PortfolioApplication(
             .toSet()
     }
 
+    /** The valuation currency of [portfolio], or the default display currency for all portfolios. */
+    fun displayCurrency(portfolio: PortfolioId?): AssetId = portfolioCurrency(portfolio)
+
     private fun portfolioCurrency(portfolio: PortfolioId?): AssetId =
         portfolio?.let { id ->
             AssetId(
@@ -532,10 +536,8 @@ class PortfolioApplication(
         times: List<Long>,
     ): List<MarketPricePoint> {
         val knownAt = now()
-        return times.map { at ->
-            val result = market.lookup(asset, quote, at, knownAt, pricePolicy(current = at >= knownAt - 86_400_000L))
-            MarketPricePoint(at, result.status, result.observation)
-        }
+        val results = market.lookupSeries(asset, quote, times, knownAt, { at -> pricePolicy(current = at >= knownAt - 86_400_000L) })
+        return times.zip(results) { at, result -> MarketPricePoint(at, result.status, result.observation) }
     }
 
     fun historySeries(
@@ -546,15 +548,31 @@ class PortfolioApplication(
         val entries = ledger().activities.map { it.activity }
         val quote = portfolioCurrency(portfolio)
         val knownAt = now()
-        return holdings.historicalSeries(entries, times, BalanceCoverage.UNKNOWN).map { balance ->
+        val balances =
+            holdings.historicalSeries(entries, times, BalanceCoverage.UNKNOWN).map { balance ->
+                balance.copy(quantities = balance.quantities.filterKeys { it.account in selected })
+            }
+        // Prices and metadata for every instant are read once per asset instead of once per asset and instant.
+        val instants = balances.map { it.atMillis }
+        val assets = balances.flatMap { balance -> balance.quantities.keys.map { it.asset } }.toSet()
+        val prices =
+            (assets - quote).associateWith { asset ->
+                instants
+                    .zip(market.lookupSeries(asset, quote, instants, knownAt, { at -> pricePolicy(current = at >= knownAt - 86_400_000L) }))
+                    .toMap()
+            }
+        val metadata = assets.associateWith { market.metadataHistory(it) }
+        return balances.map { balance ->
             val at = balance.atMillis
             HistoryPoint(
                 at,
                 valuations(
-                    balance.copy(quantities = balance.quantities.filterKeys { it.account in selected }),
+                    balance,
                     quote,
                     knownAt,
                     pricePolicy(current = at >= knownAt - 86_400_000L),
+                    priceAt = { asset -> prices[asset]?.get(at) },
+                    metadataAt = { asset -> metadata[asset]?.firstOrNull { it.effectiveAtMillis <= at } },
                 ),
             )
         }
@@ -2107,20 +2125,23 @@ class PortfolioApplication(
         knownAt: Long,
         // Same rule everywhere: a balance within 24 hours of now uses the short current-price window.
         policy: PricePolicy = pricePolicy(current = balance.atMillis >= knownAt - 86_400_000L),
+        // Series callers pass prices and metadata resolved in bulk; the results are the same as the per-asset queries.
+        priceAt: ((AssetId) -> PriceResult?)? = null,
+        metadataAt: ((AssetId) -> AssetMetadata?)? = null,
     ): List<AssetValuation> =
         balance.quantities.entries
             .groupBy { it.key.asset }
             .map { (asset, rows) ->
                 val units = rows.fold(io.polion.core.model.ExactInteger.ZERO) { sum, row -> sum + row.value }
                 val amount = AtomicAmount(asset, units)
-                val metadata = market.metadataAt(asset, balance.atMillis)
+                val metadata = if (metadataAt != null) metadataAt(asset) else market.metadataAt(asset, balance.atMillis)
                 val result =
                     if (asset ==
                         currency
                     ) {
                         null
                     } else {
-                        market.lookup(asset, currency, balance.atMillis, knownAt, policy)
+                        priceAt?.invoke(asset) ?: market.lookup(asset, currency, balance.atMillis, knownAt, policy)
                     }
                 val value =
                     if (asset ==

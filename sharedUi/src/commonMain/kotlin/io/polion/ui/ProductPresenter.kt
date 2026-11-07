@@ -38,6 +38,9 @@ internal interface ProductQueries {
     ): List<HistoryPoint>
 
     fun firstHistoryActivity(portfolio: PortfolioId?): Long? = null
+
+    /** The chart's currency without building a whole snapshot. */
+    fun currency(portfolio: PortfolioId?): io.polion.core.model.AssetId = snapshot(ActivityFilter(portfolio = portfolio)).currency
 }
 
 internal class ProductPresenter(
@@ -199,7 +202,7 @@ internal class ProductPresenter(
                             90 -> 90
                             else -> 104
                         }
-                    val currency = queries.snapshot(ActivityFilter(portfolio = selected.selectedPortfolio)).currency
+                    val currency = queries.currency(selected.selectedPortfolio)
                     currency to
                         queries.history(
                             (0..intervals).map { start + (end - start) / intervals * it + ((end - start) % intervals) * it / intervals },
@@ -370,4 +373,6 @@ private fun applicationQueries(app: PortfolioApplication): ProductQueries =
         ) = app.historySeries(times, portfolio)
 
         override fun firstHistoryActivity(portfolio: PortfolioId?) = app.firstHistoryActivity(portfolio)
+
+        override fun currency(portfolio: PortfolioId?) = app.displayCurrency(portfolio)
     }
