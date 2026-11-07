@@ -49,6 +49,8 @@ Each phase is separately executable; its exit gate is defined in its document. P
 
 ## Execution and completion tracking
 
+The current order of these phases, the work before them and the long-term phases after release are in [the November 2026 plan](plan-2026-11.md).
+
 Start with Phases 0–1, then deliver Portfolio/coin General and transactions as complete vertical slices. Follow with account reliability, market discovery, Insights, remaining services and final release validation. Provider research and financial specification work can proceed independently once the shared screen contracts are stable; dependent implementation follows the relevant evidence gate.
 
 Track each section with separate fields for reference capture, production renderer, data source, interaction coverage, financial oracle, Android evidence, desktop evidence and remaining blocker. Record the exact tested revision. Commit focused changes after their relevant checks, preserve unrelated work and do not push without instruction.
