@@ -159,10 +159,12 @@ class AdaptiveLayoutUiTest {
             onResult("Exported")
         }
 
-        override fun openFile(onResult: (ByteArray?) -> Unit) = Unit
+        override fun saveBackup(
+            password: String,
+            onResult: (String) -> Unit,
+        ) = Unit
 
         override fun restoreBackup(
-            bytes: ByteArray,
             password: String,
             onResult: (String) -> Unit,
         ) = Unit

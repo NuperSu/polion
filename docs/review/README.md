@@ -54,7 +54,7 @@ Counts: 4 P1, 33 P2, remaining items P3 or open questions.
 Verified with `:core:jvmTest`, `:sharedUi:jvmTest`, `:desktopApp:test`, `ktlintCheck`, `:androidApp:compileDebugKotlin` and `:androidApp:lintDebug`. None of this was run on an Android device or emulator, and no packaged desktop app was launched.
 
 - **CORE-1 changed approach.** A treatment priced in another currency keeps its lot with unknown basis and is listed in `AccountingView.currencyMismatch`. It is no longer rejected as invalid, and its asset is no longer dropped from FIFO. This changes the contract that `AccountingScopeTest` encoded, and that test was updated.
-- **CORE-2 partial.** Export now refuses any backup that restore would reject. Large wallets therefore still cannot be backed up; a streaming export is still needed.
+- **CORE-2 fixed.** Backups use format 3 ([backup format](../backup-format.md)): a chunked authenticated encryption envelope around a streamed row body. Export and restore stream on both hosts, so backup size no longer depends on memory. Earlier backup files are not readable.
 - **CORE-3 fixed.** Ownership read-modify-write runs in one transaction. Discovery merges into the catalog at commit time and re-checks the wallet, consent and endpoint.
 - **CORE-4 fixed.** Pending Bitcoin activities use the retrieval time. The decoder test fixture previously used a non-timestamp string, and now uses a real instant.
 - **PLAT-1 fixed, not device-verified.** Bitcoin sync (service and periodic worker) has its own executor. Backup restore runs on the sync thread so it cannot overlap a scan. The UI thread no longer queues behind sync. SQLite busy-timeout and WAL (PLAT-7) are still open.

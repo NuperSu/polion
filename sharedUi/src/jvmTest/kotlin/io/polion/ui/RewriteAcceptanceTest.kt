@@ -419,10 +419,12 @@ class RewriteAcceptanceTest {
             onResult("Exported")
         }
 
-        override fun openFile(onResult: (ByteArray?) -> Unit) = onResult(null)
+        override fun saveBackup(
+            password: String,
+            onResult: (String) -> Unit,
+        ) = onResult("Not used")
 
         override fun restoreBackup(
-            bytes: ByteArray,
             password: String,
             onResult: (String) -> Unit,
         ) = onResult("Not used")

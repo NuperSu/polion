@@ -213,10 +213,12 @@ class OnboardingHandoffUiTest {
             onResult: (String) -> Unit,
         ): Unit = unexpected()
 
-        override fun openFile(onResult: (ByteArray?) -> Unit): Unit = unexpected()
+        override fun saveBackup(
+            password: String,
+            onResult: (String) -> Unit,
+        ): Unit = unexpected()
 
         override fun restoreBackup(
-            bytes: ByteArray,
             password: String,
             onResult: (String) -> Unit,
         ): Unit = unexpected()

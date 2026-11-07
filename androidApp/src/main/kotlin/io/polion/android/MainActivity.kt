@@ -159,12 +159,45 @@ private class AndroidHost(
         main.post { files.save(name, bytes) { onResult(if (it) "File saved" else "File was not saved") } }
     }
 
-    override fun openFile(onResult: (ByteArray?) -> Unit) {
-        main.post { files.open(onResult) }
+    override fun saveBackup(
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
+        main.post {
+            files.chooseDestination("polion-backup.polion") { uri ->
+                if (uri == null) {
+                    onResult("Backup was not saved")
+                } else {
+                    executor.execute {
+                        val secret = password.toCharArray()
+                        val success =
+                            try {
+                                runCatching {
+                                    files.write(uri) { out ->
+                                        requireNotNull(app.value).exportBackup(secret) { b, o, l -> out.write(b, o, l) }
+                                    }
+                                }.isSuccess
+                            } finally {
+                                secret.fill('\u0000')
+                            }
+                        main.post { onResult(if (success) "Backup saved" else "Could not save backup") }
+                    }
+                }
+            }
+        }
     }
 
     override fun restoreBackup(
-        bytes: ByteArray,
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
+        main.post {
+            files.chooseSource { uri -> if (uri == null) onResult("No backup selected") else restoreBackup(uri, password, onResult) }
+        }
+    }
+
+    private fun restoreBackup(
+        uri: android.net.Uri,
         password: String,
         onResult: (String) -> Unit,
     ) {
@@ -180,7 +213,11 @@ private class AndroidHost(
                 staging = Files.createTempFile(file.parent, "restore-", ".sqlite")
                 AndroidSqliteDatabase(
                     staging.toString(),
-                ).use { requireNotNull(app.value).restoreToStaging(it, bytes, password.toCharArray()) }
+                ).use { stagingDb ->
+                    files.read(uri) { input ->
+                        requireNotNull(app.value).restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
+                    }
+                }
                 java.nio.channels.FileChannel
                     .open(staging, java.nio.file.StandardOpenOption.WRITE)
                     .use { it.force(true) }
@@ -210,7 +247,9 @@ private class AndroidHost(
                     replacementReady = true
                 }
                 result = "Backup restored"
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
+                // Validation messages (wrong password, damaged or unsupported backup) explain a rejected file.
+                if (!swapped && failure is IllegalArgumentException) result = failure.message ?: result
                 if (swapped) result = "Backup restored; reopen the app to load it"
                 if (reopened && !swapped) {
                     runCatching {

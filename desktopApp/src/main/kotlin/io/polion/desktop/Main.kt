@@ -158,12 +158,54 @@ internal class DesktopHost(
         }
     }
 
-    override fun openFile(onResult: (ByteArray?) -> Unit) {
-        SwingUtilities.invokeLater { onResult(runCatching { files.open() }.getOrNull()) }
+    override fun saveBackup(
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
+        SwingUtilities.invokeLater {
+            val path = runCatching { files.chooseBackupDestination() }.getOrNull()
+            if (path == null) {
+                onResult("Backup was not saved")
+                return@invokeLater
+            }
+            executor.execute {
+                val secret = password.toCharArray()
+                // Written beside the destination and moved into place, so a failed export never leaves a partial backup.
+                val temp = runCatching { Files.createTempFile(path.toAbsolutePath().parent, ".polion-backup-", ".tmp") }.getOrNull()
+                val message =
+                    if (temp == null) {
+                        "Could not save backup"
+                    } else {
+                        try {
+                            Files.newOutputStream(temp).buffered().use { out ->
+                                app.value.exportBackup(secret) { bytes, offset, length -> out.write(bytes, offset, length) }
+                            }
+                            Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING)
+                            "Backup saved"
+                        } catch (_: Exception) {
+                            "Could not save backup"
+                        } finally {
+                            secret.fill('\u0000')
+                            runCatching { Files.deleteIfExists(temp) }
+                        }
+                    }
+                SwingUtilities.invokeLater { onResult(message) }
+            }
+        }
     }
 
     override fun restoreBackup(
-        bytes: ByteArray,
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
+        SwingUtilities.invokeLater {
+            val path = runCatching { files.chooseBackup() }.getOrNull()
+            if (path == null) onResult("No backup selected") else restoreBackup(path, password, onResult)
+        }
+    }
+
+    internal fun restoreBackup(
+        path: Path,
         password: String,
         onResult: (String) -> Unit,
     ) {
@@ -179,7 +221,11 @@ internal class DesktopHost(
                     var replacementReady = false
                     try {
                         staging = Files.createTempFile(directory, "restore-", ".sqlite")
-                        JvmSqliteDatabase(staging.toString()).use { app.value.restoreToStaging(it, bytes, password.toCharArray()) }
+                        JvmSqliteDatabase(staging.toString()).use { stagingDb ->
+                            Files.newInputStream(path).buffered().use { input ->
+                                app.value.restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
+                            }
+                        }
                         java.nio.channels.FileChannel
                             .open(staging, java.nio.file.StandardOpenOption.WRITE)
                             .use { it.force(true) }
@@ -204,7 +250,9 @@ internal class DesktopHost(
                             replacementReady = true
                         }
                         result = "Backup restored"
-                    } catch (_: Exception) {
+                    } catch (failure: Exception) {
+                        // Validation messages (wrong password, damaged or unsupported backup) explain a rejected file.
+                        if (!swapped && failure is IllegalArgumentException) result = failure.message ?: result
                         if (swapped) result = "Backup restored; reopen the app to load it"
                         if (reopened && !swapped) {
                             runCatching {

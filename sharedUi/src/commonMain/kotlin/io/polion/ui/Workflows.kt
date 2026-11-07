@@ -748,26 +748,11 @@ internal fun WorkflowDialog(
                                 error = "Confirm that this backup will replace the local portfolio."
                                 return@Button
                             }
-                            host.openFile { bytes ->
-                                if (bytes !=
-                                    null
-                                ) {
-                                    host.restoreBackup(bytes, password) { notify(it) }
-                                } else {
-                                    notify("No backup selected")
-                                }
-                            }
+                            host.restoreBackup(password) { notify(it) }
                             close()
                         }
                         else -> {
-                            execute("Backup ready") {
-                                val secret = password.toCharArray()
-                                try {
-                                    host.saveFile("polion-backup.polion", app.exportBackup(secret)) { notify(it) }
-                                } finally {
-                                    secret.fill('\u0000')
-                                }
-                            }
+                            host.saveBackup(password) { notify(it) }
                             close()
                         }
                     }

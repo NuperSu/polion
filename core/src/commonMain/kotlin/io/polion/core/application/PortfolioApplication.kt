@@ -7,6 +7,10 @@ import io.polion.core.accounting.QuoteValue
 import io.polion.core.accounting.Treatment
 import io.polion.core.accounting.TreatmentRepository
 import io.polion.core.backup.BackupEncryption
+import io.polion.core.backup.ByteArraySink
+import io.polion.core.backup.ByteArraySource
+import io.polion.core.backup.ByteSink
+import io.polion.core.backup.ByteSource
 import io.polion.core.backup.PortableBackup
 import io.polion.core.bitcoin.BITCOIN_ASSET
 import io.polion.core.bitcoin.BITCOIN_CONNECTOR_ID
@@ -2853,24 +2857,35 @@ class PortfolioApplication(
         return lines.joinToString("\r\n", postfix = "\r\n")
     }
 
-    fun exportBackup(password: CharArray): ByteArray {
-        val encrypted = BackupEncryption.encrypt(PortableBackup.discover(db).export(db).encodeToByteArray(), password)
-        // Restore accepts at most MAX_ARCHIVE_CHARS ciphertext bytes; refuse here instead of producing an unrestorable file.
-        require(encrypted.size <= PortableBackup.MAX_ARCHIVE_CHARS) { "Backup is too large to restore safely; saved data is unchanged" }
-        return encrypted
+    /** Streams an encrypted backup of every durable table into [output]. */
+    fun exportBackup(
+        password: CharArray,
+        output: ByteSink,
+    ) {
+        val encrypted = BackupEncryption.encrypt(output, password)
+        PortableBackup.discover(db).export(db, encrypted)
+        encrypted.close()
     }
 
+    /** In-memory form of [exportBackup], for small data and tests. */
+    fun exportBackup(password: CharArray): ByteArray = ByteArraySink().also { exportBackup(password, it) }.toByteArray()
+
+    /** Decrypts [input] and restores it into the empty [staging] database; the live database is untouched. */
+    fun restoreToStaging(
+        staging: SqliteDatabase,
+        input: ByteSource,
+        password: CharArray,
+    ) {
+        PortfolioApplication(staging, now)
+        PortableBackup.discover(db).restoreToStaging(staging, BackupEncryption.decrypt(input, password))
+    }
+
+    /** In-memory form of [restoreToStaging], for small data and tests. */
     fun restoreToStaging(
         staging: SqliteDatabase,
         archive: ByteArray,
         password: CharArray,
-    ) {
-        PortfolioApplication(staging, now)
-        PortableBackup
-            .discover(
-                db,
-            ).restoreToStaging(staging, BackupEncryption.decrypt(archive, password).decodeToString(throwOnInvalidSequence = true))
-    }
+    ) = restoreToStaging(staging, ByteArraySource(archive), password)
 
     /** Erases application rows and purges deleted content from active SQLite files. */
     fun wipe() {

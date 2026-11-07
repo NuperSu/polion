@@ -16,15 +16,9 @@ class BackupFiles {
         return true
     }
 
-    fun open(): ByteArray? {
-        val path = choose(FileDialog.LOAD, "Import encrypted backup") ?: return null
-        require(Files.size(path) <= MAX_BACKUP_BYTES) { "Backup is too large" }
-        return Files.newInputStream(path).use { input ->
-            val bytes = input.readNBytes(MAX_BACKUP_BYTES + 1)
-            require(bytes.size <= MAX_BACKUP_BYTES) { "Backup is too large" }
-            bytes
-        }
-    }
+    fun chooseBackupDestination(): Path? = choose(FileDialog.SAVE, "Save encrypted backup", "polion-backup.polion")
+
+    fun chooseBackup(): Path? = choose(FileDialog.LOAD, "Restore encrypted backup")
 
     private fun choose(
         mode: Int,
@@ -40,9 +34,5 @@ class BackupFiles {
         } finally {
             dialog.dispose()
         }
-    }
-
-    companion object {
-        private const val MAX_BACKUP_BYTES = 100_000_256
     }
 }

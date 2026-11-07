@@ -84,16 +84,21 @@ interface PlatformActions {
     val priceRefreshStatus: StateFlow<PriceRefreshPhase> get() = idlePriceRefresh
     val hasLock: Boolean
 
+    /** Saves a small generated file, such as a CSV export, to a location the user chooses. */
     fun saveFile(
         name: String,
         bytes: ByteArray,
         onResult: (String) -> Unit,
     )
 
-    fun openFile(onResult: (ByteArray?) -> Unit)
+    /** Asks where to save, then streams an encrypted backup there in the background. */
+    fun saveBackup(
+        password: String,
+        onResult: (String) -> Unit,
+    )
 
+    /** Asks for a backup file, then streams it into a staging database and replaces local data only if it is valid. */
     fun restoreBackup(
-        bytes: ByteArray,
         password: String,
         onResult: (String) -> Unit,
     )
