@@ -213,7 +213,15 @@ internal fun BitcoinConnectDialog(
                     }
                 onSaved()
                 if (!scheduled) notify("Source saved. Automatic refresh could not be scheduled; check sync settings.")
-                if (walletId != id) notify("Resumed the wallet imported earlier; its account was kept.")
+                if (walletId != id) {
+                    val resumedAccount =
+                        app
+                            .snapshot()
+                            .ownership.targets
+                            .firstOrNull { it.id == walletId }
+                            ?.let { wallet -> app.snapshot().ownership.accounts.firstOrNull { it.id == wallet.accountId }?.label }
+                    notify("This wallet is already tracked${resumedAccount?.let { " in \"$it\"" } ?: ""}; fetching its addresses and history again.")
+                }
                 discover(walletId)
             } catch (
                 cancelled: CancellationException,

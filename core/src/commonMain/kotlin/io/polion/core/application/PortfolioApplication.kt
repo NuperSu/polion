@@ -2026,10 +2026,17 @@ class PortfolioApplication(
             value
         }
 
+    /** Wallet expressions that derive the same first address watch the same coins, whatever text they were saved with. */
+    private fun sameWalletSource(
+        first: String,
+        second: String,
+    ): Boolean = first == second || runCatching { bitcoinWallet(first).address(0, 0) == bitcoinWallet(second).address(0, 0) }.getOrDefault(false)
+
     /**
      * Saves a consented public wallet and optional ownership records as one local change, and returns the wallet ID that
-     * discovery must use. A wallet whose earlier discovery failed has no addresses yet, so importing the same expression
-     * again reuses it and keeps the account it was first saved with. A wallet that already has addresses cannot be imported twice.
+     * discovery must use. Importing a wallet that is already tracked resumes it: the tracked wallet and its account are
+     * kept, and discovery and history run again. Empty duplicates left by failed imports of the same wallet are removed,
+     * together with an account created for them that holds nothing else.
      */
     fun saveBitcoinWallet(
         target: TrackingTarget,
@@ -2052,11 +2059,35 @@ class PortfolioApplication(
                     setSourceEndpoint(providerEndpoint)
                 }
                 val catalog = ownership.loadInTransaction()
-                val existing = catalog.targets.firstOrNull { it.identity == normalized.identity && it.role == TargetRole.WALLET }
-                val reused = existing?.takeIf { wallet -> catalog.targets.none { it.walletId == wallet.id } }
-                require(existing == null || reused != null) { "Wallet already tracked" }
+                val equivalent =
+                    catalog.targets.filter {
+                        it.role == TargetRole.WALLET &&
+                            it.identity.networkId == BITCOIN_MAINNET &&
+                            it.identity.kind == "wallet" &&
+                            sameWalletSource(it.identity.canonicalKey, normalized.identity.canonicalKey)
+                    }
+
+                fun hasAddresses(wallet: TrackingTarget) = catalog.targets.any { it.walletId == wallet.id }
+                val reused = equivalent.firstOrNull(::hasAddresses) ?: equivalent.firstOrNull()
+                val duplicates = equivalent.filter { it != reused && !hasAddresses(it) }.map { it.id }.toSet()
+                val remainingTargets = catalog.targets.filterNot { it.id in duplicates }
+                // An account created only for a removed duplicate is removed when nothing else uses it.
+                val emptyAccounts =
+                    catalog.targets
+                        .filter { it.id in duplicates }
+                        .map { it.accountId }
+                        .filter { accountId ->
+                            accountId != reused?.accountId &&
+                                remainingTargets.none { it.accountId == accountId } &&
+                                catalog.accounts.none { it.parentId == accountId } &&
+                                catalog.portfolios.none { accountId in it.accountIds } &&
+                                db.query("SELECT 1 FROM ledger_movements WHERE account_id=? LIMIT 1", listOf(accountId.value)).isEmpty()
+                        }.toSet()
                 require(reused != null || catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
-                require(reused == null || newAccount != null || target.accountId == reused.accountId) { "Wallet already tracked" }
+                require(reused == null || newAccount != null || target.accountId == reused.accountId) {
+                    val label = catalog.accounts.firstOrNull { it.id == reused?.accountId }?.label ?: "another account"
+                    "This wallet is already tracked in account \"$label\""
+                }
                 val wallet = reused ?: normalized
                 val createdAccount = if (reused == null) newAccount else null
                 val createdOwner = if (reused == null) newOwner else null
@@ -2100,8 +2131,8 @@ class PortfolioApplication(
                     catalog.copy(
                         portfolios = portfolios,
                         owners = catalog.owners + listOfNotNull(createdOwner),
-                        accounts = catalog.accounts + listOfNotNull(createdAccount),
-                        targets = if (reused == null) catalog.targets + normalized else catalog.targets,
+                        accounts = catalog.accounts.filterNot { it.id in emptyAccounts } + listOfNotNull(createdAccount),
+                        targets = if (reused == null) remainingTargets + normalized else remainingTargets,
                     ),
                 )
                 if (consentAccepted) putSetting("source_consent", "true")
@@ -2148,6 +2179,28 @@ class PortfolioApplication(
      * An address that another account (or another wallet) already tracks cannot join this wallet. The message names that
      * account so the user can remove the standalone address there and retry.
      */
+    /**
+     * Standalone copies of a wallet address that the wallet's owner tracks in another account. Discovery moves them into
+     * the wallet, because the wallet now covers that address; another owner's copy stays a conflict.
+     */
+    private fun adoptableAddresses(
+        snapshot: OwnershipSnapshot,
+        address: String,
+        accountId: AccountId,
+    ): List<TrackingTarget> {
+        val owners = snapshot.accounts.associate { it.id to it.ownerId }
+        val owner = owners[accountId] ?: return emptyList()
+        return snapshot.targets.filter {
+            it.role == TargetRole.LEAF &&
+                it.identity.networkId == BITCOIN_MAINNET &&
+                it.identity.kind == "address" &&
+                it.identity.canonicalKey == address &&
+                it.walletId == null &&
+                it.accountId != accountId &&
+                owners[it.accountId] == owner
+        }
+    }
+
     private fun discoveryConflict(
         snapshot: OwnershipSnapshot,
         address: String,
@@ -2228,7 +2281,10 @@ class PortfolioApplication(
                 require(existing == null || existing.walletId == walletId && existing.identity.canonicalKey == address) {
                     "Wallet child identity conflict"
                 }
-                discoveryConflict(catalog, address, target.accountId, walletId, id)?.let { throw it }
+                val adoptable = adoptableAddresses(catalog, address, target.accountId).toSet()
+                discoveryConflict(catalog.copy(targets = catalog.targets - adoptable), address, target.accountId, walletId, id)?.let {
+                    throw it
+                }
                 children.add(
                     TrackingTarget(
                         id,
@@ -2248,7 +2304,8 @@ class PortfolioApplication(
             }
         }
         val childIds = children.map { it.id }.toSet()
-        val notice =
+        var moved = emptyList<TrackingTarget>()
+        val scopeNotice =
             when {
                 used == 0 ->
                     "No used addresses in ${children.size} checked. Check the expression: a bare xpub is read as native SegWit (BIP84) only."
@@ -2263,14 +2320,25 @@ class PortfolioApplication(
             }
             val fresh = ownership.loadInTransaction()
             require(fresh.targets.firstOrNull { it.id == walletId } == target) { "Wallet changed during discovery; retry" }
+            moved = children.flatMap { adoptableAddresses(fresh, it.identity.canonicalKey, target.accountId) }
+            val remaining = fresh.copy(targets = fresh.targets - moved.toSet())
             children.forEach { child ->
-                discoveryConflict(fresh, child.identity.canonicalKey, target.accountId, walletId, child.id)?.let { throw it }
+                discoveryConflict(remaining, child.identity.canonicalKey, target.accountId, walletId, child.id)?.let { throw it }
             }
-            ownership.replaceInTransaction(fresh.copy(targets = fresh.targets.filterNot { it.id in childIds } + children))
+            ownership.replaceInTransaction(remaining.copy(targets = remaining.targets.filterNot { it.id in childIds } + children))
             forgetSourceSuccess()
         }
         invalidate()
-        return BitcoinWalletDiscovery(children.size, used, notice)
+        val movedNotice =
+            moved.takeIf { it.isNotEmpty() }?.let { addresses ->
+                val labels =
+                    addresses
+                        .mapNotNull { leaf -> catalog.accounts.firstOrNull { it.id == leaf.accountId }?.label }
+                        .distinct()
+                        .joinToString { "\"$it\"" }
+                "Moved ${addresses.size} address${if (addresses.size == 1) "" else "es"} from $labels into this wallet."
+            }
+        return BitcoinWalletDiscovery(children.size, used, listOfNotNull(scopeNotice, movedNotice).joinToString(" ").ifEmpty { null })
     }
 
     fun savePortfolio(value: Portfolio) =

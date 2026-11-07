@@ -169,6 +169,78 @@ class BitcoinWalletTest {
         }
     }
 
+    /** A provider where only the wallet's second receive address has one confirmed 1000-satoshi payment. */
+    private fun fundedProvider(): EsploraTransport {
+        val usedAddress = bitcoinWallet(xpub).address(0, 1)
+        val txid = "b".repeat(64)
+
+        fun hash(height: Long) = height.toString(16).padStart(64, '0')
+        val funding =
+            """{"txid":"$txid","vin":[{"is_coinbase":true}],"vout":[{"scriptpubkey_address":"$usedAddress","value":1000}],""" +
+                """"fee":0,"status":{"confirmed":true,"block_time":1,"block_height":100,"block_hash":"${hash(100)}"}}"""
+
+        fun summary(count: Int) = """{"chain_stats":{"tx_count":$count},"mempool_stats":{"tx_count":0}}"""
+        return EsploraTransport { path ->
+            val address = Regex("/address/([^/]+)").find(path)?.groupValues?.get(1)
+            when {
+                path == "/blocks/tip/hash" -> hash(110)
+                path == "/block/${hash(110)}" -> """{"id":"${hash(110)}","height":110}"""
+                path.startsWith("/block-height/") -> hash(path.removePrefix("/block-height/").toLong())
+                address == null -> error("Unexpected provider request: $path")
+                path == "/address/$address" -> summary(if (address == usedAddress) 1 else 0)
+                path == "/address/$address/txs/mempool" -> "[]"
+                path == "/address/$address/utxo" ->
+                    if (address == usedAddress) {
+                        """[{"txid":"$txid","vout":0,"value":1000,"status":""" +
+                            """{"confirmed":true,"block_height":100,"block_hash":"${hash(100)}"}}]"""
+                    } else {
+                        "[]"
+                    }
+                path == "/address/$address/txs/chain" -> if (address == usedAddress) "[$funding]" else "[]"
+                path.startsWith("/address/$address/txs/chain/") -> "[]"
+                else -> error("Unexpected provider request: $path")
+            }
+        }
+    }
+
+    @Test fun discoveryMovesTheOwnersStandaloneAddressIntoTheWalletAndItsBalanceFollows() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 15552000000L }
+            val owner = OwnerId("o")
+            val walletAccount = AccountId("wallet-account")
+            val oldAccount = AccountId("old")
+            val walletId = TrackingTargetId("w")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(oldAccount, owner, "ledger", AccountKind.WALLET))
+            app.saveAccount(Account(walletAccount, owner, "ledger", AccountKind.WALLET))
+            app.setSourceConsent(true)
+            val transport = fundedProvider()
+            // The user first tracked one of the wallet's addresses on its own, and its history was accepted.
+            app.saveTarget(
+                TrackingTarget(
+                    TrackingTargetId("standalone"),
+                    oldAccount,
+                    TargetIdentity(BITCOIN_MAINNET, "address", bitcoinWallet(xpub).address(0, 1)),
+                    TargetRole.LEAF,
+                    "Ledger address",
+                ),
+            )
+            assertTrue(app.refreshBitcoin(transport).all { it == JobState.COMPLETED })
+            app.saveTarget(TrackingTarget(walletId, walletAccount, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
+
+            val discovered = app.discoverBitcoinWallet(walletId, transport)
+
+            assertTrue(discovered.notice!!.contains("Moved 1 address from \"ledger\""), discovered.notice)
+            assertTrue(app.snapshot().ownership.targets.none { it.id == TrackingTargetId("standalone") })
+            val states = app.refreshBitcoin(transport)
+            assertTrue(states.isNotEmpty() && states.all { it == JobState.COMPLETED }, states.toString())
+            val overview = app.accountOverview().associateBy { it.account.id }
+            assertEquals("1000", overview.getValue(walletAccount).holdings.single().amount.atomicUnits.toString())
+            assertTrue(overview[oldAccount]?.holdings.orEmpty().isEmpty())
+            assertEquals(1, app.snapshot().activityTotal)
+        }
+    }
+
     @Test fun discoveredXpubWithHistoryCompletesRefresh() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 15552000000L }
@@ -179,39 +251,11 @@ class BitcoinWalletTest {
             app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
             app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
             app.setSourceConsent(true)
-            val usedAddress = bitcoinWallet(xpub).address(0, 1)
-            val txid = "b".repeat(64)
-
-            fun hash(height: Long) = height.toString(16).padStart(64, '0')
-            val funding =
-                """{"txid":"$txid","vin":[{"is_coinbase":true}],"vout":[{"scriptpubkey_address":"$usedAddress","value":1000}],""" +
-                    """"fee":0,"status":{"confirmed":true,"block_time":1,"block_height":100,"block_hash":"${hash(100)}"}}"""
-
-            fun summary(count: Int) = """{"chain_stats":{"tx_count":$count},"mempool_stats":{"tx_count":0}}"""
-            val transport =
-                EsploraTransport { path ->
-                    val address = Regex("/address/([^/]+)").find(path)?.groupValues?.get(1)
-                    when {
-                        path == "/blocks/tip/hash" -> hash(110)
-                        path == "/block/${hash(110)}" -> """{"id":"${hash(110)}","height":110}"""
-                        path.startsWith("/block-height/") -> hash(path.removePrefix("/block-height/").toLong())
-                        address == null -> error("Unexpected provider request: $path")
-                        path == "/address/$address" -> summary(if (address == usedAddress) 1 else 0)
-                        path == "/address/$address/txs/mempool" -> "[]"
-                        path == "/address/$address/utxo" ->
-                            if (address == usedAddress) {
-                                """[{"txid":"$txid","vout":0,"value":1000,"status":""" +
-                                    """{"confirmed":true,"block_height":100,"block_hash":"${hash(100)}"}}]"""
-                            } else {
-                                "[]"
-                            }
-                        path == "/address/$address/txs/chain" -> if (address == usedAddress) "[$funding]" else "[]"
-                        path.startsWith("/address/$address/txs/chain/") -> "[]"
-                        else -> error("Unexpected provider request: $path")
-                    }
-                }
+            val transport = fundedProvider()
             val discovered = app.discoverBitcoinWallet(walletId, transport)
             assertEquals(1, discovered.usedAddresses)
+            val usedAddress = bitcoinWallet(xpub).address(0, 1)
+            assertTrue(app.snapshot().ownership.targets.any { it.identity.canonicalKey == usedAddress })
             val states = app.refreshBitcoin(transport)
             assertTrue(states.isNotEmpty() && states.all { it == JobState.COMPLETED }, states.toString())
             assertEquals(1, app.snapshot().activityTotal)
@@ -226,7 +270,9 @@ class BitcoinWalletTest {
             val walletId = TrackingTargetId("w")
             app.saveOwner(Owner(owner, "Owner"))
             app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
-            app.saveAccount(Account(AccountId("old"), owner, "Old standalone account", AccountKind.ACCOUNT))
+            // Another owner's copy of the address is not moved; discovery names the account instead.
+            app.saveOwner(Owner(OwnerId("other"), "Other"))
+            app.saveAccount(Account(AccountId("old"), OwnerId("other"), "Old standalone account", AccountKind.ACCOUNT))
             app.saveTarget(TrackingTarget(walletId, account, TargetIdentity(BITCOIN_MAINNET, "wallet", xpub), TargetRole.WALLET, "Wallet"))
             app.saveTarget(
                 TrackingTarget(
@@ -269,8 +315,39 @@ class BitcoinWalletTest {
             assertEquals(firstId, retriedId)
             val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
             assertEquals(4, app.discoverBitcoinWallet(retriedId, unused, 2, 3).addresses)
-            // A wallet that already has addresses still cannot be imported twice.
-            assertFails { app.saveBitcoinWallet(target.copy(id = TrackingTargetId("w3"))) }
+            // A wallet that already has addresses is resumed, not imported twice.
+            assertEquals(retriedId, app.saveBitcoinWallet(target.copy(id = TrackingTargetId("w3"))))
+            assertEquals(1, app.snapshot().ownership.targets.count { it.role == TargetRole.WALLET })
+        }
+    }
+
+    @Test fun resumingATrackedWalletRemovesAnEmptyDuplicateAndItsAccount() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 0L }
+            val owner = OwnerId("o")
+            app.saveOwner(Owner(owner, "Owner"))
+            app.saveAccount(Account(AccountId("a"), owner, "ledger", AccountKind.WALLET))
+            app.saveAccount(Account(AccountId("dup"), owner, "ledger", AccountKind.WALLET))
+            app.setSourceConsent(true)
+
+            fun wallet(
+                id: String,
+                account: String,
+                expression: String = xpub,
+            ) = TrackingTarget(TrackingTargetId(id), AccountId(account), TargetIdentity(BITCOIN_MAINNET, "wallet", expression), TargetRole.WALLET, "ledger")
+            val tracked = app.saveBitcoinWallet(wallet("w1", "a"))
+            val unused = EsploraTransport { """{"chain_stats":{"tx_count":0},"mempool_stats":{"tx_count":0}}""" }
+            app.discoverBitcoinWallet(tracked, unused, 2, 3)
+            // An earlier failed import saved the same key under another text form, as an empty wallet in a second account.
+            app.saveTarget(wallet("w2", "dup", "wpkh($xpub/0/*)"))
+
+            val resumed = app.saveBitcoinWallet(wallet("w3", "new"), newAccount = Account(AccountId("new"), owner, "ledger", AccountKind.WALLET))
+
+            assertEquals(tracked, resumed)
+            val ownership = app.snapshot().ownership
+            assertEquals(listOf(tracked), ownership.targets.filter { it.role == TargetRole.WALLET }.map { it.id })
+            assertTrue(ownership.accounts.none { it.id == AccountId("dup") || it.id == AccountId("new") })
+            assertEquals(4, ownership.targets.count { it.walletId == tracked })
         }
     }
 }
