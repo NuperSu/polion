@@ -49,6 +49,7 @@ import io.polion.core.ownership.TargetIdentity
 import io.polion.core.ownership.TargetRole
 import io.polion.core.ownership.TrackingTarget
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -73,6 +74,8 @@ private fun AccountFlowDialog(
         }
     }
 }
+
+private const val REPLY_WAIT_MILLIS = 3_000L
 
 internal fun canonicalBitcoinSource(input: String): String {
     val text = input.trim()
@@ -124,7 +127,17 @@ internal fun BitcoinConnectDialog(
     val canonical = runCatching { canonicalBitcoinSource(expression) }.getOrNull()
     val wallet = savedWallet
     val discovery = syncStatus.takeIf { wallet != null && it != baseline && it.operation == SyncOperation.DISCOVERY }
-    val failed = wallet != null && (discovery?.phase == SyncPhase.ERROR || (discovery == null && hostReply != null))
+    // A reply with no discovery status (for example a rejected request) allows a retry only after a short wait, so a
+    // host that acknowledges before publishing its first status does not flash a retry button.
+    var replyUnanswered by remember { mutableStateOf(false) }
+    LaunchedEffect(hostReply, discovery == null) {
+        replyUnanswered = false
+        if (hostReply != null && discovery == null) {
+            delay(REPLY_WAIT_MILLIS)
+            replyUnanswered = true
+        }
+    }
+    val failed = wallet != null && (discovery?.phase == SyncPhase.ERROR || (discovery == null && replyUnanswered))
     val blocker =
         when {
             label.isBlank() -> "Enter an account or wallet name."
