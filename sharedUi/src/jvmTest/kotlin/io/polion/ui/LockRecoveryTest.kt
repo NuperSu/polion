@@ -32,4 +32,31 @@ class LockRecoveryTest {
             }
         }
     }
+
+    @Test fun fingerprintButtonAppearsOnlyWhenEnabledAndReportsFailures() {
+        ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
+            var attempts = 0
+            val host =
+                object : PlatformActions by delegate {
+                    override fun biometricUnlock() = BiometricUnlock.ON
+
+                    override fun unlockWithBiometrics(onResult: (UnlockResult) -> Unit) {
+                        attempts++
+                        onResult(UnlockResult(false, "Fingerprint not recognized"))
+                    }
+                }
+            runDesktopComposeUiTest(width = 390, height = 844) {
+                setContent { PolionTheme(AppearanceTheme.DARK) { LockScreen(host) } }
+                onNodeWithTag("lock-biometric").performClick()
+                onNodeWithText("Fingerprint not recognized").assertExists()
+                assertEquals(1, attempts)
+            }
+        }
+        ModelWorkspaceRestorationTest.RestorationHost().use { host ->
+            runDesktopComposeUiTest(width = 390, height = 844) {
+                setContent { PolionTheme(AppearanceTheme.DARK) { LockScreen(host) } }
+                onNodeWithTag("lock-biometric").assertDoesNotExist()
+            }
+        }
+    }
 }

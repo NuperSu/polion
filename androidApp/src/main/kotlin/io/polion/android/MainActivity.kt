@@ -29,6 +29,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.storage.AndroidSqliteDatabase
+import io.polion.ui.BiometricUnlock
 import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
@@ -110,8 +111,42 @@ private class AndroidHost(
     private val preferences = activity.getSharedPreferences("privacy", 0)
     private val lockStore = SecureLockStore(preferences)
     private val files = BackupFiles(activity)
+    private val biometrics = BiometricLock(activity, preferences)
     private val notificationPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    val isChoosing: Boolean get() = files.isChoosing
+    val isChoosing: Boolean get() = files.isChoosing || biometrics.prompting
+
+    override val defaultDeviceName: String
+        get() =
+            android.provider.Settings.Global.getString(activity.contentResolver, android.provider.Settings.Global.DEVICE_NAME)
+                ?.takeIf { it.isNotBlank() } ?: android.os.Build.MODEL
+
+    override fun biometricUnlock(): BiometricUnlock = biometrics.status(lockStore.hasLock)
+
+    override fun setBiometricUnlock(
+        enabled: Boolean,
+        onResult: (String) -> Unit,
+    ) {
+        if (!enabled) {
+            biometrics.disable()
+            onResult("Fingerprint unlock off")
+        } else if (!lockStore.hasLock || locked.value) {
+            onResult("Turn on Passcode Lock first")
+        } else {
+            biometrics.enable { error -> onResult(if (error == null) "Fingerprint unlock on" else error.ifEmpty { "Fingerprint unlock not changed" }) }
+        }
+    }
+
+    override fun unlockWithBiometrics(onResult: (UnlockResult) -> Unit) {
+        if (biometricUnlock() != BiometricUnlock.ON) {
+            onResult(UnlockResult(false, "Fingerprint unlock is off. Unlock with your password."))
+            return
+        }
+        biometrics.unlock { error ->
+            if (error == null) locked.value = false
+            // An empty message means the user chose the password instead; nothing to report.
+            onResult(UnlockResult(error == null, error?.ifEmpty { null }))
+        }
+    }
     private lateinit var db: AndroidSqliteDatabase
     val app = mutableStateOf<PortfolioApplication?>(null)
     val openFailed = mutableStateOf(false)
@@ -462,6 +497,7 @@ private class AndroidHost(
             return
         }
         val success = runCatching { lockStore.remove() }.isSuccess
+        if (success) biometrics.disable()
         onResult(if (success) "Privacy lock removed" else "Could not remove privacy lock")
     }
 
@@ -482,6 +518,7 @@ private class AndroidHost(
                 }.isSuccess
             main.post {
                 if (success) {
+                    biometrics.disable()
                     locked.value = false
                     dataRevision.update { it + 1 }
                 }

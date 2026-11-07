@@ -1112,6 +1112,16 @@ internal fun LockScreen(host: PlatformActions) {
                     if (result.success) password = ""
                 }
             }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Unlocking…" else "Unlock") }
+            if (remember { host.biometricUnlock() } == BiometricUnlock.ON) {
+                OutlinedButton(onClick = {
+                    busy = true
+                    error = null
+                    host.unlockWithBiometrics { result ->
+                        busy = false
+                        if (!result.success) error = result.message
+                    }
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth().testTag("lock-biometric")) { Text("Unlock with fingerprint") }
+            }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             TextButton(onClick = { forgot = true }, enabled = !busy, modifier = Modifier.testTag("lock-forgot")) {
                 Text("Forgot password?")

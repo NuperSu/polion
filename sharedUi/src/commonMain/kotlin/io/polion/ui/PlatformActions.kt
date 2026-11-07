@@ -169,4 +169,32 @@ interface PlatformActions {
     fun eraseAndRemoveLock(onResult: (String) -> Unit) {
         onResult("Erasing locked data is not available here.")
     }
+
+    /** Shown in Settings when the user has not named this device. */
+    val defaultDeviceName: String get() = "This device"
+
+    /** Fingerprint unlock over the privacy lock; a device setting, never part of backups. Main thread. */
+    fun biometricUnlock(): BiometricUnlock = BiometricUnlock.UNSUPPORTED
+
+    /** Turning fingerprint unlock on asks for a fingerprint first. Main thread. */
+    fun setBiometricUnlock(
+        enabled: Boolean,
+        onResult: (String) -> Unit,
+    ) {
+        onResult("Fingerprint unlock is not available here.")
+    }
+
+    fun unlockWithBiometrics(onResult: (UnlockResult) -> Unit) {
+        onResult(UnlockResult(false, "Fingerprint unlock is not available here."))
+    }
+}
+
+enum class BiometricUnlock {
+    /** The host or hardware has no strong biometric unlock. */
+    UNSUPPORTED,
+
+    /** Supported, but the device has no enrolled fingerprint. */
+    NOT_ENROLLED,
+    OFF,
+    ON,
 }
