@@ -671,7 +671,11 @@ class PortfolioApplication(
         saved: List<io.polion.core.accounting.Treatment>,
         quote: AssetId,
     ): List<io.polion.core.accounting.Treatment> {
-        val rewards = activity.movements.filter { it.role == io.polion.core.ledger.MovementRole.REWARD }.map { it.id }.toSet()
+        val rewards =
+            activity.movements
+                .filter { it.role == io.polion.core.ledger.MovementRole.REWARD }
+                .map { it.id }
+                .toSet()
         return saved.map { treatment ->
             if (treatment is io.polion.core.accounting.Treatment.Acquire && treatment.movement in rewards) {
                 treatment.copy(cost = QuoteValue(quote, Rational.ZERO), opening = false)
@@ -721,7 +725,11 @@ class PortfolioApplication(
                 confirmed.forEach { entry ->
                     val activity = entry.activity
                     try {
-                        val saved = treatments.load(activity.id).let { if (zeroBasisRewards) withZeroBasisRewards(activity, it, quote) else it }
+                        val saved =
+                            treatments
+                                .load(
+                                    activity.id,
+                                ).let { if (zeroBasisRewards) withZeroBasisRewards(activity, it, quote) else it }
                         if (saved.isEmpty()) {
                             if (affectsSelection(activity)) missing.add(activity.id)
                             incompleteAssets.addAll(ownerAssets(activity))
