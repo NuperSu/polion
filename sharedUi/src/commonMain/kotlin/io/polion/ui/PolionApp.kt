@@ -642,6 +642,51 @@ private fun Product(
                     },
                     onTransaction = { selectedActivity = it },
                     statusContent = { SnackbarHost(snackbar, Modifier.testTag("status-message")) },
+                    settingsContent = { openAdvanced ->
+                        ProductSettings(
+                            snapshot,
+                            preferences,
+                            host.wifiOnlyRefreshSupported,
+                            appearance,
+                            assetPreference,
+                            host.hasLock,
+                            openAdvanced,
+                            SettingsActions(
+                                onAutomatic = { onAutomaticSwitch(it) },
+                                onWifi = { enabled ->
+                                    val updated = preferences.copy(wifiOnly = enabled)
+                                    execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
+                                    preferences = updated
+                                },
+                                onCurrency = { code -> execute("Currency saved") { app.setCurrency(AssetId(code)) } },
+                                onAppearance = { selected ->
+                                    execute("Appearance saved") {
+                                        app.setAppearanceTheme(selected.key)
+                                        onAppearance(selected)
+                                    }
+                                },
+                                onAssetPreference = ::saveAssetPreference,
+                                onDialog = { dialog = it },
+                                onExportCsv = {
+                                    execute("Export ready") {
+                                        host.saveFile("polion-activities.csv", app.exportCsv().encodeToByteArray()) { message = it }
+                                    }
+                                },
+                                onConnect = { modelConnect = true },
+                                onWalletHistory = { modelHistory = true },
+                                onAccounts = { page = Page.ACCOUNTS },
+                                onRefreshHistory = { host.refresh { presenter.notify(it) } },
+                                onLockNow = host::lock,
+                                onRemoveLock = {
+                                    host.removeLockPassword {
+                                        message = it
+                                        revision++
+                                    }
+                                },
+                                onSetup = onSetup,
+                            ),
+                        )
+                    },
                     onManual = { asset ->
                         modelEditingId = null
                         manualAsset = asset?.asset

@@ -2,6 +2,7 @@ package io.polion.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -106,6 +107,7 @@ internal fun ModelWorkspace(
     onAccountTool: (AccountTool) -> Unit = {},
     onTransaction: (EffectiveActivity) -> Unit = {},
     statusContent: @Composable () -> Unit = {},
+    settingsContent: (@Composable ColumnScope.(onAdvanced: (Page) -> Unit) -> Unit)? = null,
 ) {
     val transactionScope = rememberCoroutineScope()
     var transactionSearch by rememberSaveable { mutableStateOf("") }
@@ -780,6 +782,7 @@ internal fun ModelWorkspace(
                         onAccountTool,
                     )
                 }
+                Page.SETTINGS if settingsContent != null -> settingsContent(onAdvanced)
                 Page.SETTINGS -> {
                     ModelSettings(
                         ModelSettingsState(
