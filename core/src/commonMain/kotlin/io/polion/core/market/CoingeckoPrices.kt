@@ -59,7 +59,7 @@ object CoingeckoPrices {
         }
     }
 
-    private fun parseJsonNumber(text: String): ExactDecimal {
+    internal fun parseJsonNumber(text: String): ExactDecimal {
         require(text.length <= 100)
         val parts = text.lowercase().split('e')
         require(parts.size <= 2 && parts[0].matches(Regex("(0|[1-9][0-9]*)(\\.[0-9]+)?")))

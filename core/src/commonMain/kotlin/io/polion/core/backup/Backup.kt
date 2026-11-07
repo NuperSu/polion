@@ -25,9 +25,11 @@ class PortableBackup(
         const val FORMAT = "3"
         private const val MAGIC = "POLION-BACKUP"
         private const val PAGE = 500
-        private val excludedTables = (BitcoinScanStage.SCRATCH_TABLES + "android_metadata").joinToString(",") { "'$it'" }
+        private val excludedTables =
+            (BitcoinScanStage.SCRATCH_TABLES + io.polion.core.market.MarketFeedRepository.LOCAL_TABLES + "android_metadata")
+                .joinToString(",") { "'$it'" }
 
-        /** Discover durable application tables; transient Bitcoin scan working tables are excluded. */
+        /** Discover durable application tables; Bitcoin scan working tables, market feed caches and device settings are excluded. */
         fun discover(db: SqliteDatabase): PortableBackup {
             val tables =
                 db

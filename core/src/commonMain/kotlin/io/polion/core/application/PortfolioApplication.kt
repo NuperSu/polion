@@ -41,6 +41,7 @@ import io.polion.core.ledger.ActivityRepository
 import io.polion.core.market.AssetDefinition
 import io.polion.core.market.AssetMetadata
 import io.polion.core.market.CoingeckoHistoricalResult
+import io.polion.core.market.CoingeckoMarkets
 import io.polion.core.market.CoingeckoPriceClient
 import io.polion.core.market.CoingeckoPrices
 import io.polion.core.market.CoingeckoProviderException
@@ -48,6 +49,8 @@ import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
 import io.polion.core.market.KrakenPrices
 import io.polion.core.market.KrakenRateLimitedException
+import io.polion.core.market.MarketFeed
+import io.polion.core.market.MarketFeedRepository
 import io.polion.core.market.MarketRepository
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
@@ -264,6 +267,26 @@ class BitcoinDiscoveryConflict(
     message: String,
 ) : IllegalArgumentException(message)
 
+data class MarketOverview(
+    val currency: AssetId,
+    val consent: Boolean,
+    val markets: io.polion.core.market.MarketFeed<io.polion.core.market.MarketListing>?,
+    val trending: io.polion.core.market.MarketFeed<io.polion.core.market.TrendingListing>?,
+    /** Name of the [CoingeckoProviderFailure] from the last refresh, or null after a success. */
+    val lastFailure: String?,
+    /** Epoch millis until which CoinGecko feed requests pause after a rate limit. */
+    val retryAfterMillis: Long?,
+    val hasApiKey: Boolean,
+    /** CoinGecko coin ID to the asset ID used for favorites and coin pages. */
+    val assetKeys: Map<String, AssetId>,
+)
+
+data class MarketRefreshResult(
+    val updatedFeeds: Int,
+    val failure: CoingeckoProviderFailure?,
+    val retryAfterMillis: Long?,
+)
+
 enum class LandingPage { MAIN, PORTFOLIO, INSIGHTS }
 
 data class GeneralPreferences(
@@ -287,6 +310,7 @@ class PortfolioApplication(
     private val ownership = OwnershipRepository(db)
     private val activities = ActivityRepository(db)
     private val overlays = OverlayRepository(db)
+    private val marketFeeds = MarketFeedRepository(db)
     private val holdings = HoldingsRepository(db)
     private val market = MarketRepository(db)
     private val treatments = TreatmentRepository(db)
@@ -1519,13 +1543,15 @@ class PortfolioApplication(
     }
 
     /**
-     * The single automatic-refresh switch. Enabling it grants automatic Kraken price consent with the schedule preference;
-     * disabling it withdraws that consent. Both change in one transaction, so prices and wallet history cannot disagree.
+     * The single automatic-refresh switch. Enabling it grants automatic Kraken price and CoinGecko market consent with the
+     * schedule preference; disabling it withdraws the Kraken consent. Both change in one transaction, so prices and wallet history cannot disagree.
      */
     fun setAutomaticRefresh(enabled: Boolean) =
         db.transaction {
             putSetting("refresh_automatic", enabled.toString())
             putAutomaticPriceConsent(enabled)
+            // Auto-sync also refreshes market lists; turning it off keeps manual market refresh available.
+            if (enabled) setMarketDataConsent(true)
         }
 
     fun setAutomaticPortfolioPriceConsent(accepted: Boolean) =
@@ -1852,6 +1878,108 @@ class PortfolioApplication(
             "asset_list_preference",
             "${preference.sort.name}:${if (preference.hideEmpty) 1 else 0}:${if (preference.hideSmall) 1 else 0}",
         )
+    }
+
+    /** Cached CoinGecko feeds for the display currency, with the request state Main needs to explain gaps. */
+    fun marketOverview(): MarketOverview {
+        val currency = currency()
+        val code = currency.value.lowercase()
+        val markets = marketFeeds.markets(code)
+        val trending = marketFeeds.trending(code)
+        val ids = (markets?.items.orEmpty().map { it.coinId } + trending?.items.orEmpty().map { it.coinId }).toSet()
+        return MarketOverview(
+            currency,
+            marketDataConsent(),
+            markets,
+            trending,
+            marketFeeds.deviceSetting("market_feed_error"),
+            marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > now() },
+            coingeckoApiKey() != null,
+            ids.associateWith { marketAssetKey(it) },
+        )
+    }
+
+    /** Bitcoin and any provider-mapped coin use the portfolio asset ID, so favorites and coin pages match holdings. */
+    fun marketAssetKey(coinId: String): AssetId =
+        if (coinId == "bitcoin") {
+            BITCOIN_ASSET
+        } else {
+            market.resolveProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId) ?: AssetId("coingecko:$coinId")
+        }
+
+    fun marketDataConsent(): Boolean = setting("market_data_consent") == "true"
+
+    fun setMarketDataConsent(accepted: Boolean) = putSetting("market_data_consent", accepted.toString())
+
+    /** The optional CoinGecko Demo key raises request limits. It stays on this device and is not part of backups. */
+    fun coingeckoApiKey(): String? = marketFeeds.deviceSetting("coingecko_api_key")
+
+    fun setCoingeckoApiKey(key: String?) {
+        val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{10,100}"))) { "That does not look like a CoinGecko API key" }
+        db.transaction {
+            marketFeeds.putDeviceSetting("coingecko_api_key", trimmed)
+            // A new key may lift a rate limit reached without one.
+            marketFeeds.putDeviceSetting("coingecko_retry_after", null)
+        }
+    }
+
+    /**
+     * Refreshes the top-250 market list and the trending list for the display currency, skipping a feed younger than
+     * [maxAgeMillis] (trending at most every 10 minutes). Each successful feed is saved on its own, so a failure keeps the
+     * other feed and every earlier copy. A rate limit pauses all CoinGecko feed requests for a minute.
+     */
+    fun refreshMarketFeeds(
+        transport: (url: String, apiKey: String?) -> String,
+        maxAgeMillis: Long = 60_000L,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ): MarketRefreshResult {
+        require(marketDataConsent()) { "Market data consent required" }
+        val started = now()
+        marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > started }?.let {
+            return MarketRefreshResult(0, CoingeckoProviderFailure.RATE_LIMITED, it)
+        }
+        val code = currency().value.lowercase()
+        val key = coingeckoApiKey()
+        var updated = 0
+
+        fun due(
+            feed: String,
+            age: Long,
+        ) = marketFeeds.observedAt(feed, code)?.let { started - it >= age } ?: true
+        try {
+            if (due("markets", maxAgeMillis)) {
+                val payload = transport(CoingeckoMarkets.marketsUrl(baseUrl, code), key)
+                val listings =
+                    runCatching { CoingeckoMarkets.parseMarkets(payload) }.getOrNull()?.takeIf { it.isNotEmpty() }
+                        ?: throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+                marketFeeds.saveMarkets(MarketFeed(code, now(), listings))
+                updated++
+            }
+            if (due("trending", maxOf(maxAgeMillis, 600_000L))) {
+                val btc =
+                    marketFeeds
+                        .markets(code)
+                        ?.items
+                        ?.firstOrNull { it.coinId == "bitcoin" }
+                        ?.price
+                val payload = transport(CoingeckoMarkets.trendingUrl(baseUrl), key)
+                val listings =
+                    runCatching { CoingeckoMarkets.parseTrending(payload, code, btc) }.getOrNull()
+                        ?: throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+                marketFeeds.saveTrending(MarketFeed(code, now(), listings))
+                updated++
+            }
+            marketFeeds.putDeviceSetting("market_feed_error", null)
+            return MarketRefreshResult(updated, null, null)
+        } catch (failure: CoingeckoProviderException) {
+            val retry = if (failure.failure == CoingeckoProviderFailure.RATE_LIMITED) now() + 60_000L else null
+            db.transaction {
+                retry?.let { marketFeeds.putDeviceSetting("coingecko_retry_after", it.toString()) }
+                marketFeeds.putDeviceSetting("market_feed_error", failure.failure.name)
+            }
+            return MarketRefreshResult(updated, failure.failure, retry)
+        }
     }
 
     /** Display and accounting preferences from Settings; stored in `application_settings`, so backups include them. */

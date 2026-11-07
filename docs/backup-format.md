@@ -42,7 +42,7 @@ per durable table, in name order:
 "END"
 ```
 
-- **Tables:** durable tables are every application table except the Bitcoin scan scratch tables and `android_metadata`. Tables with "secret" or "credential" in the name are refused, and binary columns are refused.
+- **Tables:** durable tables are every application table except the Bitcoin scan scratch tables, the market feed cache (`market_feed_cache`), device-only settings such as API keys (`device_settings`) and `android_metadata`. Tables with "secret" or "credential" in the name are refused, and binary columns are refused.
 - **Export:** export runs inside one read transaction, so the snapshot is consistent, and pages rows by rowid.
 - **Restore checks:** restore writes into a new staging database created by the current application. It rejects:
   - a newer schema version;
