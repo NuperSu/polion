@@ -108,6 +108,7 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.math.pow
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -648,6 +649,177 @@ class PortfolioApplication(
                     CategoryAnalytics(key.first, key.second, incoming, outgoing, group.map { it.first.id }.distinct().size)
                 }.sortedWith(compareBy({ it.kind.name }, { it.asset.value }))
         return AnalyticsSnapshot(atMillis, quote, valuations(scoped, quote, knownAt), accounts, categories, BalanceCoverage.UNKNOWN)
+    }
+
+    /** Confirmed activities in (start, end] with a movement in [accounts], oldest first. */
+    private fun activitiesBetween(
+        accounts: Set<AccountId>,
+        startMillis: Long,
+        endMillis: Long,
+    ): List<Activity> =
+        ledger()
+            .activities
+            .map { it.activity }
+            .filter {
+                it.status == io.polion.core.ledger.ActivityStatus.CONFIRMED &&
+                    it.occurredAtEpochMillis > startMillis &&
+                    it.occurredAtEpochMillis <= endMillis &&
+                    it.movements.any { movement -> movement.accountId in accounts }
+            }.sortedBy { it.occurredAtEpochMillis }
+
+    /** The value of [amount] in [quote] at [atMillis] from a fresh saved price, or null without one. */
+    private fun valueAt(
+        amount: AtomicAmount,
+        quote: AssetId,
+        atMillis: Long,
+        knownAt: Long,
+    ): ExactDecimal? {
+        val decimals = market.metadataAt(amount.assetId, atMillis)?.decimals ?: return null
+        if (amount.assetId == quote) return amount.decimal(decimals)
+        val result = market.lookup(amount.assetId, quote, atMillis, knownAt, pricePolicy(current = atMillis >= knownAt - 86_400_000L))
+        return if (result.status == PriceStatus.FRESH) result.value(amount, decimals) else null
+    }
+
+    /**
+     * Money-weighted return of [portfolio] from [startMillis] to [endMillis]. See [MoneyWeightedReturn] for what counts as
+     * a contribution; any missing start, end or flow price makes the rate unavailable rather than approximate.
+     */
+    fun moneyWeightedReturn(
+        portfolio: PortfolioId?,
+        startMillis: Long,
+        endMillis: Long,
+    ): MoneyWeightedReturn {
+        require(endMillis > startMillis)
+        ensureDefaultAssets()
+        val quote = portfolioCurrency(portfolio)
+        val selected = scopedAccounts(ownership.load(), portfolio)
+        val knownAt = now()
+
+        fun total(point: HistoryPoint): ExactDecimal? {
+            val held = point.valuations.filter { it.amount.atomicUnits.sign != 0 }
+            if (held.any { it.value == null || it.priceStatus != PriceStatus.FRESH }) return null
+            return held.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + valuation.value!! }
+        }
+        val (startPoint, endPoint) = historySeries(listOf(startMillis, endMillis), portfolio)
+        val startValue = total(startPoint)
+        val endValue = total(endPoint)
+        // Transfer movements that leave or enter the scope are flows; transfers between scoped accounts cancel out.
+        var contributions = ExactDecimal.parse("0")
+        var withdrawals = ExactDecimal.parse("0")
+        var unpriced = 0
+        val flows = mutableListOf<Pair<Long, ExactDecimal>>()
+        activitiesBetween(selected, startMillis, endMillis).forEach { activity ->
+            activity.movements
+                .filter { it.accountId in selected && it.role == io.polion.core.ledger.MovementRole.TRANSFER }
+                .groupBy { it.amount.assetId }
+                .forEach { (asset, movements) ->
+                    val net = movements.fold(io.polion.core.model.ExactInteger.ZERO) { sum, movement -> sum + movement.amount.atomicUnits }
+                    if (net.sign == 0) return@forEach
+                    val magnitude = AtomicAmount(asset, if (net.sign < 0) -net else net)
+                    val value = valueAt(magnitude, quote, activity.occurredAtEpochMillis, knownAt)
+                    if (value == null) {
+                        unpriced++
+                    } else if (net.sign > 0) {
+                        contributions += value
+                        flows += activity.occurredAtEpochMillis to value
+                    } else {
+                        withdrawals += value
+                        flows += activity.occurredAtEpochMillis to ExactDecimal(-value.coefficient, value.scale)
+                    }
+                }
+        }
+        val priced = startValue != null && endValue != null && unpriced == 0
+        val gain = if (priced) endValue!! - startValue!! - contributions + withdrawals else null
+        val year = 365.25 * 86_400_000.0
+        val span = (endMillis - startMillis) / year
+        val (rate, status) =
+            if (!priced) {
+                null to ReturnStatus.MISSING_PRICES
+            } else {
+                // Investor view: money put in is negative, money taken out and the final value are positive.
+                val dated =
+                    listOf(DatedFlow(0.0, -startValue!!.toString().toDouble())) +
+                        flows.map { (at, value) -> DatedFlow((at - startMillis) / year, -value.toString().toDouble()) } +
+                        DatedFlow(span, endValue!!.toString().toDouble())
+                InternalRate.solve(dated.filter { it.amount != 0.0 })
+            }
+        return MoneyWeightedReturn(
+            startMillis,
+            endMillis,
+            quote,
+            startValue,
+            endValue,
+            contributions.takeIf { unpriced == 0 },
+            withdrawals.takeIf { unpriced == 0 },
+            gain,
+            rate?.let { (1 + it).pow(span) - 1 },
+            rate?.takeIf { span >= 365.0 / 365.25 },
+            status,
+            unpriced,
+            flows.size + unpriced,
+        )
+    }
+
+    /** Trades, fees and account use of [portfolio] from [startMillis] to [endMillis], from confirmed activities. */
+    fun activityInsights(
+        portfolio: PortfolioId?,
+        startMillis: Long,
+        endMillis: Long,
+    ): ActivityInsights {
+        ensureDefaultAssets()
+        val catalog = ownership.load()
+        val selected = scopedAccounts(catalog, portfolio)
+        val quote = portfolioCurrency(portfolio)
+        val knownAt = now()
+        val activities = activitiesBetween(selected, startMillis, endMillis)
+        val trades = activities.filter { it.kind == io.polion.core.ledger.ActivityKind.TRADE }
+        val tradedAssets =
+            trades
+                .flatMap { trade ->
+                    trade.movements.filter { it.accountId in selected && it.role == io.polion.core.ledger.MovementRole.TRADE_LEG }
+                }.map { it.amount.assetId }
+                .toSet()
+        // Each fee is counted once, in its own asset, and valued at the time it was paid.
+        val fees =
+            activities
+                .flatMap { activity ->
+                    activity.movements
+                        .filter {
+                            it.accountId in selected &&
+                                it.role == io.polion.core.ledger.MovementRole.FEE &&
+                                it.amount.atomicUnits.sign < 0
+                        }.map { activity.occurredAtEpochMillis to it }
+                }.groupBy { it.second.amount.assetId }
+                .map { (asset, paid) ->
+                    var value: ExactDecimal? = ExactDecimal.parse("0")
+                    var unpriced = 0
+                    paid.forEach { (at, movement) ->
+                        val amount = AtomicAmount(asset, -movement.amount.atomicUnits)
+                        val worth = valueAt(amount, quote, at, knownAt)
+                        if (worth == null) unpriced++ else value = value?.plus(worth)
+                    }
+                    FeeTotal(
+                        asset,
+                        paid.fold(io.polion.core.model.ExactInteger.ZERO) { sum, (_, movement) -> sum - movement.amount.atomicUnits },
+                        market.metadataAt(asset, knownAt)?.decimals,
+                        value.takeIf { unpriced == 0 },
+                        unpriced,
+                    )
+                }.sortedBy { it.asset.value }
+        val accounts =
+            catalog.accounts
+                .filter { it.id in selected }
+                .map { account ->
+                    AccountUse(
+                        account.id,
+                        account.label,
+                        activities.count { a ->
+                            a.movements.any { it.accountId == account.id }
+                        },
+                    )
+                }.filter { it.activities > 0 }
+                .sortedByDescending { it.activities }
+        return ActivityInsights(trades.size, tradedAssets.size, fees, accounts)
     }
 
     fun saveTreatments(
