@@ -260,7 +260,9 @@ private fun Product(
         preferences = withContext(host.dispatcher) { host.refreshPreferences() }
     }
     var refreshDetails by remember { mutableStateOf<String?>(null) }
-    var assetPreference by remember(app) { mutableStateOf(app.assetListPreference()) }
+    // Preferences start at defaults and load on the database dispatcher, never on the UI thread.
+    var assetPreference by remember(app) { mutableStateOf(AssetListPreference()) }
+    var marketFavorites by remember(app) { mutableStateOf(emptySet<AssetId>()) }
     var page by presenter.field({ it.page }) { presenter.dispatch(ProductEvent.Navigate(it)) }
     val snapshot = presenter.state.snapshot
     val snapshotFilter = presenter.state.snapshotFilter
@@ -268,6 +270,7 @@ private fun Product(
     val dashboardRevision by host.dataRevision.collectAsState()
     LaunchedEffect(app, dashboardRevision, revision) {
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
+        marketFavorites = withContext(host.dispatcher) { app.marketFavorites() }
     }
     LaunchedEffect(revision) {
         if (revision != 0) onLocalDataChanged()
@@ -372,28 +375,41 @@ private fun Product(
         }
     }
 
+    val priceScope = rememberCoroutineScope()
+
     fun refreshPrices() {
         if (priceRequested || pricePhase != PriceRefreshPhase.IDLE) return
-        val allowedCurrencies = app.automaticPriceCurrencies().map { it.value }.toSet()
-        val missingCurrencyConsent =
-            snapshot?.ownership?.portfolios.orEmpty().any {
-                it.valuationCurrency in setOf("USD", "EUR", "GBP") && it.valuationCurrency !in allowedCurrencies
-            }
-        if (!app.automaticPriceConsent() || missingCurrencyConsent) {
-            if (missingCurrencyConsent) presenter.notify("Allow other portfolio currencies in price setup to refresh all portfolios.")
-            selectedAsset = null
-            dialog = "price"
-            return
-        }
         priceRequested = true
-        notifiedPriceResult = null
-        host.refreshAutomaticPrices { result ->
-            refreshDetails = result
-            if (host.priceRefreshStatus.value == PriceRefreshPhase.IDLE && !result.startsWith("Price refresh queued")) {
+        priceScope.launch {
+            val (allowedCurrencies, consent) =
+                withContext(host.dispatcher) {
+                    app.automaticPriceCurrencies().map { it.value }.toSet() to app.automaticPriceConsent()
+                }
+            val missingCurrencyConsent =
+                snapshot?.ownership?.portfolios.orEmpty().any {
+                    it.valuationCurrency in setOf("USD", "EUR", "GBP") && it.valuationCurrency !in allowedCurrencies
+                }
+            if (!consent || missingCurrencyConsent) {
                 priceRequested = false
-                presenter.notify(result)
+                if (missingCurrencyConsent) presenter.notify("Allow other portfolio currencies in price setup to refresh all portfolios.")
+                selectedAsset = null
+                dialog = "price"
+                return@launch
+            }
+            notifiedPriceResult = null
+            host.refreshAutomaticPrices { result ->
+                refreshDetails = result
+                if (host.priceRefreshStatus.value == PriceRefreshPhase.IDLE && !result.startsWith("Price refresh queued")) {
+                    priceRequested = false
+                    presenter.notify(result)
+                }
             }
         }
+    }
+
+    fun showPriceRefreshDetails(fallback: String) {
+        showRefreshDetails = true
+        priceScope.launch { refreshDetails = withContext(host.dispatcher) { app.automaticPriceStatus() } ?: fallback }
     }
     val snackbar = remember { SnackbarHostState() }
     var snackbarHeight by remember { mutableIntStateOf(0) }
@@ -563,9 +579,10 @@ private fun Product(
                     refreshing = pricePhase == PriceRefreshPhase.RUNNING,
                     refreshQueued = pricePhase == PriceRefreshPhase.QUEUED,
                     syncStatus = syncStatus,
-                    favorites = app.marketFavorites(),
+                    favorites = marketFavorites,
                     onFavorite = { asset ->
-                        val favorites = app.marketFavorites()
+                        val favorites = marketFavorites
+                        marketFavorites = if (asset in favorites) favorites - asset else favorites + asset
                         execute("Favorites saved") {
                             app.setMarketFavorites(if (asset in favorites) favorites - asset else favorites + asset)
                         }
@@ -619,10 +636,7 @@ private fun Product(
                         }
                         advancedMode = true
                     },
-                    onRefreshDetails = {
-                        showRefreshDetails = true
-                        refreshDetails = app.automaticPriceStatus() ?: "Price refresh has not run."
-                    },
+                    onRefreshDetails = { showPriceRefreshDetails("Price refresh has not run.") },
                     onSyncDetails = { modelHistory = true },
                     onConnectBitcoin = { modelConnect = true },
                     onAccountChanged = { execute("Account updated; saved history retained") {} },
@@ -789,9 +803,7 @@ private fun Product(
                                     }
                                     DropdownMenuItem(text = { Text("Refresh details") }, onClick = {
                                         menuOpen = false
-                                        showRefreshDetails = true
-                                        refreshDetails =
-                                            app.automaticPriceStatus() ?: "Pull down to refresh saved prices across portfolios."
+                                        showPriceRefreshDetails("Pull down to refresh saved prices across portfolios.")
                                     })
                                 }
                             }
@@ -854,7 +866,7 @@ private fun Product(
                                 when (page) {
                                     Page.HOME -> {
                                         item {
-                                            RevisedMain(app, data) { coin ->
+                                            RevisedMain(app, host, data) { coin ->
                                                 selectedAsset = data.valuations.find { it.asset == coin.asset } ?: coin.detailValuation()
                                             }
                                         }

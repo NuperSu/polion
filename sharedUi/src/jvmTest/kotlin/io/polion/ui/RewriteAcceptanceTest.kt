@@ -74,7 +74,8 @@ class RewriteAcceptanceTest {
                         onNodeWithText("PRICED VALUE").assertDoesNotExist()
                         capture("main")
                         onAllNodesWithText("☆").onFirst().performClick()
-                        assertEquals(setOf(AssetId("bitcoin:btc")), app.marketFavorites())
+                        // Favorites are saved on the database dispatcher, not the UI thread.
+                        waitUntil(timeoutMillis = 10_000) { app.marketFavorites() == setOf(AssetId("bitcoin:btc")) }
                         assertEquals(app.marketFavorites(), PortfolioApplication(db) { System.currentTimeMillis() }.marketFavorites())
                         onNodeWithTag("page-content").performScrollToNode(hasText("Global market rankings are unavailable."))
                         onNodeWithText("Global market rankings are unavailable.").performScrollTo().assertIsDisplayed()

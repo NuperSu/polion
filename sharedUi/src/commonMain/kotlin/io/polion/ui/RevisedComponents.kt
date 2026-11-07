@@ -23,9 +23,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,24 +50,30 @@ import io.polion.core.application.MarketCoin
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.market.PriceStatus
+import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.ExactInteger
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Market observations stay separate from quantities and portfolio valuation. */
 @Composable
 internal fun RevisedMain(
     app: PortfolioApplication,
+    host: PlatformActions,
     snapshot: PortfolioSnapshot,
     onAsset: (MarketCoin) -> Unit,
 ) {
-    var favorites by remember(app) { mutableStateOf(app.marketFavorites()) }
+    var favorites by remember(app) { mutableStateOf(emptySet<AssetId>()) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(app) { favorites = withContext(host.dispatcher) { app.marketFavorites() } }
     val assets = snapshot.marketCoins.distinctBy { it.asset }.sortedBy { it.metadata?.symbol ?: it.asset.value }
 
     fun toggle(asset: MarketCoin) {
         val id = asset.asset
         val next = if (id in favorites) favorites - id else favorites + id
-        app.setMarketFavorites(next)
         favorites = next
+        scope.launch { withContext(host.dispatcher) { app.setMarketFavorites(next) } }
     }
     Column(Modifier.fillMaxWidth().testTag("main-market"), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {

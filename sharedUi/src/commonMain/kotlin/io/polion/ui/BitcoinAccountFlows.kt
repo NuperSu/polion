@@ -215,17 +215,12 @@ internal fun BitcoinConnectDialog(
                 if (!scheduled) notify("Source saved. Automatic refresh could not be scheduled; check sync settings.")
                 if (walletId != id) {
                     val resumedAccount =
-                        app
-                            .snapshot()
-                            .ownership.targets
-                            .firstOrNull { it.id == walletId }
-                            ?.let { wallet ->
-                                app
-                                    .snapshot()
-                                    .ownership.accounts
-                                    .firstOrNull { it.id == wallet.accountId }
-                                    ?.label
-                            }
+                        withContext(host.dispatcher) {
+                            val ownership = app.snapshot().ownership
+                            ownership.targets
+                                .firstOrNull { it.id == walletId }
+                                ?.let { wallet -> ownership.accounts.firstOrNull { it.id == wallet.accountId }?.label }
+                        }
                     notify(
                         "This wallet is already tracked${resumedAccount?.let {
                             " in \"$it\""
