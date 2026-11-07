@@ -63,6 +63,8 @@ class BlockstreamTransport(
             if (response == 429) {
                 throw BitcoinProviderException(BitcoinProviderFailure.RATE_LIMITED, retryAfterMillis(connection))
             }
+            // Gateway and overload errors are temporary; other non-success responses are rejections.
+            if (response in setOf(502, 503, 504)) throw BitcoinProviderException(BitcoinProviderFailure.TEMPORARILY_UNAVAILABLE)
             if (response !in 200..299) throw BitcoinProviderException(BitcoinProviderFailure.UNAVAILABLE)
             val bytes =
                 connection.inputStream.use { input ->

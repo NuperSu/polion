@@ -5,7 +5,11 @@ import java.sql.DriverManager
 class JvmSqliteDatabase(
     path: String,
 ) : SqliteDatabase {
-    private val connection = DriverManager.getConnection("jdbc:sqlite:$path")
+    private val connection =
+        DriverManager.getConnection("jdbc:sqlite:$path").apply {
+            // The desktop opens several connections to one file; a writer makes the others wait instead of failing at once.
+            createStatement().use { it.execute("PRAGMA busy_timeout = 5000") }
+        }
     private val lock = Any()
 
     override fun execute(

@@ -73,6 +73,7 @@ class FailoverEsploraTransport(
                 BitcoinProviderFailure.TIMEOUT,
                 BitcoinProviderFailure.OFFLINE,
                 BitcoinProviderFailure.UNAVAILABLE,
+                BitcoinProviderFailure.TEMPORARILY_UNAVAILABLE,
             )
     }
 }

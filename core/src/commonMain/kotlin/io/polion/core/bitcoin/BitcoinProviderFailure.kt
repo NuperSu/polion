@@ -8,6 +8,7 @@ enum class BitcoinProviderFailure(
     TIMEOUT("The provider timed out. Saved data is unchanged; retry when the connection improves."),
     OFFLINE("The provider could not be reached. Check your connection and endpoint."),
     UNAVAILABLE("The provider rejected the request. Check the endpoint or try again later."),
+    TEMPORARILY_UNAVAILABLE("The provider is temporarily unavailable. Saved data is unchanged; retry in a few minutes."),
     HISTORY_CHANGED("Public history changed during the scan. Saved data is unchanged; retry."),
     REORGANIZED("The Bitcoin chain reorganized during the scan. Saved data is unchanged; retry."),
     LAGGING_CHAIN("The provider is behind the saved Bitcoin checkpoint. Saved data is unchanged; retry with an up-to-date provider."),
