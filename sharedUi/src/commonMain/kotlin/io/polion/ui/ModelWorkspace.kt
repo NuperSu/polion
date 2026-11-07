@@ -3,7 +3,9 @@ package io.polion.ui
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -25,6 +27,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.polion.core.application.AccountingView
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.AssetListPreference
@@ -40,7 +44,11 @@ import io.polion.core.market.PriceStatus
 import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import io.polion.core.reconcile.EffectiveActivity
+import io.polion.ui.model.ChartData
+import io.polion.ui.model.ChartStyle
 import io.polion.ui.model.LocalCoinLogos
+import io.polion.ui.model.ModelAllocationBar
+import io.polion.ui.model.ModelAllocationSlice
 import io.polion.ui.model.ModelChangeTone
 import io.polion.ui.model.ModelCoinDetail
 import io.polion.ui.model.ModelCoinDetailActions
@@ -56,12 +64,14 @@ import io.polion.ui.model.ModelMetric
 import io.polion.ui.model.ModelPage
 import io.polion.ui.model.ModelPortfolioHoldings
 import io.polion.ui.model.ModelPortfolioHoldingsState
+import io.polion.ui.model.ModelPortfolioStats
 import io.polion.ui.model.ModelPortfolioSummary
 import io.polion.ui.model.ModelPortfolioSummaryState
 import io.polion.ui.model.ModelSettings
 import io.polion.ui.model.ModelSettingsState
 import io.polion.ui.model.ModelShell
 import io.polion.ui.model.ModelShellState
+import io.polion.ui.model.ModelStat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -111,6 +121,8 @@ internal fun ModelWorkspace(
     statusContent: @Composable () -> Unit = {},
     onMarketRefresh: (maxAgeMillis: Long) -> Unit = {},
     onToggleAmounts: () -> Unit = {},
+    chartStyle: ChartStyle = ChartStyle.LINE,
+    onChartStyle: (ChartStyle) -> Unit = {},
     settingsContent: (@Composable ColumnScope.(onAdvanced: (Page) -> Unit) -> Unit)? = null,
 ) {
     val transactionScope = rememberCoroutineScope()
@@ -259,8 +271,10 @@ internal fun ModelWorkspace(
     var expanded by rememberSaveable { mutableStateOf(true) }
     var coinRange by rememberSaveable { mutableStateOf("1D") }
     var accounting by remember(app, selectedPortfolio, snapshot?.currency) { mutableStateOf<AccountingView?>(null) }
-    LaunchedEffect(app, selectedPortfolio, snapshot?.currency, selectedAsset?.asset, dataRevision) {
-        if (selectedAsset != null && snapshot?.valuations?.any { it.asset == selectedAsset.asset } == true) {
+    // The same report feeds the Portfolio performance cards and an owned coin's cost and gains.
+    LaunchedEffect(app, selectedPortfolio, snapshot?.currency, selectedAsset?.asset, dataRevision, page) {
+        val ownedCoin = selectedAsset != null && snapshot?.valuations?.any { it.asset == selectedAsset.asset } == true
+        if (ownedCoin || (page == Page.OVERVIEW && selectedAsset == null && snapshot != null)) {
             accountingLoading = true
             accountingError = false
             try {
@@ -444,6 +458,28 @@ internal fun ModelWorkspace(
                 val useListing =
                     listing != null && marketOverview?.currency == data.currency && observationCount < 2 && listing.sparkline.size >= 2
                 val listingPoints = if (useListing) sparklinePoints(listing.sparkline, 61) else emptyList()
+                // Prices are public, so hidden amounts never mask this chart.
+                val coinChart =
+                    if (useListing) {
+                        val observedAt = marketOverview?.markets?.observedAtMillis ?: 0L
+                        val count = listing.sparkline.size
+                        ChartData(
+                            listing.sparkline,
+                            List(count) { observedAt - (count - 1 - it) * 3_600_000L },
+                            { sparklinePrice(it, data.currency) },
+                            { chartTime(it, 7 * 86_400_000L) },
+                        )
+                    } else if (observationCount >= 2) {
+                        val span = (prices.lastOrNull()?.atMillis ?: 0L) - (prices.firstOrNull()?.atMillis ?: 0L)
+                        ChartData(
+                            observedNumbers,
+                            prices.map { it.atMillis },
+                            { sparklinePrice(it, data.currency) },
+                            { chartTime(it, span) },
+                        )
+                    } else {
+                        null
+                    }
                 val quantity =
                     if (!tracked) {
                         "—"
@@ -555,6 +591,8 @@ internal fun ModelWorkspace(
                         orderRows = emptyList(),
                         enabledRanges = if (useListing) setOf("1W") else setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
                         canAddTransaction = !asset.asset.value.startsWith("coingecko:"),
+                        chart = coinChart,
+                        chartStyle = chartStyle,
                         transactionEmpty = if (timelineLoading) "Loading saved transactions…" else "No matching transactions",
                         alertsUnavailable = "Price alerts are unavailable.",
                         orderUnavailable = "Order book data is unavailable.",
@@ -564,6 +602,7 @@ internal fun ModelWorkspace(
                         onBreakdown = { expanded = it },
                         onTab = { tab = it.name },
                         onRange = { coinRange = it },
+                        onChartStyle = onChartStyle,
                         onAddTransaction = { onManual(asset) },
                         onTransaction = { id -> timeline?.entries?.find { it.activity.id.value == id }?.let(onTransaction) },
                     ),
@@ -759,11 +798,30 @@ internal fun ModelWorkspace(
                                 }
                             }
                         val labels = mapOf(-1 to "1H", 1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", -2 to "YTD", 365 to "1Y", 0 to "ALL")
+                        val firstTotal = chart.firstOrNull()?.let(::historyTotal)
+                        val lastTotal = chart.lastOrNull()?.let(::historyTotal)
+                        val delta = if (chart.size >= 2 && firstTotal != null && lastTotal != null) lastTotal - firstTotal else null
                         ModelPortfolioSummary(
                             ModelPortfolioSummaryState(
                                 balance = (summary.total?.let { money(it, data.currency) } ?: "—").hiddenIf(amountsHidden),
                                 currency = data.currency.value,
-                                change = portfolioValueDelta(chart, data.currency).hiddenIf(amountsHidden),
+                                change =
+                                    (
+                                        delta?.let {
+                                            signedMoney(
+                                                io.polion.core.model.Rational
+                                                    .fromDecimal(it),
+                                                data.currency,
+                                            )
+                                        } ?: "—"
+                                    ).hiddenIf(amountsHidden),
+                                changeTone =
+                                    tone(
+                                        delta?.let {
+                                            io.polion.core.model.Rational
+                                                .fromDecimal(it)
+                                        },
+                                    ),
                                 changeLabel = "Value change · ${labels[period] ?: "Selected period"}",
                                 percentChange = portfolioValuePercent(chart),
                                 selectedRange = labels[period] ?: "",
@@ -791,12 +849,15 @@ internal fun ModelWorkspace(
                                 amountsHidden = amountsHidden,
                                 secondaryBalance = secondary,
                                 showChart = showPortfolioChart,
+                                chart = portfolioChartData(chart, data.currency, amountsHidden),
+                                chartStyle = chartStyle,
                             ),
                             wide,
                             short,
                             { label -> labels.entries.find { it.value == label }?.let { onPeriod(it.key) } },
                             onExplain = { explain = true },
                             onToggleAmounts = onToggleAmounts,
+                            onChartStyle = onChartStyle,
                             onCurrency = { currencyMenu = true },
                             currencyMenuContent = {
                                 DropdownMenu(currencyMenu, { currencyMenu = false }) {
@@ -809,14 +870,64 @@ internal fun ModelWorkspace(
                                 }
                             },
                         )
-                        Text("Portfolio value change includes deposits and withdrawals; it is not investment return.")
-                        if (chartLoading) {
-                            Text("Updating history…")
-                        } else if (chartError) {
-                            Text("History unavailable")
+                        // Contributions and withdrawals are explained under "What's going on?"; only live status stays here.
+                        listOfNotNull(
+                            if (chartLoading) {
+                                "Updating history…"
+                            } else if (chartError) {
+                                "History unavailable"
+                            } else {
+                                null
+                            },
+                            if (summary.stale > 0) stalePriceMessage(summary.stale) else null,
+                            if (summary.missing > 0) "${summary.missing} unpriced assets excluded" else null,
+                        ).takeIf { it.isNotEmpty() }?.let { notes ->
+                            Text(notes.joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                         }
-                        if (summary.stale > 0) Text(stalePriceMessage(summary.stale))
-                        if (summary.missing > 0) Text("${summary.missing} unpriced assets excluded")
+                        val performance = portfolioPerformance(accounting?.takeIf { it.report.quoteAsset == data.currency })
+                        if (performance != null) {
+                            fun amount(value: io.polion.core.model.Rational?) =
+                                (value?.let { signedMoney(it, data.currency) } ?: "—").hiddenIf(amountsHidden)
+                            ModelPortfolioStats(
+                                listOf(
+                                    ModelStat("Total gains", amount(performance.total), tone = tone(performance.total)),
+                                    ModelStat(
+                                        "Unrealized",
+                                        amount(performance.unrealized),
+                                        performance.unrealizedPercent.takeIf { it != "—" },
+                                        tone(performance.unrealized),
+                                    ),
+                                    ModelStat("Realized", amount(performance.realized), tone = tone(performance.realized)),
+                                    ModelStat(
+                                        "Cost basis",
+                                        (performance.basis?.asMoney(data.currency) ?: "—").hiddenIf(amountsHidden),
+                                    ),
+                                ),
+                                wide,
+                                listOfNotNull(
+                                    "Figures needing a missing classification or cost show —.".takeIf {
+                                        performance.total == null || performance.basis == null
+                                    },
+                                    "Order within a block is provisional.".takeIf { performance.provisional },
+                                ).joinToString(" ").ifEmpty { null },
+                            )
+                        }
+                        ModelAllocationBar(
+                            allocation(data.valuations).let { shares ->
+                                val top = shares.take(5)
+                                val rest = shares.drop(5).sumOf { it.second }
+                                top.map { (asset, share) ->
+                                    val symbol = asset.metadata?.symbol ?: asset.asset.value
+                                    ModelAllocationSlice(symbol, share.toFloat(), identity(asset.asset.value, symbol, null).color)
+                                } +
+                                    listOfNotNull(
+                                        ModelAllocationSlice("Other", rest.toFloat(), MaterialTheme.colorScheme.onSurfaceVariant).takeIf {
+                                            rest >
+                                                0
+                                        },
+                                    )
+                            },
+                        )
                         ModelPortfolioHoldings(
                             ModelPortfolioHoldingsState(
                                 displayedAssets(data.valuations, assetPreference).map { asset ->
@@ -842,6 +953,20 @@ internal fun ModelWorkspace(
                                         (asset.value?.let { money(it, data.currency) } ?: "—").hiddenIf(amountsHidden),
                                         portfolioValueDelta(assetHistory, data.currency).hiddenIf(amountsHidden),
                                         portfolioValuePercent(assetHistory),
+                                        assetHistory.firstOrNull()?.let(::historyTotal)?.let { first ->
+                                            assetHistory.lastOrNull()?.let(::historyTotal)?.let { last ->
+                                                if (assetHistory.size >=
+                                                    2
+                                                ) {
+                                                    tone(
+                                                        io.polion.core.model.Rational
+                                                            .fromDecimal(last - first),
+                                                    )
+                                                } else {
+                                                    null
+                                                }
+                                            }
+                                        } ?: io.polion.ui.model.ModelChangeTone.NEUTRAL,
                                     )
                                 },
                                 if (assetPreference.sort == AssetSort.VALUE) "Highest Holdings" else "Name",
@@ -877,6 +1002,8 @@ internal fun ModelWorkspace(
                             },
                         )
                         TextButton(onClick = { onAdvanced(Page.OVERVIEW) }) { Text("Portfolio tools and currency") }
+                        // Room for the floating add button, so it never covers the last holding.
+                        Spacer(Modifier.height(88.dp))
                     }
                     Page.REPORTS -> {
                         ModelInsights(

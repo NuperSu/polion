@@ -503,6 +503,7 @@ private fun Product(
             if (updated.zeroBasisRewards != previous.zeroBasisRewards) app.setZeroBasisRewards(updated.zeroBasisRewards)
             if (updated.deviceName != previous.deviceName) app.setDeviceName(updated.deviceName)
             if (updated.hideAmounts != previous.hideAmounts) app.setHideAmounts(updated.hideAmounts)
+            if (updated.candleCharts != previous.candleCharts) app.setCandleCharts(updated.candleCharts)
         }
         // A new secondary currency needs its own Bitcoin price; fetch it now when automatic prices are allowed.
         if (updated.secondaryCurrency != null && updated.secondaryCurrency != previous.secondaryCurrency && preferences.automaticRefresh) {
@@ -721,6 +722,20 @@ private fun Product(
                         },
                         onMarketRefresh = { age -> refreshMarkets(age, quiet = age > 60_000L) },
                         onToggleAmounts = { saveGeneral(generalPreferences.copy(hideAmounts = !generalPreferences.hideAmounts)) },
+                        chartStyle =
+                            if (generalPreferences.candleCharts) {
+                                io.polion.ui.model.ChartStyle.CANDLES
+                            } else {
+                                io.polion.ui.model.ChartStyle.LINE
+                            },
+                        onChartStyle = { style ->
+                            saveGeneral(
+                                generalPreferences.copy(
+                                    candleCharts =
+                                        style == io.polion.ui.model.ChartStyle.CANDLES,
+                                ),
+                            )
+                        },
                         onAdd = {
                             modelEditingId = null
                             modelManual = false

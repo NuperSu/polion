@@ -298,6 +298,8 @@ data class GeneralPreferences(
     val deviceName: String? = null,
     /** Balances, quantities and other absolute amounts show as asterisks; percentages and charts stay visible. */
     val hideAmounts: Boolean = false,
+    /** Charts draw candles instead of a line. */
+    val candleCharts: Boolean = false,
 )
 
 /** Privacy lock delays offered in Settings: immediately, 1, 5 and 15 minutes, and 1 hour. */
@@ -2017,6 +2019,7 @@ class PortfolioApplication(
             zeroBasisRewards = setting("zero_basis_rewards") == "true",
             deviceName = setting("device_name"),
             hideAmounts = setting("hide_amounts") == "true",
+            candleCharts = setting("chart_style") == "candles",
         )
 
     fun setLandingPage(page: LandingPage) = putSetting("landing_page", page.name)
@@ -2036,6 +2039,8 @@ class PortfolioApplication(
     fun setShowPortfolioChart(show: Boolean) = putSetting("show_portfolio_chart", show.toString())
 
     fun setHideAmounts(hide: Boolean) = putSetting("hide_amounts", hide.toString())
+
+    fun setCandleCharts(candles: Boolean) = putSetting("chart_style", if (candles) "candles" else "line")
 
     /**
      * Acquisitions recorded as rewards (mining, staking, forks, airdrops) count with zero cost basis instead of their

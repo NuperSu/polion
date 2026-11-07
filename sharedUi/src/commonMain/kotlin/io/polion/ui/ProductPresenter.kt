@@ -189,15 +189,15 @@ internal class ProductPresenter(
                             end,
                             if (selected.period == 0) queries.firstHistoryActivity(selected.selectedPortfolio) else null,
                         )
+                    // Enough samples for a smooth line and about two dozen candles of four samples each.
                     val intervals =
                         when (selected.period) {
                             -1 -> 60
-                            -2 -> 52
-                            1 -> 24
-                            7 -> 28
-                            30 -> 30
-                            90 -> 45
-                            else -> 52
+                            1 -> 96
+                            7 -> 84
+                            30 -> 90
+                            90 -> 90
+                            else -> 104
                         }
                     val currency = queries.snapshot(ActivityFilter(portfolio = selected.selectedPortfolio)).currency
                     currency to

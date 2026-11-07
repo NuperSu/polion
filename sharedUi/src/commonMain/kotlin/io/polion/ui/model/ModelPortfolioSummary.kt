@@ -60,6 +60,9 @@ data class ModelPortfolioSummaryState(
     val showChart: Boolean = true,
     /** Amounts are already replaced by the caller; this only selects the eye icon. */
     val amountsHidden: Boolean = false,
+    /** Values and times for the interactive chart; without it the plain [chartPoints] line is drawn. */
+    val chart: ChartData? = null,
+    val chartStyle: ChartStyle = ChartStyle.LINE,
 )
 
 enum class ModelChangeTone { POSITIVE, NEGATIVE, NEUTRAL }
@@ -81,6 +84,7 @@ fun ModelPortfolioSummary(
     onExplain: (() -> Unit)? = null,
     onCurrency: (() -> Unit)? = null,
     onToggleAmounts: (() -> Unit)? = null,
+    onChartStyle: ((ChartStyle) -> Unit)? = null,
     currencyMenuContent: @Composable () -> Unit = {},
     colors: ModelSummaryColors =
         ModelSummaryColors(
@@ -174,7 +178,24 @@ fun ModelPortfolioSummary(
             )
         }
         Spacer(Modifier.height(12.dp))
-        if (state.showChart) {
+        if (state.showChart && state.chart != null) {
+            ModelInteractiveChart(
+                state.chart,
+                state.chartStyle,
+                Modifier.testTag("portfolio-chart").fillMaxWidth().height(
+                    if (wide) {
+                        280.dp
+                    } else if (short) {
+                        100.dp
+                    } else {
+                        200.dp
+                    },
+                ),
+                tint = colors.positive,
+                falling = colors.negative,
+                smooth = state.smoothChart,
+            )
+        } else if (state.showChart) {
             Box(
                 Modifier.testTag("portfolio-chart").fillMaxWidth().height(
                     if (wide) {
@@ -235,6 +256,9 @@ fun ModelPortfolioSummary(
                 Text(state.chartTopLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd))
                 Text(state.chartBottomLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd))
             }
+        }
+        if (onChartStyle != null && state.showChart) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { ChartStyleToggle(state.chartStyle, onChartStyle) }
         }
         Row(
             Modifier.fillMaxWidth().then(

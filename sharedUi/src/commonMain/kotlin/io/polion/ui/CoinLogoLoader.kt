@@ -59,3 +59,9 @@ internal class CoinLogoLoader(
 
     fun source(urls: Map<String, String>) = CoinLogoSource(urls, ::cached, ::load)
 }
+
+/** Local date and time for chart tooltips; longer ranges omit the clock time. */
+internal expect fun chartTime(
+    millis: Long,
+    spanMillis: Long,
+): String

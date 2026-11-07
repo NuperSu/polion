@@ -170,8 +170,9 @@ class ProductPresentationTest {
             presenter.loadChart(0)
             assertEquals(end - 86_400_000L, requested.first())
             assertEquals(end, requested.last())
-            assertEquals(25, requested.size)
-            assertEquals(3_600_000L, requested[1] - requested[0])
+            // One day in 15-minute steps: enough for a smooth line and 24 four-sample candles.
+            assertEquals(97, requested.size)
+            assertEquals(900_000L, requested[1] - requested[0])
         }
 
     @Test

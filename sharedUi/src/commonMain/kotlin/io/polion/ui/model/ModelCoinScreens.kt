@@ -114,6 +114,9 @@ data class ModelCoinDetailState(
     val askHeader: String = "Ask",
     val coinName: String = ticker,
     val smoothChart: Boolean = false,
+    /** Prices and times for the interactive chart; without it the plain [chartPoints] line is drawn. */
+    val chart: ChartData? = null,
+    val chartStyle: ChartStyle = ChartStyle.LINE,
 )
 
 data class ModelCoinDetailActions(
@@ -123,6 +126,7 @@ data class ModelCoinDetailActions(
     val onAddTransaction: () -> Unit,
     val onTransaction: (String) -> Unit = {},
     val onAddAlert: () -> Unit = {},
+    val onChartStyle: ((ChartStyle) -> Unit)? = null,
     val onAlertEnabled: (String, Boolean) -> Unit = { _, _ -> },
 )
 
@@ -257,7 +261,19 @@ fun ColumnScope.ModelCoinDetail(
                     )
                 }
             }
-            DetailChart(state.chartPoints, state.chartTopLabel, state.chartBottomLabel, state.smoothChart)
+            actions.onChartStyle?.let { onStyle ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { ChartStyleToggle(state.chartStyle, onStyle) }
+            }
+            if (state.chart != null) {
+                ModelInteractiveChart(
+                    state.chart,
+                    state.chartStyle,
+                    Modifier.fillMaxWidth().height(220.dp).testTag("coin-chart"),
+                    smooth = state.smoothChart,
+                )
+            } else {
+                DetailChart(state.chartPoints, state.chartTopLabel, state.chartBottomLabel, state.smoothChart)
+            }
         }
         ModelCoinTab.TRANSACTIONS -> {
             MetricRows(state.transactionMetrics)
