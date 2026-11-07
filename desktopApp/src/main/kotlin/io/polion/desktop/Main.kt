@@ -86,6 +86,9 @@ internal fun discoverWalletStatus(
         )
     }
 
+/** Switching windows is routine on desktop, so leaving locks after five minutes unless Settings says otherwise. */
+const val DEFAULT_LOCK_DELAY_MILLIS = 300_000L
+
 internal class DesktopHost(
     private val directory: Path,
     demo: Boolean,
@@ -132,6 +135,29 @@ internal class DesktopHost(
     private var syncApp: PortfolioApplication? = null
     val app: androidx.compose.runtime.MutableState<PortfolioApplication>
     val locked = mutableStateOf(lockStore.hasLock)
+
+    @Volatile private var lockDelay = DEFAULT_LOCK_DELAY_MILLIS
+    private var leftAt: Long? = null
+
+    override val lockDelayMillis: Long get() = lockDelay
+
+    override fun setLockDelay(millis: Long) {
+        lockDelay = millis
+        executor.execute { runCatching { app.value.setLockDelay(millis) } }
+    }
+
+    /** The window lost focus: lock now, or remember when, depending on the delay. */
+    fun left() {
+        if (lockDelay == 0L) lock() else leftAt = System.nanoTime() / 1_000_000L
+    }
+
+    /** The window regained focus: lock if it was away at least as long as the delay. */
+    fun returned() {
+        val away = leftAt?.let { System.nanoTime() / 1_000_000L - it }
+        leftAt = null
+        if (away != null && away >= lockDelay) lock()
+    }
+
     private var refreshTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val hostLock = Any()
     private val closing = AtomicBoolean(false)
@@ -154,6 +180,7 @@ internal class DesktopHost(
                 throw failure
             }
         if (demo) app.value.seedDemo()
+        lockDelay = app.value.lockDelayMillis() ?: DEFAULT_LOCK_DELAY_MILLIS
         if (runCatching { reconcileRefreshPreferences() }.isFailure) {
             runCatching { app.value.recordAutomaticPriceSchedulingFailure() }
         }
@@ -805,6 +832,21 @@ fun main(args: Array<String>) {
             if (host == null) {
                 Text("Could not open local data. Check available storage and database compatibility.")
             } else {
+                androidx.compose.runtime.DisposableEffect(window) {
+                    val listener =
+                        object : java.awt.event.WindowFocusListener {
+                            // Focus moving to Polion's own dialog or file chooser is not leaving the app.
+                            override fun windowLostFocus(event: java.awt.event.WindowEvent) {
+                                if (event.oppositeWindow == null) host.left()
+                            }
+
+                            override fun windowGainedFocus(event: java.awt.event.WindowEvent) {
+                                if (event.oppositeWindow == null) host.returned()
+                            }
+                        }
+                    window.addWindowFocusListener(listener)
+                    onDispose { window.removeWindowFocusListener(listener) }
+                }
                 PolionApp(host.app.value, host, host.locked.value)
             }
         }

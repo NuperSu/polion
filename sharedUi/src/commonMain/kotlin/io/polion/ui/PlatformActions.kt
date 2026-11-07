@@ -184,6 +184,12 @@ interface PlatformActions {
         onResult("Market data is unavailable on this host.")
     }
 
+    /** How long the app may be left before it locks. Main thread; hosts keep the saved value in memory. */
+    val lockDelayMillis: Long get() = 0L
+
+    /** Saves the lock delay for this device; one of [io.polion.core.application.LOCK_DELAYS]. Main thread. */
+    fun setLockDelay(millis: Long) {}
+
     /** Shown in Settings when the user has not named this device. */
     val defaultDeviceName: String get() = "This device"
 

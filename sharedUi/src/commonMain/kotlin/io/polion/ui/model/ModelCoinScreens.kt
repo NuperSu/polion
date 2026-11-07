@@ -85,6 +85,8 @@ data class ModelCoinDetailState(
     val ticker: String,
     val mark: String,
     val logoColor: Color,
+    /** Coin ID used to find the provider logo. */
+    val coinId: String = "",
     val portfolio: String,
     val metrics: List<ModelMetric>,
     val breakdownExpanded: Boolean,
@@ -167,7 +169,7 @@ fun ColumnScope.ModelCoinDetail(
 ) {
     val c = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        ModelCoinLogo(ModelCoinIdentity(state.ticker, state.coinName, state.logoColor, state.mark))
+        ModelCoinLogo(ModelCoinIdentity(state.ticker, state.coinName, state.logoColor, state.mark, state.coinId.ifEmpty { state.ticker }))
         Text("  ${state.ticker}", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     }
     Text(state.portfolio, color = c.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())

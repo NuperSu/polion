@@ -83,8 +83,8 @@ fun ModelMain(
         state.loadAction?.let { label ->
             MarketCard {
                 Text(
-                    "Top coins, trending coins and daily movers come from CoinGecko. CoinGecko sees your IP address and " +
-                        "display currency; no wallet data is sent.",
+                    "Top coins, trending coins, daily movers and coin logos come from CoinGecko. CoinGecko sees your IP " +
+                        "address and display currency; no wallet data is sent.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(

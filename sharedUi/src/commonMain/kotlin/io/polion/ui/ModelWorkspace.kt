@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,7 @@ import io.polion.core.market.PriceStatus
 import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
 import io.polion.core.reconcile.EffectiveActivity
+import io.polion.ui.model.LocalCoinLogos
 import io.polion.ui.model.ModelChangeTone
 import io.polion.ui.model.ModelCoinDetail
 import io.polion.ui.model.ModelCoinDetailActions
@@ -108,9 +110,11 @@ internal fun ModelWorkspace(
     onTransaction: (EffectiveActivity) -> Unit = {},
     statusContent: @Composable () -> Unit = {},
     onMarketRefresh: (maxAgeMillis: Long) -> Unit = {},
+    onToggleAmounts: () -> Unit = {},
     settingsContent: (@Composable ColumnScope.(onAdvanced: (Page) -> Unit) -> Unit)? = null,
 ) {
     val transactionScope = rememberCoroutineScope()
+    val amountsHidden = LocalAmountsHidden.current
     var marketOverview by remember(app) { mutableStateOf<MarketOverview?>(null) }
     LaunchedEffect(app, dataRevision, snapshot?.currency) {
         marketOverview =
@@ -364,509 +368,573 @@ internal fun ModelWorkspace(
             AppearanceTheme.SYSTEM -> isSystemInDarkTheme()
         }
     val title = selectedAsset?.metadata?.symbol ?: if (selectedAsset != null) selectedAsset.asset.value else page.label
-    ModelShell(
-        ModelShellState(
-            modelPage,
-            title,
-            showBack = selectedAsset != null || page == Page.ACCOUNTS || page == Page.SETTINGS,
-            refreshing = refreshing,
-            refreshQueued = refreshQueued,
-            menuItems = listOf("Settings"),
-            dark = dark,
-        ),
-        onPage = {
-            onAsset(null)
-            onPage(
-                when (it) {
-                    ModelPage.MAIN -> Page.HOME
-                    ModelPage.PORTFOLIO -> Page.OVERVIEW
-                    ModelPage.INSIGHTS -> Page.REPORTS
-                },
-            )
-        },
-        onBack = { if (selectedAsset != null) onAsset(null) else onBackAux() },
-        onMenu = {
-            when (it) {
-                "Settings" -> onPage(Page.SETTINGS)
-                else -> onRefreshDetails()
-            }
-        },
-        onRefresh = onRefresh,
-        onAdd = if (page == Page.OVERVIEW && selectedAsset == null) onAdd else null,
-        statusContent = statusContent,
-    ) { wide, short ->
-        val data = snapshot
-        if (data?.sampleData == true) {
-            Text(
-                "EXAMPLE DATA · stored only on this device",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
-        if (page != Page.ACCOUNTS && shouldShowSyncBanner(syncStatus, data?.sourceStatus)) {
-            SyncBanner(syncStatus, data?.sourceStatus, onSyncDetails)
-        }
-        if (data == null) {
-            Text("Opening your portfolio")
-        } else if (selectedAsset != null) {
-            val asset = selectedAsset
-            val symbol = asset.metadata?.symbol ?: asset.asset.value
-            val tracked = data.valuations.any { it.asset == asset.asset }
-            val listing =
-                marketOverview?.let { overview -> overview.markets?.items?.find { overview.assetKeys[it.coinId] == asset.asset } }
-            // Without two saved observations, the CoinGecko 7-day sparkline draws the chart.
-            val useListing =
-                listing != null && marketOverview?.currency == data.currency && observationCount < 2 && listing.sparkline.size >= 2
-            val listingPoints = if (useListing) sparklinePoints(listing.sparkline, 61) else emptyList()
-            val quantity =
-                if (!tracked) {
-                    "—"
-                } else {
-                    asset.metadata?.let { "${formatUnits(asset.amount.atomicUnits, it.decimals)} ${it.symbol}" }
-                        ?: "${asset.amount.atomicUnits} atomic units"
-                }
-            ModelCoinDetail(
-                ModelCoinDetailState(
-                    ticker = symbol,
-                    mark = symbol.take(1),
-                    logoColor = Color(0xFFF7931A),
-                    portfolio =
-                        data.ownership.portfolios
-                            .find { it.id == selectedPortfolio }
-                            ?.label ?: "All portfolios",
-                    metrics =
-                        listOf(
-                            ModelMetric("Owned", quantity),
-                            ModelMetric(
-                                "Market Value",
-                                if (tracked) asset.value?.let { money(it, data.currency) } ?: "—" else "—",
-                            ),
-                        ) +
-                            if (tracked) {
-                                coinAccountingMetrics(accounting, asset)
-                            } else if (listing != null) {
-                                listOf(
-                                    ModelMetric("24h Change", percentChange(listing.change24h)),
-                                    ModelMetric("7d Change", percentChange(listing.change7d)),
-                                    ModelMetric("Market Cap", listing.marketCap?.let { money(it, data.currency) } ?: "—"),
-                                    ModelMetric("Market Cap Rank", listing.rank?.let { "#$it" } ?: "—"),
-                                )
-                            } else {
-                                listOf(
-                                    ModelMetric("Total Gains", "—"),
-                                    ModelMetric("Total Cost Basis", "—"),
-                                    ModelMetric("Unrealized Gain", "—"),
-                                    ModelMetric("Realized Gain", "—"),
-                                )
-                            },
-                    breakdownExpanded = expanded,
-                    tab = ModelCoinTab.valueOf(tab),
-                    price =
-                        asset.price?.let {
-                            if (asset.asset.value.startsWith("coingecko:")) {
-                                marketPrice(it.price.value, it.price.quoteAssetId)
-                            } else {
-                                quotePrice(it.price.value, it.price.quoteAssetId)
-                            }
-                        } ?: "—",
-                    change =
-                        if (useListing) {
-                            "Price change · 7D · ${percentChange(listing?.change7d)}"
-                        } else if (observationCount >= 2) {
-                            unitPriceChange(observed.firstOrNull(), observed.lastOrNull(), coinRange)
-                        } else {
-                            "Price change · $coinRange · —"
-                        },
-                    priceSource =
-                        asset.price?.let {
-                            val observedAt =
-                                kotlin.time.Instant
-                                    .fromEpochMilliseconds(it.observedAtMillis)
-                                    .toString()
-                            val provider = if (it.manual) "Manual quote" else it.providerId?.value ?: "Provider"
-                            "$provider · ${asset.priceStatus.name.lowercase()} · observed $observedAt"
-                        } ?: "Price unavailable",
-                    selectedRange = if (useListing) "1W" else coinRange,
-                    chartPoints = if (useListing) listingPoints else priceCoordinates,
-                    chartTopLabel =
-                        if (useListing) {
-                            listing?.sparkline?.maxOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
-                        } else {
-                            observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
-                        },
-                    chartBottomLabel =
-                        if (useListing) {
-                            listing?.sparkline?.minOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
-                        } else {
-                            observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
-                        },
-                    transactionMetrics =
-                        timeline?.metrics
-                            ?: listOf(
-                                ModelMetric("Avg. Buy Price", "—"),
-                                ModelMetric("Avg. Sell Price", "—"),
-                                ModelMetric("Transactions", "—"),
-                            ),
-                    transactions = timeline?.cards.orEmpty(),
-                    alerts = emptyList(),
-                    orderSource = "Unavailable",
-                    orderRows = emptyList(),
-                    enabledRanges = if (useListing) setOf("1W") else setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
-                    canAddTransaction = !asset.asset.value.startsWith("coingecko:"),
-                    transactionEmpty = if (timelineLoading) "Loading saved transactions…" else "No matching transactions",
-                    alertsUnavailable = "Price alerts are unavailable.",
-                    orderUnavailable = "Order book data is unavailable.",
-                    changeTone = ModelChangeTone.NEUTRAL,
-                ),
-                ModelCoinDetailActions(
-                    onBreakdown = { expanded = it },
-                    onTab = { tab = it.name },
-                    onRange = { coinRange = it },
-                    onAddTransaction = { onManual(asset) },
-                    onTransaction = { id -> timeline?.entries?.find { it.activity.id.value == id }?.let(onTransaction) },
-                ),
-                transactionControls = {
-                    OutlinedTextField(transactionSearch, {
-                        transactionSearch = it
-                        transactionOffset = 0
-                    }, label = { Text("Search transactions") }, modifier = Modifier.fillMaxWidth().testTag("coin-transaction-search"))
-                    TransactionChoice(
-                        "Transaction type",
-                        listOf("All", "Buy", "Sell", "Transfer", "Deposit", "Withdrawal", "Reward", "Fee", "Other").map {
-                            it to
-                                it
-                        },
-                        transactionType,
-                    ) {
-                        transactionType = it
-                        transactionOffset = 0
-                    }
-                    TransactionChoice(
-                        "Status",
-                        listOf("All" to "All") + ActivityStatus.entries.map { it.name to it.name.lowercase() },
-                        transactionStatus,
-                    ) {
-                        transactionStatus =
-                            it
-                        ; transactionOffset = 0
-                    }
-                    TextButton(onClick = { transactionExplanation = true }) { Text("How transaction values are calculated") }
-                    if (timelineLoading) Text("Updating saved transactions…")
-                    if (timelineError) TextButton(onClick = { timelineRetry++ }) { Text("Retry transactions") }
-                    TextButton(onClick = {
-                        val exportFilter = timelineFilter
-                        val exportType = transactionType
-                        transactionScope.launch {
-                            try {
-                                withContext(host.dispatcher) {
-                                    val accounts = app.transactionAccounts(exportFilter.portfolio)
-                                    val ids =
-                                        app
-                                            .transactionEntries(exportFilter)
-                                            .filter {
-                                                exportType == "All" ||
-                                                    transactionKind(it, asset.asset, accounts) == exportType
-                                            }.map { it.activity.id }
-                                            .toSet()
-                                    val csv = app.exportCsv(exportFilter, ids)
-                                    host.saveFile("polion-${asset.asset.value}-transactions.csv", csv.encodeToByteArray()) {
-                                        exportMessage =
-                                            it
-                                    }
-                                }
-                            } catch (
-                                cancelled: CancellationException,
-                            ) {
-                                throw cancelled
-                            } catch (_: Exception) {
-                                exportMessage = "Could not export transactions. Try again."
+    val logoLoader = remember(app, host) { CoinLogoLoader(app, host.dispatcher) }
+    // Logos load only from feeds fetched with market data consent; each coin's page and rows share one image.
+    val logoUrls =
+        remember(marketOverview) {
+            val overview = marketOverview
+            if (overview == null || !overview.consent) {
+                emptyMap()
+            } else {
+                (
+                    overview.trending?.items.orEmpty().mapNotNull { coin ->
+                        coin.image?.let { overview.assetKeys[coin.coinId]?.value to it }
+                    } +
+                        overview.markets?.items.orEmpty().mapNotNull { coin ->
+                            coin.image?.let {
+                                overview.assetKeys[coin.coinId]?.value to
+                                    it
                             }
                         }
-                    }) { Text("Export matching transactions") }
-                    exportMessage?.let { Text(it) }
-                },
-                transactionFooter = {
-                    Text(
-                        "${if (timeline?.total == 0) 0 else transactionOffset + 1}–${minOf(
-                            transactionOffset + (timeline?.cards?.size ?: 0),
-                            timeline?.total ?: 0,
-                        )} of ${timeline?.total ?: 0}",
-                    )
-                    TextButton(enabled = transactionOffset > 0, onClick = {
-                        transactionOffset = maxOf(0, transactionOffset - 20)
-                    }) { Text("Previous transactions") }
-                    TextButton(
-                        enabled = transactionOffset + 20 < (timeline?.total ?: 0),
-                        onClick = { transactionOffset += 20 },
-                    ) { Text("More transactions") }
-                },
-            )
-            if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL && asset.asset.value.startsWith("coingecko:")) {
-                Text(
-                    "Price, 7-day chart and market figures from CoinGecko, updated " +
-                        (marketOverview?.markets?.observedAtMillis?.let(::relativeAgo) ?: "earlier") +
-                        ". Polion records transactions for Bitcoin only.",
-                    modifier = Modifier.testTag("coin-market-source"),
+                ).mapNotNull { (key, url) -> key?.let { it to url } }.toMap()
+            }
+        }
+    CompositionLocalProvider(LocalCoinLogos provides logoLoader.source(logoUrls)) {
+        ModelShell(
+            ModelShellState(
+                modelPage,
+                title,
+                showBack = selectedAsset != null || page == Page.ACCOUNTS || page == Page.SETTINGS,
+                refreshing = refreshing,
+                refreshQueued = refreshQueued,
+                menuItems = listOf("Settings"),
+                dark = dark,
+            ),
+            onPage = {
+                onAsset(null)
+                onPage(
+                    when (it) {
+                        ModelPage.MAIN -> Page.HOME
+                        ModelPage.PORTFOLIO -> Page.OVERVIEW
+                        ModelPage.INSIGHTS -> Page.REPORTS
+                    },
                 )
-            } else if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL) {
+            },
+            onBack = { if (selectedAsset != null) onAsset(null) else onBackAux() },
+            onMenu = {
+                when (it) {
+                    "Settings" -> onPage(Page.SETTINGS)
+                    else -> onRefreshDetails()
+                }
+            },
+            onRefresh = onRefresh,
+            onAdd = if (page == Page.OVERVIEW && selectedAsset == null) onAdd else null,
+            statusContent = statusContent,
+        ) { wide, short ->
+            val data = snapshot
+            if (data?.sampleData == true) {
                 Text(
-                    "Saved as-of unit prices · ${prices.mapNotNull { it.price?.id }.distinct().size} observations",
-                    modifier =
-                        Modifier.testTag(
-                            if (!priceLoading &&
-                                prices.isNotEmpty()
-                            ) {
-                                "coin-price-history-ready"
+                    "EXAMPLE DATA · stored only on this device",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            if (page != Page.ACCOUNTS && shouldShowSyncBanner(syncStatus, data?.sourceStatus)) {
+                SyncBanner(syncStatus, data?.sourceStatus, onSyncDetails)
+            }
+            if (data == null) {
+                Text("Opening your portfolio")
+            } else if (selectedAsset != null) {
+                val asset = selectedAsset
+                val symbol = asset.metadata?.symbol ?: asset.asset.value
+                val tracked = data.valuations.any { it.asset == asset.asset }
+                val listing =
+                    marketOverview?.let { overview -> overview.markets?.items?.find { overview.assetKeys[it.coinId] == asset.asset } }
+                // Without two saved observations, the CoinGecko 7-day sparkline draws the chart.
+                val useListing =
+                    listing != null && marketOverview?.currency == data.currency && observationCount < 2 && listing.sparkline.size >= 2
+                val listingPoints = if (useListing) sparklinePoints(listing.sparkline, 61) else emptyList()
+                val quantity =
+                    if (!tracked) {
+                        "—"
+                    } else {
+                        asset.metadata?.let { "${formatUnits(asset.amount.atomicUnits, it.decimals)} ${it.symbol}" }
+                            ?: "${asset.amount.atomicUnits} atomic units"
+                    }
+                ModelCoinDetail(
+                    ModelCoinDetailState(
+                        ticker = symbol,
+                        mark = symbol.take(1),
+                        logoColor = identity(asset.asset.value, symbol, null).color,
+                        coinId = asset.asset.value,
+                        portfolio =
+                            data.ownership.portfolios
+                                .find { it.id == selectedPortfolio }
+                                ?.label ?: "All portfolios",
+                        metrics =
+                            listOf(
+                                ModelMetric("Owned", quantity.hiddenIf(amountsHidden)),
+                                ModelMetric(
+                                    "Market Value",
+                                    (if (tracked) asset.value?.let { money(it, data.currency) } ?: "—" else "—").hiddenIf(amountsHidden),
+                                ),
+                            ) +
+                                if (tracked) {
+                                    // Gains and cost basis are amounts; a percentage would stay visible.
+                                    coinAccountingMetrics(accounting, asset).map {
+                                        if (it.value.endsWith("%")) it else it.copy(value = it.value.hiddenIf(amountsHidden))
+                                    }
+                                } else if (listing != null) {
+                                    listOf(
+                                        ModelMetric("24h Change", percentChange(listing.change24h)),
+                                        ModelMetric("7d Change", percentChange(listing.change7d)),
+                                        ModelMetric("Market Cap", listing.marketCap?.let { money(it, data.currency) } ?: "—"),
+                                        ModelMetric("Market Cap Rank", listing.rank?.let { "#$it" } ?: "—"),
+                                    )
+                                } else {
+                                    listOf(
+                                        ModelMetric("Total Gains", "—"),
+                                        ModelMetric("Total Cost Basis", "—"),
+                                        ModelMetric("Unrealized Gain", "—"),
+                                        ModelMetric("Realized Gain", "—"),
+                                    )
+                                },
+                        breakdownExpanded = expanded,
+                        tab = ModelCoinTab.valueOf(tab),
+                        price =
+                            asset.price?.let {
+                                if (asset.asset.value.startsWith("coingecko:")) {
+                                    marketPrice(it.price.value, it.price.quoteAssetId)
+                                } else {
+                                    quotePrice(it.price.value, it.price.quoteAssetId)
+                                }
+                            } ?: "—",
+                        change =
+                            if (useListing) {
+                                "Price change · 7D · ${percentChange(listing?.change7d)}"
+                            } else if (observationCount >= 2) {
+                                unitPriceChange(observed.firstOrNull(), observed.lastOrNull(), coinRange)
                             } else {
-                                "coin-price-history-loading"
+                                "Price change · $coinRange · —"
                             },
-                        ),
+                        priceSource =
+                            asset.price?.let {
+                                val observedAt =
+                                    kotlin.time.Instant
+                                        .fromEpochMilliseconds(it.observedAtMillis)
+                                        .toString()
+                                val provider = if (it.manual) "Manual quote" else it.providerId?.value ?: "Provider"
+                                "$provider · ${asset.priceStatus.name.lowercase()} · observed $observedAt"
+                            } ?: "Price unavailable",
+                        selectedRange = if (useListing) "1W" else coinRange,
+                        chartPoints = if (useListing) listingPoints else priceCoordinates,
+                        chartTopLabel =
+                            if (useListing) {
+                                listing?.sparkline?.maxOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
+                            } else {
+                                observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
+                            },
+                        chartBottomLabel =
+                            if (useListing) {
+                                listing?.sparkline?.minOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
+                            } else {
+                                observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
+                            },
+                        transactionMetrics =
+                            timeline?.metrics
+                                ?: listOf(
+                                    ModelMetric("Avg. Buy Price", "—"),
+                                    ModelMetric("Avg. Sell Price", "—"),
+                                    ModelMetric("Transactions", "—"),
+                                ),
+                        transactions =
+                            timeline?.cards.orEmpty().map { card ->
+                                if (!amountsHidden) {
+                                    card
+                                } else {
+                                    card.copy(
+                                        amount = HIDDEN_AMOUNT,
+                                        fee = card.fee.hiddenIf(true),
+                                        worthNow = card.worthNow.hiddenIf(true),
+                                        worthThen = card.worthThen.hiddenIf(true),
+                                    )
+                                }
+                            },
+                        alerts = emptyList(),
+                        orderSource = "Unavailable",
+                        orderRows = emptyList(),
+                        enabledRanges = if (useListing) setOf("1W") else setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
+                        canAddTransaction = !asset.asset.value.startsWith("coingecko:"),
+                        transactionEmpty = if (timelineLoading) "Loading saved transactions…" else "No matching transactions",
+                        alertsUnavailable = "Price alerts are unavailable.",
+                        orderUnavailable = "Order book data is unavailable.",
+                        changeTone = ModelChangeTone.NEUTRAL,
+                    ),
+                    ModelCoinDetailActions(
+                        onBreakdown = { expanded = it },
+                        onTab = { tab = it.name },
+                        onRange = { coinRange = it },
+                        onAddTransaction = { onManual(asset) },
+                        onTransaction = { id -> timeline?.entries?.find { it.activity.id.value == id }?.let(onTransaction) },
+                    ),
+                    transactionControls = {
+                        OutlinedTextField(transactionSearch, {
+                            transactionSearch = it
+                            transactionOffset = 0
+                        }, label = { Text("Search transactions") }, modifier = Modifier.fillMaxWidth().testTag("coin-transaction-search"))
+                        TransactionChoice(
+                            "Transaction type",
+                            listOf("All", "Buy", "Sell", "Transfer", "Deposit", "Withdrawal", "Reward", "Fee", "Other").map {
+                                it to
+                                    it
+                            },
+                            transactionType,
+                        ) {
+                            transactionType = it
+                            transactionOffset = 0
+                        }
+                        TransactionChoice(
+                            "Status",
+                            listOf("All" to "All") + ActivityStatus.entries.map { it.name to it.name.lowercase() },
+                            transactionStatus,
+                        ) {
+                            transactionStatus =
+                                it
+                            ; transactionOffset = 0
+                        }
+                        TextButton(onClick = { transactionExplanation = true }) { Text("How transaction values are calculated") }
+                        if (timelineLoading) Text("Updating saved transactions…")
+                        if (timelineError) TextButton(onClick = { timelineRetry++ }) { Text("Retry transactions") }
+                        TextButton(onClick = {
+                            val exportFilter = timelineFilter
+                            val exportType = transactionType
+                            transactionScope.launch {
+                                try {
+                                    withContext(host.dispatcher) {
+                                        val accounts = app.transactionAccounts(exportFilter.portfolio)
+                                        val ids =
+                                            app
+                                                .transactionEntries(exportFilter)
+                                                .filter {
+                                                    exportType == "All" ||
+                                                        transactionKind(it, asset.asset, accounts) == exportType
+                                                }.map { it.activity.id }
+                                                .toSet()
+                                        val csv = app.exportCsv(exportFilter, ids)
+                                        host.saveFile("polion-${asset.asset.value}-transactions.csv", csv.encodeToByteArray()) {
+                                            exportMessage =
+                                                it
+                                        }
+                                    }
+                                } catch (
+                                    cancelled: CancellationException,
+                                ) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    exportMessage = "Could not export transactions. Try again."
+                                }
+                            }
+                        }) { Text("Export matching transactions") }
+                        exportMessage?.let { Text(it) }
+                    },
+                    transactionFooter = {
+                        Text(
+                            "${if (timeline?.total == 0) 0 else transactionOffset + 1}–${minOf(
+                                transactionOffset + (timeline?.cards?.size ?: 0),
+                                timeline?.total ?: 0,
+                            )} of ${timeline?.total ?: 0}",
+                        )
+                        TextButton(enabled = transactionOffset > 0, onClick = {
+                            transactionOffset = maxOf(0, transactionOffset - 20)
+                        }) { Text("Previous transactions") }
+                        TextButton(
+                            enabled = transactionOffset + 20 < (timeline?.total ?: 0),
+                            onClick = { transactionOffset += 20 },
+                        ) { Text("More transactions") }
+                    },
                 )
-                Text("Missing or stale prices remain gaps.")
-                if (observationCount < 2) Text("At least two saved observations are needed to resolve movement in this range.")
-                if (priceLoading) Text("Loading saved price history…")
-                if (priceError) TextButton(onClick = { priceRetry++ }) { Text("Retry saved price history") }
-                TextButton(onClick = { priceDetails = true }) { Text("Price observations") }
-                if (tracked && accountingLoading) Text("Updating cost basis and gains…")
-                if (tracked && accountingError) Text("Accounting refresh failed; saved figures are retained.")
-                if (tracked) {
-                    TextButton(
-                        onClick = { onAdvanced(Page.REPORTS) },
+                if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL && asset.asset.value.startsWith("coingecko:")) {
+                    Text(
+                        "Price, 7-day chart and market figures from CoinGecko, updated " +
+                            (marketOverview?.markets?.observedAtMillis?.let(::relativeAgo) ?: "earlier") +
+                            ". Polion records transactions for Bitcoin only.",
+                        modifier = Modifier.testTag("coin-market-source"),
+                    )
+                } else if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL) {
+                    Text(
+                        "Saved as-of unit prices · ${prices.mapNotNull { it.price?.id }.distinct().size} observations",
                         modifier =
                             Modifier.testTag(
-                                if (accounting != null &&
-                                    !accountingLoading
+                                if (!priceLoading &&
+                                    prices.isNotEmpty()
                                 ) {
-                                    "coin-accounting-ready"
+                                    "coin-price-history-ready"
                                 } else {
-                                    "coin-accounting-loading"
+                                    "coin-price-history-loading"
                                 },
                             ),
-                    ) {
-                        Text("Accounting evidence")
-                    }
-                }
-            }
-        } else {
-            when (page) {
-                Page.HOME -> {
-                    ModelMain(
-                        marketMainState(
-                            marketOverview,
-                            data.marketCoins,
-                            favorites,
-                            kotlin.time.Clock.System
-                                .now()
-                                .toEpochMilliseconds(),
-                        ),
-                        wide,
-                    ) { action ->
-                        when (action) {
-                            is ModelMainAction.ToggleFavorite -> onFavorite(AssetId(action.identity.id))
-                            is ModelMainAction.LoadMarkets -> onMarketRefresh(60_000L)
-                            is ModelMainAction.OpenCoin -> {
-                                val key = AssetId(action.identity.id)
-                                val owned = data.valuations.find { it.asset == key }
-                                val saved = data.marketCoins.find { it.asset == key }
-                                val overview = marketOverview
-                                val listing = overview?.markets?.items?.find { overview.assetKeys[it.coinId] == key }
-                                val trend = overview?.trending?.items?.find { overview.assetKeys[it.coinId] == key }
-                                (
-                                    owned ?: saved?.detailValuation()
-                                        ?: listing?.detailValuation(key, overview.currency, overview.markets!!.observedAtMillis)
-                                        ?: trend?.detailValuation(key, overview.currency, overview.trending!!.observedAtMillis)
-                                )?.let(onAsset)
-                            }
-                        }
-                    }
-                }
-                Page.OVERVIEW -> {
-                    PortfolioSelector(data, selectedPortfolio, onPortfolio)
-                    val summary = pricingSummary(data.valuations)
-                    // The secondary total is shown only when it covers the same holdings as the main total.
-                    val secondary =
-                        data.secondaryCurrency?.let { code ->
-                            val other = pricingSummary(data.secondaryValuations)
-                            if (other.total != null && other.missing == summary.missing) {
-                                money(other.total, code)
-                            } else {
-                                "${code.value} price not available yet"
-                            }
-                        }
-                    val exactValues = chart.map(::historyTotal)
-                    val values = exactValues.map { it?.toString()?.toDoubleOrNull() }
-                    val finite = values.filterNotNull().filter { it.isFinite() }
-                    val low = finite.minOrNull()
-                    val high = finite.maxOrNull()
-                    val points =
-                        if (low == null ||
-                            high == null
-                        ) {
-                            emptyList()
-                        } else {
-                            values.map { value ->
-                                value?.takeIf { it.isFinite() }?.let {
-                                    if (high ==
-                                        low
+                    )
+                    Text("Missing or stale prices remain gaps.")
+                    if (observationCount < 2) Text("At least two saved observations are needed to resolve movement in this range.")
+                    if (priceLoading) Text("Loading saved price history…")
+                    if (priceError) TextButton(onClick = { priceRetry++ }) { Text("Retry saved price history") }
+                    TextButton(onClick = { priceDetails = true }) { Text("Price observations") }
+                    if (tracked && accountingLoading) Text("Updating cost basis and gains…")
+                    if (tracked && accountingError) Text("Accounting refresh failed; saved figures are retained.")
+                    if (tracked) {
+                        TextButton(
+                            onClick = { onAdvanced(Page.REPORTS) },
+                            modifier =
+                                Modifier.testTag(
+                                    if (accounting != null &&
+                                        !accountingLoading
                                     ) {
-                                        .5f
+                                        "coin-accounting-ready"
                                     } else {
-                                        ((it - low) / (high - low)).toFloat()
-                                    }
+                                        "coin-accounting-loading"
+                                    },
+                                ),
+                        ) {
+                            Text("Accounting evidence")
+                        }
+                    }
+                }
+            } else {
+                when (page) {
+                    Page.HOME -> {
+                        ModelMain(
+                            marketMainState(
+                                marketOverview,
+                                data.marketCoins,
+                                favorites,
+                                kotlin.time.Clock.System
+                                    .now()
+                                    .toEpochMilliseconds(),
+                            ),
+                            wide,
+                        ) { action ->
+                            when (action) {
+                                is ModelMainAction.ToggleFavorite -> onFavorite(AssetId(action.identity.id))
+                                is ModelMainAction.LoadMarkets -> onMarketRefresh(60_000L)
+                                is ModelMainAction.OpenCoin -> {
+                                    val key = AssetId(action.identity.id)
+                                    val owned = data.valuations.find { it.asset == key }
+                                    val saved = data.marketCoins.find { it.asset == key }
+                                    val overview = marketOverview
+                                    val listing = overview?.markets?.items?.find { overview.assetKeys[it.coinId] == key }
+                                    val trend = overview?.trending?.items?.find { overview.assetKeys[it.coinId] == key }
+                                    (
+                                        owned ?: saved?.detailValuation()
+                                            ?: listing?.detailValuation(key, overview.currency, overview.markets!!.observedAtMillis)
+                                            ?: trend?.detailValuation(key, overview.currency, overview.trending!!.observedAtMillis)
+                                    )?.let(onAsset)
                                 }
                             }
                         }
-                    val labels = mapOf(-1 to "1H", 1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", -2 to "YTD", 365 to "1Y", 0 to "ALL")
-                    ModelPortfolioSummary(
-                        ModelPortfolioSummaryState(
-                            balance = summary.total?.let { money(it, data.currency) } ?: "—",
-                            currency = data.currency.value,
-                            change = portfolioValueDelta(chart, data.currency),
-                            changeLabel = "Value change · ${labels[period] ?: "Selected period"}",
-                            percentChange = portfolioValuePercent(chart),
-                            selectedRange = labels[period] ?: "",
-                            chartPoints = points,
-                            enabledRanges = labels.values.toSet(),
-                            ranges = labels.values.toList(),
-                            chartTopLabel = exactValues.filterNotNull().maxOrNull()?.let { money(it, data.currency) } ?: "—",
-                            chartBottomLabel = exactValues.filterNotNull().minOrNull()?.let { money(it, data.currency) } ?: "—",
-                            secondaryBalance = secondary,
-                            showChart = showPortfolioChart,
-                        ),
-                        wide,
-                        short,
-                        { label -> labels.entries.find { it.value == label }?.let { onPeriod(it.key) } },
-                        onExplain = { explain = true },
-                        onCurrency = { currencyMenu = true },
-                        currencyMenuContent = {
-                            DropdownMenu(currencyMenu, { currencyMenu = false }) {
-                                listOf("USD", "EUR", "GBP").forEach { code ->
-                                    DropdownMenuItem(text = { Text(code) }, onClick = {
-                                        currencyMenu = false
-                                        onCurrency(AssetId(code))
-                                    })
-                                }
-                            }
-                        },
-                    )
-                    Text("Portfolio value change includes deposits and withdrawals; it is not investment return.")
-                    if (chartLoading) {
-                        Text("Updating history…")
-                    } else if (chartError) {
-                        Text("History unavailable")
                     }
-                    if (summary.stale > 0) Text(stalePriceMessage(summary.stale))
-                    if (summary.missing > 0) Text("${summary.missing} unpriced assets excluded")
-                    ModelPortfolioHoldings(
-                        ModelPortfolioHoldingsState(
-                            displayedAssets(data.valuations, assetPreference).map { asset ->
-                                val symbol = asset.metadata?.symbol ?: asset.asset.value
-                                val quantity =
-                                    asset.metadata?.let { formatUnits(asset.amount.atomicUnits, it.decimals) }
-                                        ?: "${asset.amount.atomicUnits} atomic units"
-                                val assetHistory =
-                                    chart.map { point ->
-                                        point.copy(
-                                            valuations =
-                                                point.valuations.filter {
-                                                    it.asset ==
-                                                        asset.asset
-                                                },
-                                        )
-                                    }
-                                ModelHoldingRow(
-                                    identity(asset.asset.value, symbol, asset.metadata?.name),
-                                    "$quantity $symbol · ${asset.price?.let { quotePrice(it.price.value, it.price.quoteAssetId) } ?: "—"}",
-                                    asset.value?.let { money(it, data.currency) } ?: "—",
-                                    portfolioValueDelta(assetHistory, data.currency),
-                                    portfolioValuePercent(assetHistory),
-                                )
-                            },
-                            if (assetPreference.sort == AssetSort.VALUE) "Highest Holdings" else "Name",
-                        ),
-                        onHolding = { coin -> onAsset(data.valuations.find { it.asset.value == coin.id }) },
-                        onSort = { sortMenu = true },
-                        onView = { filterMenu = true },
-                        viewMenuContent = {
-                            DropdownMenu(filterMenu, { filterMenu = false }) {
-                                DropdownMenuItem(text = { Text("Hide empty: ${assetPreference.hideEmpty}") }, onClick = {
-                                    onAssetPreference(assetPreference.copy(hideEmpty = !assetPreference.hideEmpty))
-                                    filterMenu = false
-                                })
-                                DropdownMenuItem(text = {
-                                    Text(
-                                        "Hide under 1 ${data.currency.value}: ${assetPreference.hideSmall}",
-                                    )
-                                }, onClick = {
-                                    onAssetPreference(assetPreference.copy(hideSmall = !assetPreference.hideSmall))
-                                    filterMenu = false
-                                })
-                            }
-                        },
-                        sortMenuContent = {
-                            DropdownMenu(sortMenu, { sortMenu = false }) {
-                                AssetSort.entries.forEach { sort ->
-                                    DropdownMenuItem(text = { Text(sort.name.lowercase()) }, onClick = {
-                                        sortMenu = false
-                                        onAssetPreference(assetPreference.copy(sort = sort))
-                                    })
+                    Page.OVERVIEW -> {
+                        PortfolioSelector(data, selectedPortfolio, onPortfolio)
+                        val summary = pricingSummary(data.valuations)
+                        // The secondary total is shown only when it covers the same holdings as the main total.
+                        val secondary =
+                            data.secondaryCurrency?.let { code ->
+                                val other = pricingSummary(data.secondaryValuations)
+                                if (other.total != null && other.missing == summary.missing) {
+                                    money(other.total, code).hiddenIf(amountsHidden)
+                                } else {
+                                    "${code.value} price not available yet"
                                 }
                             }
-                        },
-                    )
-                    TextButton(onClick = { onAdvanced(Page.OVERVIEW) }) { Text("Portfolio tools and currency") }
-                }
-                Page.REPORTS -> {
-                    ModelInsights(
-                        ModelInsightsState(
-                            balance = pricingSummary(data.valuations).total?.let { money(it, data.currency) } ?: "—",
-                            portfolio =
-                                data.ownership.portfolios
-                                    .find { it.id == selectedPortfolio }
-                                    ?.label ?: "All portfolios",
-                        ),
-                        wide,
-                    ) { }
-                    TextButton(onClick = { onAdvanced(Page.REPORTS) }) { Text("Reporting and accounting tools") }
-                }
-                Page.ACCOUNTS -> {
-                    AccountsWorkspace(
-                        app,
-                        host,
-                        data,
-                        selectedPortfolio,
-                        dataRevision,
-                        syncStatus,
-                        onConnectBitcoin,
-                        onSyncDetails,
-                        onAdvanced,
-                        onAccountChanged,
-                        onAccountTool,
-                    )
-                }
-                Page.SETTINGS if settingsContent != null -> settingsContent(onAdvanced)
-                Page.SETTINGS -> {
-                    ModelSettings(
-                        ModelSettingsState(
-                            preferences.automaticRefresh,
-                            preferences.wifiOnly,
-                            "Prices and wallet history refresh together. Unchanged wallets are only checked, not downloaded again.",
-                            if (wifiOnlyRefreshSupported) {
-                                "Background jobs use an unmetered network. Manual refresh uses the current connection."
+                        val exactValues = chart.map(::historyTotal)
+                        val values = exactValues.map { it?.toString()?.toDoubleOrNull() }
+                        val finite = values.filterNotNull().filter { it.isFinite() }
+                        val low = finite.minOrNull()
+                        val high = finite.maxOrNull()
+                        val points =
+                            if (low == null ||
+                                high == null
+                            ) {
+                                emptyList()
                             } else {
-                                "The Wi-Fi restriction applies to Android background jobs. Desktop refresh uses the current connection."
+                                values.map { value ->
+                                    value?.takeIf { it.isFinite() }?.let {
+                                        if (high ==
+                                            low
+                                        ) {
+                                            .5f
+                                        } else {
+                                            ((it - low) / (high - low)).toFloat()
+                                        }
+                                    }
+                                }
+                            }
+                        val labels = mapOf(-1 to "1H", 1 to "1D", 7 to "1W", 30 to "1M", 90 to "3M", -2 to "YTD", 365 to "1Y", 0 to "ALL")
+                        ModelPortfolioSummary(
+                            ModelPortfolioSummaryState(
+                                balance = (summary.total?.let { money(it, data.currency) } ?: "—").hiddenIf(amountsHidden),
+                                currency = data.currency.value,
+                                change = portfolioValueDelta(chart, data.currency).hiddenIf(amountsHidden),
+                                changeLabel = "Value change · ${labels[period] ?: "Selected period"}",
+                                percentChange = portfolioValuePercent(chart),
+                                selectedRange = labels[period] ?: "",
+                                chartPoints = points,
+                                enabledRanges = labels.values.toSet(),
+                                ranges = labels.values.toList(),
+                                chartTopLabel =
+                                    (
+                                        exactValues.filterNotNull().maxOrNull()?.let {
+                                            money(
+                                                it,
+                                                data.currency,
+                                            )
+                                        } ?: "—"
+                                    ).hiddenIf(amountsHidden),
+                                chartBottomLabel =
+                                    (
+                                        exactValues.filterNotNull().minOrNull()?.let {
+                                            money(
+                                                it,
+                                                data.currency,
+                                            )
+                                        } ?: "—"
+                                    ).hiddenIf(amountsHidden),
+                                amountsHidden = amountsHidden,
+                                secondaryBalance = secondary,
+                                showChart = showPortfolioChart,
+                            ),
+                            wide,
+                            short,
+                            { label -> labels.entries.find { it.value == label }?.let { onPeriod(it.key) } },
+                            onExplain = { explain = true },
+                            onToggleAmounts = onToggleAmounts,
+                            onCurrency = { currencyMenu = true },
+                            currencyMenuContent = {
+                                DropdownMenu(currencyMenu, { currencyMenu = false }) {
+                                    listOf("USD", "EUR", "GBP").forEach { code ->
+                                        DropdownMenuItem(text = { Text(code) }, onClick = {
+                                            currencyMenu = false
+                                            onCurrency(AssetId(code))
+                                        })
+                                    }
+                                }
                             },
-                        ),
-                        onAutomatic,
-                        onWifi,
-                    )
-                    TextButton(
-                        onClick = onSyncDetails,
-                        modifier = Modifier.testTag("settings-wallet-history"),
-                    ) { Text("Wallet history and recovery") }
-                    TextButton(onClick = { onAdvanced(Page.SETTINGS) }) { Text("Appearance, privacy, backup and price settings") }
+                        )
+                        Text("Portfolio value change includes deposits and withdrawals; it is not investment return.")
+                        if (chartLoading) {
+                            Text("Updating history…")
+                        } else if (chartError) {
+                            Text("History unavailable")
+                        }
+                        if (summary.stale > 0) Text(stalePriceMessage(summary.stale))
+                        if (summary.missing > 0) Text("${summary.missing} unpriced assets excluded")
+                        ModelPortfolioHoldings(
+                            ModelPortfolioHoldingsState(
+                                displayedAssets(data.valuations, assetPreference).map { asset ->
+                                    val symbol = asset.metadata?.symbol ?: asset.asset.value
+                                    val quantity =
+                                        asset.metadata?.let { formatUnits(asset.amount.atomicUnits, it.decimals) }
+                                            ?: "${asset.amount.atomicUnits} atomic units"
+                                    val assetHistory =
+                                        chart.map { point ->
+                                            point.copy(
+                                                valuations =
+                                                    point.valuations.filter {
+                                                        it.asset ==
+                                                            asset.asset
+                                                    },
+                                            )
+                                        }
+                                    ModelHoldingRow(
+                                        identity(asset.asset.value, symbol, asset.metadata?.name),
+                                        "${quantity.hiddenIf(amountsHidden)} $symbol · ${asset.price?.let {
+                                            quotePrice(it.price.value, it.price.quoteAssetId)
+                                        } ?: "—"}",
+                                        (asset.value?.let { money(it, data.currency) } ?: "—").hiddenIf(amountsHidden),
+                                        portfolioValueDelta(assetHistory, data.currency).hiddenIf(amountsHidden),
+                                        portfolioValuePercent(assetHistory),
+                                    )
+                                },
+                                if (assetPreference.sort == AssetSort.VALUE) "Highest Holdings" else "Name",
+                            ),
+                            onHolding = { coin -> onAsset(data.valuations.find { it.asset.value == coin.id }) },
+                            onSort = { sortMenu = true },
+                            onView = { filterMenu = true },
+                            viewMenuContent = {
+                                DropdownMenu(filterMenu, { filterMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Hide empty: ${assetPreference.hideEmpty}") }, onClick = {
+                                        onAssetPreference(assetPreference.copy(hideEmpty = !assetPreference.hideEmpty))
+                                        filterMenu = false
+                                    })
+                                    DropdownMenuItem(text = {
+                                        Text(
+                                            "Hide under 1 ${data.currency.value}: ${assetPreference.hideSmall}",
+                                        )
+                                    }, onClick = {
+                                        onAssetPreference(assetPreference.copy(hideSmall = !assetPreference.hideSmall))
+                                        filterMenu = false
+                                    })
+                                }
+                            },
+                            sortMenuContent = {
+                                DropdownMenu(sortMenu, { sortMenu = false }) {
+                                    AssetSort.entries.forEach { sort ->
+                                        DropdownMenuItem(text = { Text(sort.name.lowercase()) }, onClick = {
+                                            sortMenu = false
+                                            onAssetPreference(assetPreference.copy(sort = sort))
+                                        })
+                                    }
+                                }
+                            },
+                        )
+                        TextButton(onClick = { onAdvanced(Page.OVERVIEW) }) { Text("Portfolio tools and currency") }
+                    }
+                    Page.REPORTS -> {
+                        ModelInsights(
+                            ModelInsightsState(
+                                balance =
+                                    (
+                                        pricingSummary(
+                                            data.valuations,
+                                        ).total?.let { money(it, data.currency) } ?: "—"
+                                    ).hiddenIf(amountsHidden),
+                                portfolio =
+                                    data.ownership.portfolios
+                                        .find { it.id == selectedPortfolio }
+                                        ?.label ?: "All portfolios",
+                            ),
+                            wide,
+                        ) { }
+                        TextButton(onClick = { onAdvanced(Page.REPORTS) }) { Text("Reporting and accounting tools") }
+                    }
+                    Page.ACCOUNTS -> {
+                        AccountsWorkspace(
+                            app,
+                            host,
+                            data,
+                            selectedPortfolio,
+                            dataRevision,
+                            syncStatus,
+                            onConnectBitcoin,
+                            onSyncDetails,
+                            onAdvanced,
+                            onAccountChanged,
+                            onAccountTool,
+                        )
+                    }
+                    Page.SETTINGS if settingsContent != null -> settingsContent(onAdvanced)
+                    Page.SETTINGS -> {
+                        ModelSettings(
+                            ModelSettingsState(
+                                preferences.automaticRefresh,
+                                preferences.wifiOnly,
+                                "Prices and wallet history refresh together. Unchanged wallets are only checked, not downloaded again.",
+                                if (wifiOnlyRefreshSupported) {
+                                    "Background jobs use an unmetered network. Manual refresh uses the current connection."
+                                } else {
+                                    "The Wi-Fi restriction applies to Android background jobs. Desktop refresh uses the current connection."
+                                },
+                            ),
+                            onAutomatic,
+                            onWifi,
+                        )
+                        TextButton(
+                            onClick = onSyncDetails,
+                            modifier = Modifier.testTag("settings-wallet-history"),
+                        ) { Text("Wallet history and recovery") }
+                        TextButton(onClick = { onAdvanced(Page.SETTINGS) }) { Text("Appearance, privacy, backup and price settings") }
+                    }
+                    else -> Unit
                 }
-                else -> Unit
             }
         }
     }

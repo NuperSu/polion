@@ -34,6 +34,13 @@ Code: `core/…/market/MarketFeeds.kt` (parsing and cache), `PortfolioApplicatio
   - they show the CoinGecko price, 24-hour and 7-day change, market cap and rank, and the 7-day hourly chart labelled 1W;
   - transactions can only be recorded for Bitcoin, so Add Transaction is disabled there.
 
+## Logos
+
+- **Source:** each coin's logo is the `image` URL from the market list, or `small` from trending, converted to CoinGecko's small size. Only `https://coin-images.coingecko.com` and `https://assets.coingecko.com` image URLs are accepted.
+- **When they load:** logos load only after market-data consent, at most four downloads at a time, without redirects, up to 256 KiB each.
+- **Caching:** logos are cached in `market_logo_cache` (excluded from backups) and refetched after 30 days. A logo that fails is not retried until the next launch.
+- **Where they appear:** the same logo is used on Main, Portfolio holdings and coin pages, because coins share one asset ID. Coins without a logo URL show a coloured mark with their initial.
+
 ## Not covered
 
-Coin logos are not loaded, because image requests would leak browsing to a CDN; coins show a lettered mark. Price alerts and order books are M5.
+Price alerts and order books are M5.

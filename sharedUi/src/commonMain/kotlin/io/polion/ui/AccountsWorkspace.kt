@@ -169,19 +169,15 @@ internal fun AccountsWorkspace(
                 if (detail.derivedAddresses > 0) Text("${detail.derivedAddresses} derived addresses · manage in account tools")
                 Text(if (archived) "Saved holdings (archived)" else "Holdings in this account")
                 if (detail.holdings.isEmpty()) Text("No recorded holdings")
+                val hidden = LocalAmountsHidden.current
                 detail.holdings.forEach { asset ->
                     Text(
-                        "${asset.metadata?.let {
-                            formatUnits(
-                                asset.amount.atomicUnits,
-                                it.decimals,
-                            )
-                        } ?: asset.amount.atomicUnits} ${asset.metadata?.symbol ?: asset.asset.value} · ${asset.value?.let {
-                            money(
-                                it,
-                                data.currency,
-                            )
-                        } ?: "—"}",
+                        "${(
+                            asset.metadata?.let { formatUnits(asset.amount.atomicUnits, it.decimals) }
+                                ?: asset.amount.atomicUnits.toString()
+                        ).hiddenIf(hidden)} ${asset.metadata?.symbol ?: asset.asset.value} · ${(
+                            asset.value?.let { money(it, data.currency) } ?: "—"
+                        ).hiddenIf(hidden)}",
                     )
                 }
                 if (!archived) {

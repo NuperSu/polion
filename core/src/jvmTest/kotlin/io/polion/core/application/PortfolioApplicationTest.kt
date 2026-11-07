@@ -104,10 +104,11 @@ class PortfolioApplicationTest {
             app.setShowPortfolioChart(false)
             app.setZeroBasisRewards(true)
             app.setDeviceName("  Anton's Pixel  ")
+            app.setHideAmounts(true)
             assertFails { app.setSecondaryCurrency(AssetId("JPY")) }
             assertFails { app.setDeviceName("two\nlines") }
             assertFails { app.setDeviceName("x".repeat(41)) }
-            val expected = GeneralPreferences(LandingPage.INSIGHTS, AssetId("EUR"), false, true, "Anton's Pixel")
+            val expected = GeneralPreferences(LandingPage.INSIGHTS, AssetId("EUR"), false, true, "Anton's Pixel", hideAmounts = true)
             assertEquals(expected, PortfolioApplication(db) { 1000L }.generalPreferences())
             val backup = app.exportBackup("fixture-password".toCharArray())
             JvmSqliteDatabase(":memory:").use { staging ->

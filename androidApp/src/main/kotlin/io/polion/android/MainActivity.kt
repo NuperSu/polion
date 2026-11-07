@@ -83,11 +83,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        host?.returned()
         RefreshWorker.dataRevision.update { it + 1 }
     }
 
     override fun onStop() {
-        host?.let { if (!it.isChoosing) it.lock() }
+        host?.let { if (!it.isChoosing) it.left() }
         super.onStop()
     }
 
@@ -161,6 +162,28 @@ private class AndroidHost(
     @Volatile private var closed = false
     val locked = mutableStateOf(lockStore.hasLock)
 
+    @Volatile private var lockDelay = 0L
+    private var leftAt: Long? = null
+
+    override val lockDelayMillis: Long get() = lockDelay
+
+    override fun setLockDelay(millis: Long) {
+        lockDelay = millis
+        executor.execute { runCatching { app.value?.setLockDelay(millis) } }
+    }
+
+    /** The app went to the background: lock now, or remember when, depending on the delay. */
+    fun left() {
+        if (lockDelay == 0L) lock() else leftAt = android.os.SystemClock.elapsedRealtime()
+    }
+
+    /** The app came back: lock if it was away at least as long as the delay. */
+    fun returned() {
+        val away = leftAt?.let { android.os.SystemClock.elapsedRealtime() - it }
+        leftAt = null
+        if (away != null && away >= lockDelay) lock()
+    }
+
     init {
         runCatching {
             androidx.work.WorkManager
@@ -182,6 +205,7 @@ private class AndroidHost(
                 Files.createDirectories(file.parent)
                 db = AndroidSqliteDatabase(file.toString())
                 val opened = PortfolioApplication(db, System::currentTimeMillis)
+                opened.lockDelayMillis()?.let { lockDelay = it }
                 if (runCatching { reconcileRefreshPreferences(opened) }.isFailure) {
                     runCatching { opened.recordAutomaticPriceSchedulingFailure() }
                 }

@@ -29,6 +29,8 @@ data class MarketListing(
     val change7d: Double?,
     /** Hourly prices over the last seven days, oldest first. */
     val sparkline: List<Double>,
+    /** CoinGecko's small logo URL, or null when it sent none. */
+    val image: String? = null,
 )
 
 /** One coin from CoinGecko's search trending list. The price is derived from its BTC price when available. */
@@ -39,6 +41,7 @@ data class TrendingListing(
     val rank: Int?,
     val price: ExactDecimal?,
     val change24h: Double?,
+    val image: String? = null,
 )
 
 /** A cached feed and when CoinGecko returned it; feeds are cached independently. */
@@ -51,6 +54,15 @@ data class MarketFeed<T>(
 /** Requests and parsing for the CoinGecko market feeds. Malformed entries are skipped; a malformed document is rejected. */
 object CoingeckoMarkets {
     const val MARKET_SIZE = 250
+    private val IMAGE =
+        Regex(
+            "https://(coin-images|assets)\\.coingecko\\.com/coins/images/[0-9]+/(thumb|small|large|standard)/[A-Za-z0-9._%+-]+(\\?[0-9]+)?",
+        )
+
+    /** CoinGecko's own logo URL in the small size; anything from another host is ignored. */
+    fun logoUrl(url: String?): String? =
+        url?.takeIf { it.length <= 300 && it.matches(IMAGE) }?.replace(Regex("/(thumb|large|standard)/"), "/small/")
+
     private val COIN_ID = Regex("[a-z0-9][a-z0-9-]{0,99}")
 
     fun marketsUrl(
@@ -89,6 +101,7 @@ object CoingeckoMarkets {
                                 ?.filter { it.isFinite() && it > 0 }
                                 ?.takeLast(200)
                                 .orEmpty(),
+                        image = logoUrl(coin.text("image")),
                     )
                 }.getOrNull()
             }.distinctBy { it.coinId }
@@ -120,6 +133,7 @@ object CoingeckoMarkets {
                                 null
                             },
                         change24h = (data?.get("price_change_percentage_24h") as? JsonObject)?.number(currency)?.toDoubleOrNull(),
+                        image = logoUrl(item.text("small") ?: item.text("large") ?: item.text("thumb")),
                     )
                 }.getOrNull()
             }.distinctBy { it.coinId }
@@ -154,7 +168,9 @@ class MarketFeedRepository(
     companion object {
         const val FEED_TABLE = "market_feed_cache"
         const val DEVICE_TABLE = "device_settings"
-        val LOCAL_TABLES = listOf(FEED_TABLE, DEVICE_TABLE)
+        const val LOGO_TABLE = "market_logo_cache"
+        const val MAX_LOGO_BYTES = 256 * 1024
+        val LOCAL_TABLES = listOf(FEED_TABLE, DEVICE_TABLE, LOGO_TABLE)
     }
 
     init {
@@ -163,6 +179,41 @@ class MarketFeedRepository(
                 "payload TEXT NOT NULL, PRIMARY KEY(feed, currency))",
         )
         db.execute("CREATE TABLE IF NOT EXISTS $DEVICE_TABLE (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS $LOGO_TABLE (url TEXT PRIMARY KEY, fetched_at INTEGER NOT NULL, data TEXT NOT NULL)")
+    }
+
+    /** Cached logo bytes; logos older than [maxAgeMillis] count as missing so they are fetched again. */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    fun logo(
+        url: String,
+        nowMillis: Long,
+        maxAgeMillis: Long = 30L * 86_400_000L,
+    ): ByteArray? =
+        db
+            .query("SELECT fetched_at, data FROM $LOGO_TABLE WHERE url=?", listOf(url))
+            .singleOrNull()
+            ?.takeIf { nowMillis - it[0]!!.toLong() < maxAgeMillis }
+            ?.let {
+                kotlin.io.encoding.Base64
+                    .decode(it[1]!!)
+            }
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    fun saveLogo(
+        url: String,
+        bytes: ByteArray,
+        nowMillis: Long,
+    ) {
+        require(bytes.size <= MAX_LOGO_BYTES)
+        db.execute(
+            "INSERT OR REPLACE INTO $LOGO_TABLE VALUES (?, ?, ?)",
+            listOf(
+                url,
+                nowMillis.toString(),
+                kotlin.io.encoding.Base64
+                    .encode(bytes),
+            ),
+        )
     }
 
     fun deviceSetting(key: String): String? = db.query("SELECT value FROM $DEVICE_TABLE WHERE key=?", listOf(key)).singleOrNull()?.single()
@@ -206,6 +257,7 @@ class MarketFeedRepository(
                             coin.change24h?.let { put("c24h", it) }
                             coin.change7d?.let { put("c7d", it) }
                             put("spark", buildJsonArray { coin.sparkline.forEach { add(JsonPrimitive(it)) } })
+                            coin.image?.let { put("image", it) }
                         },
                     )
                 }
@@ -226,6 +278,7 @@ class MarketFeedRepository(
                             coin.rank?.let { put("rank", it) }
                             coin.price?.let { put("price", it.toString()) }
                             coin.change24h?.let { put("c24h", it) }
+                            coin.image?.let { put("image", it) }
                         },
                     )
                 }
@@ -245,6 +298,7 @@ class MarketFeedRepository(
                 coin.string("c24h")?.toDoubleOrNull(),
                 coin.string("c7d")?.toDoubleOrNull(),
                 coin["spark"]?.jsonArray?.mapNotNull { it.jsonPrimitive.content.toDoubleOrNull() }.orEmpty(),
+                CoingeckoMarkets.logoUrl(coin.string("image")),
             )
         }
 
@@ -257,6 +311,7 @@ class MarketFeedRepository(
                 coin.string("rank")?.toIntOrNull(),
                 coin.string("price")?.let(ExactDecimal::parse),
                 coin.string("c24h")?.toDoubleOrNull(),
+                CoingeckoMarkets.logoUrl(coin.string("image")),
             )
         }
 

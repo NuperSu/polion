@@ -87,6 +87,7 @@ class SettingsMenuTest {
                 },
                 onBiometric = { calls += "biometric:$it" },
                 onCoingeckoKey = { calls += "coingecko:$it" },
+                onLockDelay = { calls += "lock-delay:$it" },
             )
         runDesktopComposeUiTest(width = 390, height = 1600) {
             setContent {
@@ -130,6 +131,9 @@ class SettingsMenuTest {
             onNodeWithTag("settings-back").performClick()
             onNodeWithTag("settings-security").performClick()
             onNodeWithTag("settings-biometric").performClick()
+            onNodeWithText("Immediately").assertExists()
+            onNodeWithTag("settings-lock-delay").performClick()
+            onNodeWithTag("settings-lock-delay-900000").performClick()
             onNodeWithTag("settings-back").performClick()
             onNodeWithTag("settings-keys").performClick()
             onNodeWithText("Not set · public request limit").assertExists()
@@ -144,7 +148,7 @@ class SettingsMenuTest {
             onNodeWithTag("help-markets").assertExists()
             onNodeWithTag("help-wallets").assertExists()
             onNodeWithTag("help-backups").assertExists()
-            assertEquals(listOf("appearance:light", "biometric:true", "coingecko:CG-abcdefghijklmnop"), calls)
+            assertEquals(listOf("appearance:light", "biometric:true", "lock-delay:900000", "coingecko:CG-abcdefghijklmnop"), calls)
             assertEquals(
                 GeneralPreferences(LandingPage.PORTFOLIO, AssetId("EUR"), false, true, "Work phone"),
                 saved.last(),

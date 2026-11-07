@@ -150,4 +150,35 @@ class MarketFeedsTest {
             assertTrue(app.marketDataConsent())
         }
     }
+
+    @Test fun logosUseCoingeckoSmallImagesAndStayOnTheDevice() {
+        val btc = CoingeckoMarkets.parseMarkets(markets).first()
+        assertTrue(btc.image!!.startsWith("https://coin-images.coingecko.com/coins/images/1/small/bitcoin.png"))
+        assertNotNull(CoingeckoMarkets.parseTrending(trending, "usd", null).first().image)
+        assertNull(CoingeckoMarkets.logoUrl("https://evil.example/coins/images/1/small/x.png"))
+        assertNull(CoingeckoMarkets.logoUrl("http://coin-images.coingecko.com/coins/images/1/small/x.png"))
+        JvmSqliteDatabase(":memory:").use { db ->
+            var now = 1_800_000_000_000L
+            val app = PortfolioApplication(db) { now }
+            app.setMarketDataConsent(true)
+            app.refreshMarketFeeds({ url, _ -> if (url.contains("/coins/markets")) markets else trending })
+            val url =
+                app
+                    .marketOverview()
+                    .markets!!
+                    .items
+                    .first()
+                    .image!!
+            assertFails { app.saveLogo("https://evil.example/x.png", byteArrayOf(1)) }
+            app.saveLogo(url, byteArrayOf(1, 2, 3))
+            assertTrue(app.cachedLogo(url)!!.contentEquals(byteArrayOf(1, 2, 3)))
+            val backup = app.exportBackup("fixture-password".toCharArray())
+            JvmSqliteDatabase(":memory:").use { staging ->
+                app.restoreToStaging(staging, backup, "fixture-password".toCharArray())
+                assertNull(PortfolioApplication(staging) { now }.cachedLogo(url))
+            }
+            now += 31L * 86_400_000L
+            assertNull(app.cachedLogo(url))
+        }
+    }
 }

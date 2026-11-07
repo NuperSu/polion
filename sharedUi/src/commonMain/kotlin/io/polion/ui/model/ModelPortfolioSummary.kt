@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +58,8 @@ data class ModelPortfolioSummaryState(
     /** The total in the secondary currency from Settings, already formatted. */
     val secondaryBalance: String? = null,
     val showChart: Boolean = true,
+    /** Amounts are already replaced by the caller; this only selects the eye icon. */
+    val amountsHidden: Boolean = false,
 )
 
 enum class ModelChangeTone { POSITIVE, NEGATIVE, NEUTRAL }
@@ -76,6 +80,7 @@ fun ModelPortfolioSummary(
     onRangeSelected: (String) -> Unit,
     onExplain: (() -> Unit)? = null,
     onCurrency: (() -> Unit)? = null,
+    onToggleAmounts: (() -> Unit)? = null,
     currencyMenuContent: @Composable () -> Unit = {},
     colors: ModelSummaryColors =
         ModelSummaryColors(
@@ -132,6 +137,21 @@ fun ModelPortfolioSummary(
                             ).padding(bottom = 10.dp),
                 )
                 currencyMenuContent()
+            }
+            onToggleAmounts?.let { toggle ->
+                Canvas(
+                    Modifier
+                        .padding(bottom = 12.dp)
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .clickable(
+                            role = Role.Button,
+                            onClickLabel = if (state.amountsHidden) "Show amounts" else "Hide amounts",
+                            onClick = toggle,
+                        ).semantics { contentDescription = if (state.amountsHidden) "Show amounts" else "Hide amounts" }
+                        .testTag("balance-visibility")
+                        .padding(3.dp),
+                ) { drawEye(colors.muted, closed = state.amountsHidden) }
             }
         }
         state.secondaryBalance?.let {
@@ -248,5 +268,37 @@ fun ModelPortfolioSummary(
                 )
             }
         }
+    }
+}
+
+/** An open eye, or a closed one with lashes, so the button shows the current state at a glance. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEye(
+    tint: Color,
+    closed: Boolean,
+) {
+    val w = size.width
+    val h = size.height
+    val stroke = Stroke(width = w * 0.09f)
+    if (closed) {
+        val lid =
+            Path().apply {
+                moveTo(w * 0.06f, h * 0.42f)
+                quadraticTo(w * 0.5f, h * 0.86f, w * 0.94f, h * 0.42f)
+            }
+        drawPath(lid, tint, style = stroke)
+        listOf(0.22f, 0.5f, 0.78f).forEach { x ->
+            val y = if (x == 0.5f) h * 0.64f else h * 0.58f
+            drawLine(tint, Offset(w * x, y), Offset(w * x + (x - 0.5f) * w * 0.2f, y + h * 0.18f), strokeWidth = w * 0.08f)
+        }
+    } else {
+        val eye =
+            Path().apply {
+                moveTo(w * 0.06f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.06f, w * 0.94f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.94f, w * 0.06f, h * 0.5f)
+                close()
+            }
+        drawPath(eye, tint, style = stroke)
+        drawCircle(tint, w * 0.14f, Offset(w * 0.5f, h * 0.5f))
     }
 }

@@ -56,6 +56,7 @@ internal class SettingsActions(
     val onBiometric: (Boolean) -> Unit = {},
     /** Null removes the key. */
     val onCoingeckoKey: (String?) -> Unit = {},
+    val onLockDelay: (Long) -> Unit = {},
 )
 
 /** Device facts Settings shows but does not own. */
@@ -63,7 +64,15 @@ internal data class SettingsDevice(
     val defaultName: String = "This device",
     val biometric: BiometricUnlock = BiometricUnlock.UNSUPPORTED,
     val hasCoingeckoKey: Boolean = false,
+    val lockDelayMillis: Long = 0L,
 )
+
+private fun lockDelayLabel(millis: Long) =
+    when (millis) {
+        0L -> "Immediately"
+        3_600_000L -> "After 1 hour"
+        else -> "After ${millis / 60_000L} minute${if (millis == 60_000L) "" else "s"}"
+    }
 
 private val currencies = listOf("USD" to "US dollar (USD)", "EUR" to "Euro (EUR)", "GBP" to "British pound (GBP)")
 
@@ -266,6 +275,27 @@ internal fun ColumnScope.ProductSettings(
                 description = "Hides Polion behind a password. Use device encryption to protect the stored data.",
                 tag = "settings-lock",
             ) { if (it) actions.onDialog("lock") else actions.onRemoveLock() }
+            var delayMenu by remember { mutableStateOf(false) }
+            Box {
+                SettingsValueRow(
+                    "Lock after leaving Polion",
+                    lockDelayLabel(device.lockDelayMillis),
+                    enabled = hasLock,
+                    tag = "settings-lock-delay",
+                ) { delayMenu = true }
+                DropdownMenu(delayMenu, { delayMenu = false }) {
+                    io.polion.core.application.LOCK_DELAYS.forEach { millis ->
+                        DropdownMenuItem(
+                            text = { Text(lockDelayLabel(millis)) },
+                            onClick = {
+                                delayMenu = false
+                                actions.onLockDelay(millis)
+                            },
+                            modifier = Modifier.testTag("settings-lock-delay-$millis"),
+                        )
+                    }
+                }
+            }
             SettingsActionRow("Lock now", enabled = hasLock, tag = "settings-lock-now") { actions.onLockNow() }
             SettingsSwitchRow(
                 "Fingerprint Authentication",

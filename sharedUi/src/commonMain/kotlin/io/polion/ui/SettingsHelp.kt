@@ -55,8 +55,8 @@ internal val helpTopics =
                 "Polion has no account and no server; your data stays on this device.",
                 "The wallet provider (blockstream.info unless you set your own) learns the addresses you track and your " +
                     "IP address. Kraken receives Bitcoin price requests and your IP address. CoinGecko receives your display " +
-                    "currency and IP address when market lists or price history load. Wallet addresses go only to the " +
-                    "wallet provider.",
+                    "currency and IP address when market lists or price history load, and its image server sends coin " +
+                    "logos. Wallet addresses go only to the wallet provider.",
             ),
         ),
         HelpTopic(
@@ -72,6 +72,8 @@ internal val helpTopics =
             "Passcode lock",
             listOf(
                 "The lock hides Polion on this device but does not encrypt its data; use your device's encryption for that.",
+                "Settings › Security sets how long Polion may stay in the background before it locks: immediately, or " +
+                    "after 1, 5 or 15 minutes or an hour.",
                 "If you forget the password, you can erase this device's Polion data and restore a backup.",
             ),
         ),

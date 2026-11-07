@@ -296,7 +296,12 @@ data class GeneralPreferences(
     val zeroBasisRewards: Boolean = false,
     /** Null means the host's own device name. */
     val deviceName: String? = null,
+    /** Balances, quantities and other absolute amounts show as asterisks; percentages and charts stay visible. */
+    val hideAmounts: Boolean = false,
 )
+
+/** Privacy lock delays offered in Settings: immediately, 1, 5 and 15 minutes, and 1 hour. */
+val LOCK_DELAYS = listOf(0L, 60_000L, 300_000L, 900_000L, 3_600_000L)
 
 /** Fiat currencies with automatic Kraken prices. */
 val DISPLAY_CURRENCIES = listOf("USD", "EUR", "GBP")
@@ -1899,6 +1904,27 @@ class PortfolioApplication(
         )
     }
 
+    /** How long the app may stay in the background before the privacy lock applies; null means the host default. */
+    fun lockDelayMillis(): Long? = marketFeeds.deviceSetting("lock_delay")?.toLongOrNull()?.takeIf { it in LOCK_DELAYS }
+
+    /** A device setting: it is not part of backups, like the lock itself. */
+    fun setLockDelay(millis: Long) {
+        require(millis in LOCK_DELAYS) { "Unsupported lock delay" }
+        marketFeeds.putDeviceSetting("lock_delay", millis.toString())
+    }
+
+    /** A cached CoinGecko logo, or null when it was never fetched or is over 30 days old. */
+    fun cachedLogo(url: String): ByteArray? = marketFeeds.logo(url, now())
+
+    /** Logos are cached only for CoinGecko image URLs and only after market data consent. */
+    fun saveLogo(
+        url: String,
+        bytes: ByteArray,
+    ) {
+        require(marketDataConsent() && CoingeckoMarkets.logoUrl(url) == url)
+        marketFeeds.saveLogo(url, bytes, now())
+    }
+
     /** Bitcoin and any provider-mapped coin use the portfolio asset ID, so favorites and coin pages match holdings. */
     fun marketAssetKey(coinId: String): AssetId =
         if (coinId == "bitcoin") {
@@ -1990,6 +2016,7 @@ class PortfolioApplication(
             showPortfolioChart = setting("show_portfolio_chart") != "false",
             zeroBasisRewards = setting("zero_basis_rewards") == "true",
             deviceName = setting("device_name"),
+            hideAmounts = setting("hide_amounts") == "true",
         )
 
     fun setLandingPage(page: LandingPage) = putSetting("landing_page", page.name)
@@ -2007,6 +2034,8 @@ class PortfolioApplication(
         }
 
     fun setShowPortfolioChart(show: Boolean) = putSetting("show_portfolio_chart", show.toString())
+
+    fun setHideAmounts(hide: Boolean) = putSetting("hide_amounts", hide.toString())
 
     /**
      * Acquisitions recorded as rewards (mining, staking, forks, airdrops) count with zero cost basis instead of their
