@@ -146,6 +146,9 @@ interface PlatformActions {
 
     fun recoverBitcoinHistory(onResult: (String) -> Unit)
 
+    /** Refreshes only EVM addresses, for example right after one is connected, without waiting for Bitcoin. */
+    fun refreshEvm(onResult: (String) -> Unit) = refresh(onResult)
+
     val wifiOnlyRefreshSupported: Boolean get() = false
 
     fun refreshPreferences(): RefreshPreferences = RefreshPreferences(backgroundRefreshEnabled())

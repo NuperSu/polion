@@ -42,6 +42,7 @@ open class BitcoinRefreshService : Service() {
         val walletId = intent?.getStringExtra("wallet_id")
         val verifyOrder = intent?.getBooleanExtra("verify_order", false) == true
         val recoverHistory = intent?.getBooleanExtra("recover_history", false) == true
+        val evmOnly = intent?.getBooleanExtra("evm_only", false) == true
         val operation =
             when {
                 verifyOrder -> SyncOperation.ORDER
@@ -70,7 +71,7 @@ open class BitcoinRefreshService : Service() {
             RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail, operation)
             var lastNotification = 0L
             val status =
-                runRefresh(walletId, verifyOrder, recoverHistory) { detail ->
+                runRefresh(walletId, verifyOrder, recoverHistory, evmOnly) { detail ->
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastNotification >= 1000) {
                         SyncNotification.update(this, detail)
@@ -92,6 +93,7 @@ open class BitcoinRefreshService : Service() {
         walletId: String?,
         verifyOrder: Boolean,
         recoverHistory: Boolean,
+        evmOnly: Boolean,
         onProgress: (String) -> Unit,
     ): SyncStatus =
         RefreshWorker.performRefresh(
@@ -99,6 +101,7 @@ open class BitcoinRefreshService : Service() {
             walletId = walletId,
             verifyOrder = verifyOrder,
             recoverHistory = recoverHistory,
+            evmOnly = evmOnly,
             ensureActive = {
                 if (stopping) throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
             },

@@ -519,9 +519,12 @@ internal class DesktopHost(
 
     override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)
 
+    override fun refreshEvm(onResult: (String) -> Unit) = refresh(false, onResult, evmOnly = true)
+
     private fun refresh(
         recoverHistory: Boolean,
         onResult: (String) -> Unit,
+        evmOnly: Boolean = false,
     ) {
         runSync(
             SyncStatus(SyncPhase.SYNCING, if (recoverHistory) "Recovering full Bitcoin history…" else "Fetching public history…"),
@@ -529,7 +532,7 @@ internal class DesktopHost(
         ) { application ->
             runCatching {
                 // Each source refreshes only with its own consent; with neither, nothing is fetched.
-                val bitcoinOn = application.sourceConsent()
+                val bitcoinOn = application.sourceConsent() && !evmOnly
                 val evmOn = application.evmConsent() && application.evmTargets().isNotEmpty()
                 if (!bitcoinOn && !evmOn) return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                 // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
@@ -541,14 +544,15 @@ internal class DesktopHost(
                             syncStatus.value =
                                 SyncStatus(
                                     SyncPhase.SYNCING,
-                                    when (progress.phase) {
-                                        "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                                        "verify" -> "Checking chain consistency…"
-                                        "apply" -> "Applying verified history…"
-                                        else ->
-                                            "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
-                                                "${progress.pages} pages · ${progress.transactions} transactions"
-                                    },
+                                    "Bitcoin · " +
+                                        when (progress.phase) {
+                                            "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
+                                            "verify" -> "Checking chain consistency…"
+                                            "apply" -> "Applying verified history…"
+                                            else ->
+                                                "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
+                                                    "${progress.pages} pages · ${progress.transactions} transactions"
+                                        },
                                 )
                         }
                 }
@@ -558,6 +562,7 @@ internal class DesktopHost(
                         SourceRegistry(connectors),
                         SourceRefreshOptions(
                             recoverHistory = recoverHistory,
+                            onProgress = { syncStatus.value = SyncStatus(SyncPhase.SYNCING, "EVM · $it") },
                             withoutConsent =
                                 setOfNotNull(
                                     io.polion.core.bitcoin.BITCOIN_MAINNET

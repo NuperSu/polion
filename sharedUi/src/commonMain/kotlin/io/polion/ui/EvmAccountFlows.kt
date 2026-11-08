@@ -346,7 +346,7 @@ internal fun EvmConnectDialog(
         baseline = syncStatus
         hostReply = null
         requested = true
-        host.refresh { hostReply = it }
+        host.refreshEvm { hostReply = it }
     }
 
     fun submit(valid: String) {

@@ -61,7 +61,7 @@ class EvmConnector(
             val states = app.evmChainStates(address)
             if (states.isEmpty()) notes += "No activity found yet for ${address.take(10)}…"
             states.forEachIndexed { index, state ->
-                options.onProgress("Chain ${state.chainId} · ${index + 1}/${states.size}")
+                options.onProgress("${Alchemy.network(state.chainId)?.name ?: "Chain ${state.chainId}"} · ${index + 1}/${states.size}")
                 jobs +=
                     try {
                         requireNotNull(Alchemy.network(state.chainId)) { "This chain is not available from Alchemy" }

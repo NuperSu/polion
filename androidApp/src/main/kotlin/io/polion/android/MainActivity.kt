@@ -475,9 +475,12 @@ private class AndroidHost(
 
     override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)
 
+    override fun refreshEvm(onResult: (String) -> Unit) = refresh(false, onResult, evmOnly = true)
+
     private fun refresh(
         recoverHistory: Boolean,
         onResult: (String) -> Unit,
+        evmOnly: Boolean = false,
     ) {
         main.post {
             try {
@@ -489,7 +492,9 @@ private class AndroidHost(
                 syncStatus.value =
                     SyncStatus(SyncPhase.SYNCING, if (recoverHistory) "Starting full history recovery…" else "Starting background sync…")
                 activity.startForegroundService(
-                    Intent(activity, BitcoinRefreshService::class.java).putExtra("recover_history", recoverHistory),
+                    Intent(activity, BitcoinRefreshService::class.java)
+                        .putExtra("recover_history", recoverHistory)
+                        .putExtra("evm_only", evmOnly),
                 )
                 onResult("Sync continues when you switch apps. Progress appears in the notification.")
             } catch (_: Exception) {

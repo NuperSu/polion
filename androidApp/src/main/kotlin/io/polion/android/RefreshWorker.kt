@@ -63,6 +63,7 @@ class RefreshWorker(
             recoverHistory: Boolean = false,
             ensureActive: () -> Unit = {},
             onProgress: (String) -> Unit = {},
+            evmOnly: Boolean = false,
         ): SyncStatus {
             // The stage and exception class name the failing step without revealing addresses or provider payloads.
             var stage = "setup"
@@ -72,7 +73,7 @@ class RefreshWorker(
                 AndroidSqliteDatabase(file.path).use { db ->
                     val app = PortfolioApplication(db, System::currentTimeMillis)
                     // Each source needs its own consent. Wallet discovery and order verification are Bitcoin-only.
-                    val bitcoinOn = app.sourceConsent()
+                    val bitcoinOn = app.sourceConsent() && !evmOnly
                     val evmOn = app.evmConsent() && app.evmTargets().isNotEmpty()
                     if (!bitcoinOn && (!evmOn || walletId != null || verifyOrder)) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
@@ -132,7 +133,8 @@ class RefreshWorker(
                             connectors +=
                                 BitcoinConnector(transport, endpoint) { progress ->
                                     val detail =
-                                        when (progress.phase) {
+                                        "Bitcoin · " +
+                                            when (progress.phase) {
                                             "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
                                             "verify" -> "Checking chain consistency…"
                                             "apply" -> "Applying verified history…"
@@ -160,6 +162,10 @@ class RefreshWorker(
                                 SourceRegistry(connectors),
                                 SourceRefreshOptions(
                                     recoverHistory = recoverHistory,
+                                    onProgress = { detail ->
+                                        syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = "EVM · $detail")
+                                        onProgress("EVM · $detail")
+                                    },
                                     withoutConsent =
                                         setOfNotNull(
                                             io.polion.core.bitcoin.BITCOIN_MAINNET.takeIf { !app.sourceConsent() },
