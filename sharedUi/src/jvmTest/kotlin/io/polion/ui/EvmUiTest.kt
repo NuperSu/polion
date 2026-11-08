@@ -81,7 +81,6 @@ class EvmUiTest {
                     ) { onAllNodesWithText("Alchemy key: added on this device.").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("evm-chain-1").assertIsDisplayed()
                     assertTrue(onAllNodesWithTag("evm-chain-number").fetchSemanticsNodes().isEmpty())
-                    onNodeWithTag("evm-connect-consent").performClick()
                     onNodeWithTag("evm-connect-confirm").performClick()
                     waitUntil(timeoutMillis = 10_000) { app.evmTargets().isNotEmpty() }
                     val (_, saved) = app.evmTargets().single()

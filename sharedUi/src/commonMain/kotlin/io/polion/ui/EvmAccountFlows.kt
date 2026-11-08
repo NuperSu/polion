@@ -3,11 +3,9 @@ package io.polion.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
@@ -292,7 +290,8 @@ internal fun EvmConnectDialog(
     var address by rememberSaveable { mutableStateOf("") }
     var portfolio by rememberSaveable { mutableStateOf(initialPortfolio?.value.orEmpty()) }
     var owner by rememberSaveable { mutableStateOf("") }
-    var consent by rememberSaveable { mutableStateOf(false) }
+    // Connecting is consent: the dialog states what Alchemy receives.
+    val consent = true
     var selected by remember { mutableStateOf(DEFAULT_EVM_CHAIN_IDS.toSet()) }
     var keyPresent by remember { mutableStateOf<Boolean?>(null) }
     var keyDialog by remember { mutableStateOf(false) }
@@ -322,14 +321,12 @@ internal fun EvmConnectDialog(
             keyPresent != true -> "Add an Alchemy key first. Alchemy reads the address history."
             selected.isEmpty() -> "Choose at least one chain."
             owners.isNotEmpty() && ownerChoice == null -> "No owner in this portfolio can hold the address. Choose another portfolio."
-            !consent -> "Tick the consent box to let Alchemy read this address."
             else -> null
         }
 
     LaunchedEffect(Unit) {
-        val (hasKey, consented) = withContext(host.dispatcher) { (app.alchemyApiKey() != null) to app.evmConsent() }
+        val hasKey = withContext(host.dispatcher) { app.alchemyApiKey() != null }
         keyPresent = hasKey
-        consent = consented
     }
     LaunchedEffect(hostReply, refresh == null) {
         replyUnanswered = false
@@ -460,13 +457,11 @@ internal fun EvmConnectDialog(
         if (owners.isNotEmpty()) {
             TransactionChoice("Owner", owners.map { it.id.value to it.label }, ownerChoice?.value.orEmpty()) { owner = it }
         }
-        Row(
-            Modifier.toggleable(value = consent, enabled = editable, role = Role.Checkbox) { consent = it }.testTag("evm-connect-consent"),
-        ) {
-            Checkbox(checked = consent, onCheckedChange = null, enabled = editable)
-            Spacer(Modifier.width(4.dp))
-            Text("Allow Alchemy to receive this address and your IP address to read its history.", Modifier.weight(1f))
-        }
+        Text(
+            "Alchemy receives this address and your IP address to read its history.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (!requested) {
             blocker?.let { Text(it, modifier = Modifier.testTag("evm-connect-blocker")) }
         } else {

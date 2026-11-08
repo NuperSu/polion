@@ -63,7 +63,6 @@ class PhaseFourAccountsTest {
                         onNodeWithTag("connect-blocker").assertTextEquals("Enter an account or wallet name.")
                         onNodeWithTag("connect-name").performScrollTo().performTextInput("My Bitcoin account")
                         onNodeWithTag("connect-expression").performScrollTo().performTextInput("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
-                        onNodeWithTag("connect-consent").performScrollTo().performClick()
                         onNodeWithTag("connect-confirm").performScrollTo().assertIsEnabled()
                         val output = File("build/phase4-account-previews").apply { mkdirs() }
                         ImageIO.write(
@@ -183,7 +182,6 @@ class PhaseFourAccountsTest {
                             }
                         }
                     }
-                    onNodeWithTag("history-consent").performScrollTo().performClick()
                     var saved = emptyMap<String, List<Any?>>()
                     runOnIdle {
                         saved = registry.performSave()
@@ -242,7 +240,6 @@ class PhaseFourAccountsTest {
                     }
                     onNodeWithTag("connect-name").performScrollTo().performTextInput("Cold wallet")
                     onNodeWithTag("connect-expression").performScrollTo().performTextInput("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
-                    onNodeWithTag("connect-consent").performScrollTo().performClick()
                     onNodeWithTag("connect-confirm").performScrollTo().assertIsEnabled().performClick()
                     waitUntil(timeoutMillis = 10000) { host.discovery == 1 }
                     host.syncStatus.value =
