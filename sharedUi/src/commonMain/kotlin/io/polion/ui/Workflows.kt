@@ -1222,7 +1222,7 @@ private fun FormDialog(
     }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
 }
 
-@Composable private fun <T> Choice(
+@Composable internal fun <T> Choice(
     label: String,
     choices: List<Pair<T, String>>,
     selected: T,

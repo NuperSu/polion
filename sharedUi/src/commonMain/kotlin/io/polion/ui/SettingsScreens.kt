@@ -99,6 +99,7 @@ internal fun ColumnScope.ProductSettings(
     general: GeneralPreferences = GeneralPreferences(),
     device: SettingsDevice = SettingsDevice(),
     notifications: @Composable () -> Unit = {},
+    csvImports: @Composable () -> Unit = {},
     connections: @Composable () -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf("") }
@@ -339,7 +340,7 @@ internal fun ColumnScope.ProductSettings(
             SettingsActionRow("Restore From Backup", tag = "settings-restore") { actions.onDialog("restore") }
             SettingsActionRow("Full Transaction History", tag = "settings-history") { onAdvanced(Page.ACTIVITY) }
             SettingsActionRow("Export Data (CSV)", tag = "settings-export") { actions.onExportCsv() }
-            SettingsActionRow("CSV Import History", enabled = false)
+            SettingsActionRow("CSV Import History", tag = "settings-csv-history") { section = "csv" }
             if (data?.sampleData == true) {
                 var confirm by remember { mutableStateOf(false) }
                 SettingsActionRow("Remove example data", tag = "settings-remove-example") { confirm = true }
@@ -372,6 +373,10 @@ internal fun ColumnScope.ProductSettings(
             SettingsActionRow("Help", tag = "settings-help") { section = "help" }
             SettingsActionRow("Resume setup", tag = "settings-resume-setup") { actions.onSetup(false) }
             SettingsActionRow("Restart setup", tag = "settings-restart-setup") { actions.onSetup(true) }
+        }
+        "csv" -> {
+            SettingsSubHeader("CSV Import History") { section = "data" }
+            csvImports()
         }
         "help" -> {
             SettingsSubHeader("Help", back)

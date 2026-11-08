@@ -78,6 +78,7 @@ internal fun TransactionEntry(
     onManual: () -> Unit,
     onClose: () -> Unit,
     onWallet: () -> Unit,
+    onImport: () -> Unit,
     onSaved: () -> Unit,
     onAccountCreated: () -> Unit,
 ) {
@@ -226,12 +227,13 @@ internal fun TransactionEntry(
             saveLabel = "Review transaction",
             priceLabel = "Executed / evidence price ($quote); optional outside trades",
             feeLabel = "Fee amount (${ticker(feeAsset)})",
+            canImport = true,
         ),
         ModelTransactionDialogActions(
             { if (!saving) onClose() },
             onWallet,
             onManual,
-            {},
+            onImport,
             { selected = it },
             {
                 type = it.name

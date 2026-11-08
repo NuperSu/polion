@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-private fun AccountFlowDialog(
+internal fun AccountFlowDialog(
     title: String,
     busy: Boolean,
     close: () -> Unit,

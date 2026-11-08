@@ -234,6 +234,7 @@ private fun Product(
     var modelHistory by rememberSaveable { mutableStateOf(false) }
     val sourceFlowState = rememberSaveableStateHolder()
     var modelAdd by rememberSaveable { mutableStateOf(false) }
+    var csvImport by rememberSaveable { mutableStateOf(false) }
     var modelEditingId by rememberSaveable { mutableStateOf<String?>(null) }
     var modelEditingDraft by remember { mutableStateOf<io.polion.core.application.TransactionDraft?>(null) }
     LaunchedEffect(modelEditingId) {
@@ -577,6 +578,10 @@ private fun Product(
                 manualAsset = null
                 dialog = choice.workflow.productDialog().key
             },
+            onImportCsv = {
+                dialog = null
+                csvImport = true
+            },
             onDismiss = { dialog = null },
         )
     }
@@ -852,6 +857,7 @@ private fun Product(
                                 general = generalPreferences,
                                 device = SettingsDevice(host.defaultDeviceName, biometric, hasCoingeckoKey, lockDelay),
                                 notifications = { NotificationSettingsSection(app, host) },
+                                csvImports = { CsvImportHistorySection(app, host, onChanged = { revision++ }) },
                             ) {
                                 snapshot?.let { data ->
                                     AccountsWorkspace(
@@ -1665,6 +1671,10 @@ private fun Product(
                             modelAdd = false
                             modelConnect = true
                         },
+                        onImport = {
+                            modelAdd = false
+                            csvImport = true
+                        },
                         onSaved = {
                             modelAdd = false
                             modelDraftState.removeState(modelDraftScope)
@@ -1687,6 +1697,9 @@ private fun Product(
             }
             if (dialog == "utxo") {
                 UtxoReviewDialog(app, host) { dialog = null }
+            }
+            if (csvImport) {
+                CsvImportFlow(app, host, onClose = { csvImport = false }, onChanged = { revision++ })
             }
             if (dialog == "wallet" && snapshot != null) {
                 WalletDialog(
