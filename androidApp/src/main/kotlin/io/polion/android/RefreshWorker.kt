@@ -145,15 +145,15 @@ class RefreshWorker(
                                 }
                         }
                         if (evmOn) {
-                            val blockscout =
-                                BlockscoutTransport(
-                                    apiKey = { app.blockscoutApiKey() },
+                            val alchemy =
+                                AlchemyTransport(
+                                    apiKey = { app.alchemyApiKey() },
                                     beforeRequest = {
                                         ensureActive()
                                         check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
                                     },
                                 )
-                            connectors += EvmConnector(blockscout::get)
+                            connectors += EvmConnector(alchemy::post)
                         }
                         val outcomes =
                             app.refreshSources(

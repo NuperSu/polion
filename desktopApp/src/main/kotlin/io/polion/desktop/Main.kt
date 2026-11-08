@@ -552,7 +552,7 @@ internal class DesktopHost(
                                 )
                         }
                 }
-                if (evmOn) connectors += EvmConnector(blockscoutTransport(application)::get)
+                if (evmOn) connectors += EvmConnector(alchemyTransport(application)::post)
                 val outcomes =
                     application.refreshSources(
                         SourceRegistry(connectors),
@@ -606,10 +606,10 @@ internal class DesktopHost(
         }
     }
 
-    /** Blockscout requests for EVM history; a refresh stops at its next request once the app closes or EVM consent is withdrawn. */
-    private fun blockscoutTransport(application: PortfolioApplication): BlockscoutTransport =
-        BlockscoutTransport(
-            apiKey = { application.blockscoutApiKey() },
+    /** Alchemy requests for EVM history; a refresh stops at its next request once the app closes or EVM consent is withdrawn. */
+    private fun alchemyTransport(application: PortfolioApplication): AlchemyTransport =
+        AlchemyTransport(
+            apiKey = { application.alchemyApiKey() },
             beforeRequest = { check(!closing.get() && application.evmConsent()) { "EVM refresh was cancelled. Retry if needed." } },
         )
 
