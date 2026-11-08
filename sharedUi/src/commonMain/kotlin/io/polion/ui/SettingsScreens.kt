@@ -56,6 +56,8 @@ internal class SettingsActions(
     val onBiometric: (Boolean) -> Unit = {},
     /** Null removes the key. */
     val onCoingeckoKey: (String?) -> Unit = {},
+    /** Null removes the key. Returns the rejection message, or null when the key was saved or removed. */
+    val onBlockscoutKey: suspend (String?) -> String? = { null },
     val onLockDelay: (Long) -> Unit = {},
 )
 
@@ -65,6 +67,7 @@ internal data class SettingsDevice(
     val biometric: BiometricUnlock = BiometricUnlock.UNSUPPORTED,
     val hasCoingeckoKey: Boolean = false,
     val lockDelayMillis: Long = 0L,
+    val hasBlockscoutKey: Boolean = false,
 )
 
 private fun lockDelayLabel(millis: Long) =
@@ -257,6 +260,16 @@ internal fun ColumnScope.ProductSettings(
                         }
                     },
                 )
+            }
+            var editingBlockscout by remember { mutableStateOf(false) }
+            SettingsValueRow(
+                "Blockscout",
+                if (device.hasBlockscoutKey) "Set" else "Not set",
+                tag = "settings-blockscout-key",
+            ) { editingBlockscout = true }
+            SettingsNote(BLOCKSCOUT_KEY_HELP)
+            if (editingBlockscout) {
+                BlockscoutKeyDialog(device.hasBlockscoutKey, actions.onBlockscoutKey) { editingBlockscout = false }
             }
         }
         "security" -> {

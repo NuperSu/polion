@@ -53,6 +53,9 @@ fun ColumnScope.ModelPortfolioHoldings(
     onView: () -> Unit,
     viewMenuContent: @Composable () -> Unit = {},
     sortMenuContent: @Composable () -> Unit = {},
+    /** Unknown tokens and NFTs held but left out of values; the row opens their review. */
+    hiddenCount: Int = 0,
+    onHidden: () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -95,6 +98,21 @@ fun ColumnScope.ModelPortfolioHoldings(
                         .padding(horizontal = 13.dp, vertical = 9.dp),
             )
             sortMenuContent()
+        }
+    }
+    if (hiddenCount > 0) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(colors.surface)
+                .clickable(role = Role.Button, onClick = onHidden)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .testTag("hidden-assets"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("$hiddenCount hidden tokens and NFTs", color = colors.onSurface, modifier = Modifier.weight(1f))
+            Text("Review", color = colors.primary, fontWeight = FontWeight.SemiBold)
         }
     }
     if (state.holdings.isEmpty()) {

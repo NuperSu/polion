@@ -130,6 +130,14 @@ data class ModelCoinDetailState(
     /** Prices and times for the interactive chart; without it the plain [chartPoints] line is drawn. */
     val chart: ChartData? = null,
     val chartStyle: ChartStyle = ChartStyle.LINE,
+    /** The held coin on each chain, shown under the portfolio name when the coin is held on more than one chain. */
+    val chainRows: List<ModelChainRow> = emptyList(),
+)
+
+data class ModelChainRow(
+    val chain: String,
+    val quantity: String,
+    val value: String,
 )
 
 data class ModelCoinDetailActions(
@@ -201,6 +209,20 @@ fun ColumnScope.ModelCoinDetail(
         Text("  ${state.ticker}", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     }
     Text(state.portfolio, color = c.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+    if (state.chainRows.isNotEmpty()) {
+        Column(Modifier.fillMaxWidth().testTag("coin-chains"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("On each chain", color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            state.chainRows.forEach { row ->
+                Row(Modifier.fillMaxWidth().testTag("coin-chain-${row.chain}"), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text(row.chain, fontSize = 14.sp)
+                        Text(row.quantity, color = c.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                    Text(row.value, fontSize = 14.sp)
+                }
+            }
+        }
+    }
     if (state.breakdownExpanded) MetricRows(state.metrics)
     TextButton(onClick = {
         actions.onBreakdown(!state.breakdownExpanded)

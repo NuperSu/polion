@@ -220,7 +220,7 @@ fun ModelTransactionDialog(
                         )
                         MethodCard(
                             "Connect Wallet",
-                            "Track a public Bitcoin address or wallet",
+                            "Track a public Bitcoin address or wallet, or an EVM address",
                             state.canConnectWallet,
                             "choose-wallet",
                             actions.onWallet,

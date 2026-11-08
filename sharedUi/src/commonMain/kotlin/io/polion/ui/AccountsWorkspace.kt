@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import io.polion.core.application.AccountOverview
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
+import io.polion.core.evm.EVM_FAMILY
 import io.polion.core.model.PortfolioId
 import io.polion.core.ownership.TargetRole
 import io.polion.ui.model.ModelAccountRow
@@ -132,6 +133,7 @@ internal fun AccountsWorkspace(
                             account.id.value,
                             summary.sources.map { target ->
                                 val identity = target.identity.canonicalKey
+                                if (target.identity.networkId == EVM_FAMILY) return@map "EVM address · ${shortEvmAddress(identity)}"
                                 "Bitcoin ${if (target.role == TargetRole.WALLET) "wallet" else "address"} · ${if (identity.length > 44) {
                                     identity.take(
                                         22,
@@ -168,7 +170,18 @@ internal fun AccountsWorkspace(
                     Text("Last accepted: ${accepted.observedAt}\nAccepted provider: $endpoint")
                 }
                 if (detail.sources.isEmpty()) Text("Local manual account. No public provider queries are configured.")
-                SelectionContainer { Column { detail.sources.forEach { Text("${it.label}\n${it.identity.canonicalKey}") } } }
+                SelectionContainer {
+                    Column {
+                        detail.sources.filter { it.identity.networkId != EVM_FAMILY }.forEach {
+                            Text(
+                                "${it.label}\n${it.identity.canonicalKey}",
+                            )
+                        }
+                    }
+                }
+                detail.sources.filter { it.identity.networkId == EVM_FAMILY }.forEach {
+                    EvmAddressDetails(app, host, it.identity.canonicalKey, revision, onChanged)
+                }
                 if (detail.derivedAddresses > 0) Text("${detail.derivedAddresses} derived addresses · manage in account tools")
                 Text(if (archived) "Saved holdings (archived)" else "Holdings in this account")
                 if (detail.holdings.isEmpty()) Text("No recorded holdings")

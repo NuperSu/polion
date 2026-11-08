@@ -41,6 +41,7 @@ import io.polion.core.application.MarketPricePoint
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.ledger.ActivityStatus
+import io.polion.core.market.EvmPlatform
 import io.polion.core.market.PriceStatus
 import io.polion.core.model.AssetId
 import io.polion.core.model.PortfolioId
@@ -52,6 +53,7 @@ import io.polion.ui.model.ModelAlertEditor
 import io.polion.ui.model.ModelAlertEditorState
 import io.polion.ui.model.ModelAllocationBar
 import io.polion.ui.model.ModelAllocationSlice
+import io.polion.ui.model.ModelChainRow
 import io.polion.ui.model.ModelChangeTone
 import io.polion.ui.model.ModelCoinDetail
 import io.polion.ui.model.ModelCoinDetailActions
@@ -119,6 +121,8 @@ internal fun ModelWorkspace(
     onManual: (AssetValuation?) -> Unit,
     onConnectBitcoin: () -> Unit = onAdd,
     onAccountChanged: () -> Unit = {},
+    /** Reports a change to hidden or shown tokens; the message is shown to the user. */
+    onAssetChanged: (String) -> Unit = {},
     onAccountTool: (AccountTool) -> Unit = {},
     onTransaction: (EffectiveActivity) -> Unit = {},
     statusContent: @Composable () -> Unit = {},
@@ -130,6 +134,24 @@ internal fun ModelWorkspace(
 ) {
     val transactionScope = rememberCoroutineScope()
     val amountsHidden = LocalAmountsHidden.current
+    // Asset IDs that make up the selected coin, and chain names for its per-chain breakdown.
+    var coinAssets by remember(app) { mutableStateOf<Set<AssetId>>(emptySet()) }
+    var chainChoices by remember(app) { mutableStateOf<List<EvmPlatform>>(emptyList()) }
+    var hiddenReview by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(app, dataRevision, selectedAsset?.asset) {
+        val coin = selectedAsset?.asset
+        if (coin == null) {
+            coinAssets = emptySet()
+            return@LaunchedEffect
+        }
+        val (ids, choices) =
+            withContext(host.dispatcher) {
+                val coinId = app.marketCoinId(coin)
+                (coinId?.let { app.assetsForCoin(it) }?.toSet() ?: emptySet()) to app.evmChainChoices()
+            }
+        coinAssets = ids
+        chainChoices = choices
+    }
     var marketOverview by remember(app) { mutableStateOf<MarketOverview?>(null) }
     LaunchedEffect(app, dataRevision, snapshot?.currency) {
         marketOverview =
@@ -518,6 +540,11 @@ internal fun ModelWorkspace(
                 ).mapNotNull { (key, url) -> key?.let { it to url } }.toMap()
             }
         }
+    if (hiddenReview) {
+        snapshot?.let { data ->
+            HiddenAssetsDialog(app, host, data, onAssetChanged) { hiddenReview = false }
+        }
+    }
     CompositionLocalProvider(LocalCoinLogos provides logoLoader.source(logoUrls)) {
         ModelShell(
             ModelShellState(
@@ -567,6 +594,16 @@ internal fun ModelWorkspace(
                 val asset = selectedAsset
                 val symbol = asset.metadata?.symbol ?: asset.asset.value
                 val tracked = data.valuations.any { it.asset == asset.asset }
+                // Held assets of this coin on other chains, such as ETH on Base next to ETH on Ethereum.
+                val coinHoldings =
+                    if (tracked) {
+                        data.valuations.filter {
+                            it.asset == asset.asset || it.asset in coinAssets
+                        }
+                    } else {
+                        emptyList()
+                    }
+                val coinSummary = if (coinHoldings.size > 1) coinTotals(coinHoldings, data.currency, chainChoices) else null
                 val listing =
                     marketOverview?.let { overview -> overview.markets?.items?.find { overview.assetKeys[it.coinId] == asset.asset } }
                 // Without two saved observations, the CoinGecko 7-day sparkline draws the chart.
@@ -616,6 +653,8 @@ internal fun ModelWorkspace(
                 val quantity =
                     if (!tracked) {
                         "—"
+                    } else if (coinSummary != null) {
+                        coinSummary.quantity?.let { "${formatUnits(it.coefficient, it.scale)} $symbol" } ?: "—"
                     } else {
                         asset.metadata?.let { "${formatUnits(asset.amount.atomicUnits, it.decimals)} ${it.symbol}" }
                             ?: "${asset.amount.atomicUnits} atomic units"
@@ -635,7 +674,13 @@ internal fun ModelWorkspace(
                                 ModelMetric("Owned", quantity.hiddenIf(amountsHidden)),
                                 ModelMetric(
                                     "Market Value",
-                                    (if (tracked) asset.value?.let { money(it, data.currency) } ?: "—" else "—").hiddenIf(amountsHidden),
+                                    (
+                                        when {
+                                            !tracked -> "—"
+                                            coinSummary != null -> coinSummary.value?.let { money(it, data.currency) } ?: "—"
+                                            else -> asset.value?.let { money(it, data.currency) } ?: "—"
+                                        }
+                                    ).hiddenIf(amountsHidden),
                                 ),
                             ) +
                                 if (tracked) {
@@ -658,6 +703,12 @@ internal fun ModelWorkspace(
                                         ModelMetric("Realized Gain", "—"),
                                     )
                                 },
+                        chainRows =
+                            coinSummary
+                                ?.chains
+                                ?.map {
+                                    ModelChainRow(it.chain, it.quantity.hiddenIf(amountsHidden), it.value.hiddenIf(amountsHidden))
+                                }.orEmpty(),
                         breakdownExpanded = expanded,
                         tab = ModelCoinTab.valueOf(tab),
                         price =
@@ -1170,6 +1221,8 @@ internal fun ModelWorkspace(
                             onHolding = { coin -> onAsset(data.valuations.find { it.asset.value == coin.id }) },
                             onSort = { sortMenu = true },
                             onView = { filterMenu = true },
+                            hiddenCount = data.hiddenAssets.size,
+                            onHidden = { hiddenReview = true },
                             viewMenuContent = {
                                 DropdownMenu(filterMenu, { filterMenu = false }) {
                                     DropdownMenuItem(text = { Text("Hide empty: ${assetPreference.hideEmpty}") }, onClick = {
