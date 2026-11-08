@@ -12,6 +12,8 @@ data class EvmChainState(
     /** Null when balances matched the provider at the last check; otherwise a short description of the differences. */
     val balanceDifference: String?,
     val error: String?,
+    /** What the provider cannot see on this chain, such as unlisted sent transactions; null when nothing is known missing. */
+    val coverage: String? = null,
 )
 
 /** The chains each tracked EVM address is used on, and their sync state. Part of encrypted backups. */
@@ -21,17 +23,24 @@ class EvmChainRepository(
     init {
         db.execute(
             "CREATE TABLE IF NOT EXISTS evm_chains (address TEXT NOT NULL, chain_id INTEGER NOT NULL, head TEXT, last_success INTEGER, " +
-                "balance_difference TEXT, error TEXT, PRIMARY KEY(address, chain_id))",
+                "balance_difference TEXT, error TEXT, coverage TEXT, PRIMARY KEY(address, chain_id))",
         )
+        if (db
+                .query(
+                    "PRAGMA table_info(evm_chains)",
+                ).none { it[1] == "coverage" }
+        ) {
+            db.execute("ALTER TABLE evm_chains ADD COLUMN coverage TEXT")
+        }
     }
 
     fun states(address: String? = null): List<EvmChainState> =
         db
             .query(
-                "SELECT address, chain_id, head, last_success, balance_difference, error FROM evm_chains " +
+                "SELECT address, chain_id, head, last_success, balance_difference, error, coverage FROM evm_chains " +
                     (if (address == null) "" else "WHERE address=? ") + "ORDER BY address, chain_id",
                 listOfNotNull(address),
-            ).map { EvmChainState(it[0]!!, it[1]!!.toLong(), it[2], it[3]?.toLong(), it[4], it[5]) }
+            ).map { EvmChainState(it[0]!!, it[1]!!.toLong(), it[2], it[3]?.toLong(), it[4], it[5], it[6]) }
 
     /** Adds chains to track for [address]; existing state is kept. */
     fun addChains(
@@ -54,6 +63,15 @@ class EvmChainRepository(
         chainId: Long,
         message: String,
     ) = db.execute("UPDATE evm_chains SET error=? WHERE address=? AND chain_id=?", listOf(message.take(300), address, chainId.toString()))
+
+    fun recordCoverage(
+        address: String,
+        chainId: Long,
+        coverage: String?,
+    ) = db.execute(
+        "UPDATE evm_chains SET coverage=? WHERE address=? AND chain_id=?",
+        listOf(coverage?.take(500), address, chainId.toString()),
+    )
 
     fun recordBalanceDifference(
         address: String,

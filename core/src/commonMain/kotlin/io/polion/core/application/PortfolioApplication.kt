@@ -36,6 +36,8 @@ import io.polion.core.connectors.HistoryFetcher
 import io.polion.core.connectors.HistoryPage
 import io.polion.core.connectors.HistoryRequest
 import io.polion.core.connectors.RegisteredConnector
+import io.polion.core.evm.EvmAssets
+import io.polion.core.evm.EvmTokenStandard
 import io.polion.core.holdings.BalanceCoverage
 import io.polion.core.holdings.BalanceView
 import io.polion.core.holdings.HoldingsRepository
@@ -1491,22 +1493,26 @@ class PortfolioApplication(
         return jobs.map { orchestrator.status(it)?.state ?: JobState.FAILED }
     }
 
-    /** The Blockscout API key; a device setting, not part of backups. */
-    fun blockscoutApiKey(): String? = marketFeeds.deviceSetting("blockscout_api_key")
+    /** The Alchemy API key for EVM history; a device setting, not part of backups. */
+    fun alchemyApiKey(): String? = marketFeeds.deviceSetting("alchemy_api_key")
 
-    fun setBlockscoutApiKey(key: String?) {
+    fun setAlchemyApiKey(key: String?) {
         val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
-        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{10,100}"))) { "That does not look like a Blockscout API key" }
-        marketFeeds.putDeviceSetting("blockscout_api_key", trimmed)
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{16,100}"))) { "That does not look like an Alchemy API key" }
+        marketFeeds.putDeviceSetting("alchemy_api_key", trimmed)
     }
 
-    /** EVM chains CoinGecko knows, by name, from the cached catalog; empty until [refreshEvmCatalog] has run. */
-    fun evmChainChoices(): List<io.polion.core.market.EvmPlatform> =
-        marketFeeds.catalog()?.second?.platforms.orEmpty().sortedBy {
-            it.name.lowercase()
-        }
+    /** EVM chains whose history Alchemy serves, named from CoinGecko's catalog when it is cached. */
+    fun evmChainChoices(): List<io.polion.core.market.EvmPlatform> {
+        val catalog = marketFeeds.catalog()?.second
+        return io.polion.core.evm.Alchemy.NETWORKS
+            .map { network ->
+                catalog?.platform(network.chainId) ?: io.polion.core.market
+                    .EvmPlatform(network.slug, network.chainId, network.name, null)
+            }.sortedBy { it.name.lowercase() }
+    }
 
-    /** EVM addresses are sent to Blockscout only after this consent. */
+    /** EVM addresses are sent to Alchemy only after this consent. */
     fun evmConsent(): Boolean = setting("evm_consent") == "true"
 
     fun setEvmConsent(accepted: Boolean) = putSetting("evm_consent", accepted.toString())
@@ -1529,6 +1535,12 @@ class PortfolioApplication(
             .evmAddress(address),
         chains,
     )
+
+    fun recordEvmCoverage(
+        address: String,
+        chainId: Long,
+        coverage: String?,
+    ) = evmChains.recordCoverage(address, chainId, coverage)
 
     fun recordEvmChainError(
         address: String,
@@ -1578,7 +1590,7 @@ class PortfolioApplication(
                             "eip155:$chainId",
                             group.hash,
                             "eip155:$chainId",
-                            "blockscout",
+                            "alchemy",
                             Instant.fromEpochMilliseconds(retrieved).toString(),
                             payload,
                             io.polion.core.evm.EvmDecoder.VERSION,
@@ -1605,7 +1617,7 @@ class PortfolioApplication(
                             "eip155:$chainId",
                             "withdrawal-${withdrawal.index}",
                             "eip155:$chainId",
-                            "blockscout",
+                            "alchemy",
                             Instant.fromEpochMilliseconds(retrieved).toString(),
                             payload,
                             io.polion.core.evm.EvmDecoder.VERSION,
@@ -1648,32 +1660,21 @@ class PortfolioApplication(
         native: io.polion.core.model.ExactInteger,
         tokens: List<io.polion.core.evm.EvmTokenBalance>,
     ): String? {
-        heldAssets()
+        val hidden = hiddenAmong(heldAssets())
         val ledger =
             holdings
                 .current(BalanceCoverage.UNKNOWN, now())
                 .quantities
-                .filterKeys {
-                    it.account == account &&
-                        io.polion.core.evm.EvmAssets
-                            .chainOf(it.asset) == chainId
-                }.mapKeys { it.key.asset }
+                .filterKeys { it.account == account && EvmAssets.chainOf(it.asset) == chainId }
+                .mapKeys { it.key.asset }
         val provider =
-            mapOf(
-                io.polion.core.evm.EvmAssets
-                    .native(chainId) to native,
-            ) +
-                tokens.associate { token ->
+            mapOf(EvmAssets.native(chainId) to native) +
+                tokens.filter { it.standard != EvmTokenStandard.NATIVE }.associate { token ->
                     val asset =
-                        if (token.standard == io.polion.core.evm.EvmTokenStandard.ERC20) {
-                            io.polion.core.evm.EvmAssets
-                                .token(chainId, token.contract)
+                        if (token.standard == EvmTokenStandard.ERC20) {
+                            EvmAssets.token(chainId, token.contract)
                         } else {
-                            io.polion.core.evm.EvmAssets.nft(
-                                chainId,
-                                token.contract,
-                                token.tokenId ?: io.polion.core.model.ExactInteger.ZERO,
-                            )
+                            EvmAssets.nft(chainId, token.contract, token.tokenId ?: io.polion.core.model.ExactInteger.ZERO)
                         }
                     asset to token.value
                 }
@@ -1683,15 +1684,10 @@ class PortfolioApplication(
                 .mapNotNull { asset ->
                     val mine = ledger[asset] ?: io.polion.core.model.ExactInteger.ZERO
                     val theirs = provider[asset] ?: io.polion.core.model.ExactInteger.ZERO
-                    // The provider's token list omits zero balances and NFTs it cannot index; only listed tokens and the native coin count.
-                    if (mine == theirs ||
-                        asset !in provider &&
-                        !asset.value.endsWith("/native")
-                    ) {
-                        null
-                    } else {
-                        "${asset.value}: ledger $mine, provider $theirs"
-                    }
+                    // Only the native coin and listed tokens count; hidden assets (mostly spam, whose events need not add up)
+                    // are not compared.
+                    val compared = asset !in hidden && (asset in provider || asset.value.endsWith("/native"))
+                    if (mine == theirs || !compared) null else "${asset.value}: ledger $mine, provider $theirs"
                 }.joinToString("; ")
                 .ifEmpty { null }
         evmChains.recordBalanceDifference(address, chainId, differences)

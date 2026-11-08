@@ -17,7 +17,7 @@ import io.polion.core.model.EventId
 import io.polion.core.model.ExactInteger
 import io.polion.core.model.SourceRecordId
 
-/** Everything one transaction did to the tracked address on one chain, gathered from the three Blockscout lists. */
+/** Everything one transaction did to the tracked address on one chain, gathered from the provider. */
 data class EvmTransactionGroup(
     val chainId: Long,
     val hash: String,
@@ -46,7 +46,7 @@ data class EvmTransactionGroup(
         }
 }
 
-/** An asset an activity uses, with what Blockscout reported about it. */
+/** An asset an activity uses, with what the provider reported about it. */
 data class EvmAssetInfo(
     val definition: AssetDefinition,
     val metadata: AssetMetadata,
