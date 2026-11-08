@@ -184,6 +184,29 @@ interface PlatformActions {
         onResult("Market data is unavailable on this host.")
     }
 
+    /**
+     * Runs a notification check in the background now (see [io.polion.core.application.PortfolioApplication.runNotificationCheck])
+     * and shows what it finds as system notifications; [onResult] receives how many were shown, on the main thread.
+     */
+    fun checkNotifications(onResult: (Int) -> Unit = {}) {
+        onResult(0)
+    }
+
+    /**
+     * Alerts or notification settings changed. Hosts schedule background checks while
+     * [io.polion.core.application.PortfolioApplication.notificationsActive] is true, cancel them otherwise, and on Android
+     * ask for notification permission. Main thread.
+     */
+    fun notificationSettingsChanged() {}
+
+    /** Loads Kraken's order book for [coinId] in the display currency in the background; [onResult] runs on the main thread. */
+    fun fetchOrderBook(
+        coinId: String,
+        onResult: (OrderBookResult) -> Unit,
+    ) {
+        onResult(OrderBookResult.Failed("Order books are not available here."))
+    }
+
     /** How long the app may be left before it locks. Main thread; hosts keep the saved value in memory. */
     val lockDelayMillis: Long get() = 0L
 
@@ -234,4 +257,51 @@ fun marketRefreshMessage(result: io.polion.core.application.MarketRefreshResult)
         io.polion.core.market.CoingeckoProviderFailure.ACCESS_DENIED -> "CoinGecko rejected the API key. Check it in Settings › API Keys."
         io.polion.core.market.CoingeckoProviderFailure.OFFLINE -> "Could not reach CoinGecko. Showing saved market data."
         else -> "CoinGecko returned data Polion could not read. Showing saved market data."
+    }
+
+/** The outcome of one order book request. */
+sealed interface OrderBookResult {
+    data class Loaded(
+        val book: io.polion.core.market.OrderBookSnapshot,
+    ) : OrderBookResult
+
+    /** Kraken has no market for this coin in the display currency. */
+    data class NoMarket(
+        val message: String,
+    ) : OrderBookResult
+
+    data class Failed(
+        val message: String,
+    ) : OrderBookResult
+}
+
+/**
+ * Resolves the Kraken market for [coinId] and loads its book, with the wording hosts show. Blocking; hosts call it on a
+ * worker with their own database connection.
+ */
+fun loadOrderBook(
+    app: io.polion.core.application.PortfolioApplication,
+    coinId: String,
+    coingecko: (url: String, apiKey: String?) -> String,
+    kraken: (url: String) -> String,
+): OrderBookResult =
+    try {
+        val pair = app.krakenPair(coinId, coingecko)
+        if (pair == null) {
+            OrderBookResult.NoMarket("Kraken has no ${app.currency().value} market for this coin.")
+        } else {
+            OrderBookResult.Loaded(app.orderBook(pair, kraken))
+        }
+    } catch (failure: io.polion.core.market.CoingeckoProviderException) {
+        OrderBookResult.Failed(
+            if (failure.failure == io.polion.core.market.CoingeckoProviderFailure.RATE_LIMITED) {
+                "CoinGecko's request limit was reached. Try again in a minute."
+            } else {
+                "Could not find this coin's Kraken market."
+            },
+        )
+    } catch (_: io.polion.core.market.KrakenRateLimitedException) {
+        OrderBookResult.Failed("Kraken's request limit was reached. Try again shortly.")
+    } catch (_: Exception) {
+        OrderBookResult.Failed("Could not load Kraken's order book.")
     }

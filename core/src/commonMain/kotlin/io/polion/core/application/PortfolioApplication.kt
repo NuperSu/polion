@@ -54,11 +54,14 @@ import io.polion.core.market.CoingeckoPrices
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
+import io.polion.core.market.KrakenOrderBook
+import io.polion.core.market.KrakenPair
 import io.polion.core.market.KrakenPrices
 import io.polion.core.market.KrakenRateLimitedException
 import io.polion.core.market.MarketFeed
 import io.polion.core.market.MarketFeedRepository
 import io.polion.core.market.MarketRepository
+import io.polion.core.market.OrderBookSnapshot
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
 import io.polion.core.market.PriceResult
@@ -325,6 +328,12 @@ val LOCK_DELAYS = listOf(0L, 60_000L, 300_000L, 900_000L, 3_600_000L)
 
 /** A 24-hour move at least this large, in percent, is a significant price change. */
 const val SIGNIFICANT_MOVE_PERCENT = 10.0
+
+/** A notification check refreshes a market list older than this. */
+const val NOTIFICATION_MARKET_AGE_MILLIS = 10 * 60_000L
+
+/** Order book levels shown per side. */
+const val ORDER_BOOK_DEPTH = 10
 
 /** Delivered notifications kept in the history. */
 const val NOTIFICATION_HISTORY_SIZE = 500
@@ -2429,6 +2438,68 @@ class PortfolioApplication(
             if (delivered.isNotEmpty()) notifications.trim(NOTIFICATION_HISTORY_SIZE)
             delivered
         }
+    }
+
+    /**
+     * One scheduled or on-demand notification check: refreshes the market list when it is older than
+     * [marketMaxAgeMillis] (a failed refresh keeps the cached list), then evaluates. Does nothing while no alert or
+     * notification setting is on.
+     */
+    fun runNotificationCheck(
+        marketTransport: (url: String, apiKey: String?) -> String,
+        localDay: String,
+        localHour: Int,
+        marketMaxAgeMillis: Long = NOTIFICATION_MARKET_AGE_MILLIS,
+    ): List<NotificationMessage> {
+        if (!notificationsActive()) return emptyList()
+        if (marketDataConsent()) runCatching { refreshMarketFeeds(marketTransport, marketMaxAgeMillis) }
+        return evaluateNotifications(localDay, localHour)
+    }
+
+    /** Order book requests send the pair and the device's IP address to Kraken; a separate consent from prices. */
+    fun orderBookConsent(): Boolean = setting("order_book_consent") == "true"
+
+    fun setOrderBookConsent(accepted: Boolean) = putSetting("order_book_consent", accepted.toString())
+
+    /**
+     * The Kraken market for [coinId] in the display currency. Bitcoin is Kraken's XBT; other coins use the Kraken markets
+     * CoinGecko lists for that coin ID, cached on this device for a week, so a coin is never matched by ticker alone.
+     * Null when Kraken has no market in the display currency.
+     */
+    fun krakenPair(
+        coinId: String,
+        coingecko: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ): KrakenPair? {
+        val currency = currency().value
+        if (coinId == "bitcoin") return KrakenPair("XBT", currency)
+        val key = "kraken_pairs:$coinId"
+        val cached =
+            marketFeeds.deviceSetting(key)?.split(';')?.takeIf { it.size == 2 && now() - (it[0].toLongOrNull() ?: 0L) < 7 * 86_400_000L }
+        val pairs =
+            if (cached != null) {
+                cached[1].split(',').filter { it.contains('/') }.map { KrakenPair(it.substringBefore('/'), it.substringAfter('/')) }
+            } else {
+                require(marketDataConsent()) { "Market data consent required" }
+                marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > now() }?.let {
+                    throw CoingeckoProviderException(CoingeckoProviderFailure.RATE_LIMITED)
+                }
+                KrakenOrderBook.parseKrakenPairs(coingecko(KrakenOrderBook.tickersUrl(baseUrl, coinId), coingeckoApiKey()), coinId).also {
+                    marketFeeds.putDeviceSetting(key, "${now()};" + it.joinToString(",") { pair -> pair.display })
+                }
+            }
+        return KrakenOrderBook.pairFor(pairs, currency)
+    }
+
+    /** A fresh Kraken order book snapshot for [pair]; [kraken] performs the request. Needs order book consent. */
+    fun orderBook(
+        pair: KrakenPair,
+        kraken: (url: String) -> String,
+        depth: Int = ORDER_BOOK_DEPTH,
+    ): OrderBookSnapshot {
+        require(orderBookConsent()) { "Order book consent required" }
+        val payload = kraken(KrakenOrderBook.depthUrl(pair, depth))
+        return KrakenOrderBook.parseDepth(payload, pair, now(), depth)
     }
 
     /** The day's portfolio summary; amounts are left out while amounts are hidden, as notifications show on the lock screen. */
