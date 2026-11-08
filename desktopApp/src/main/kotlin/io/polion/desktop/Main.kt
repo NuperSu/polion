@@ -556,7 +556,16 @@ internal class DesktopHost(
                 val outcomes =
                     application.refreshSources(
                         SourceRegistry(connectors),
-                        SourceRefreshOptions(recoverHistory = recoverHistory),
+                        SourceRefreshOptions(
+                            recoverHistory = recoverHistory,
+                            withoutConsent =
+                                setOfNotNull(
+                                    io.polion.core.bitcoin.BITCOIN_MAINNET
+                                        .takeIf { !application.sourceConsent() },
+                                    io.polion.core.evm.EVM_FAMILY
+                                        .takeIf { !application.evmConsent() },
+                                ),
+                        ),
                     )
                 val states = outcomes.flatMap { it.jobs }
                 val discoveryNotes = outcomes.flatMap { it.notes }

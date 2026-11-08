@@ -1432,7 +1432,7 @@ class PortfolioApplication(
         registry: SourceRegistry,
         options: SourceRefreshOptions = SourceRefreshOptions(),
     ): List<SourceRefreshOutcome> {
-        val missing = trackedNetworks().filter { registry.forNetwork(it) == null }
+        val missing = trackedNetworks().filter { registry.forNetwork(it) == null && it !in options.withoutConsent }
         return registry.connectors.map { it.refresh(this, options) } +
             missing.map { SourceRefreshOutcome("none", emptyList(), listOf("No connector is available for ${it.value}.")) }
     }

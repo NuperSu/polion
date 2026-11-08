@@ -158,7 +158,14 @@ class RefreshWorker(
                         val outcomes =
                             app.refreshSources(
                                 SourceRegistry(connectors),
-                                SourceRefreshOptions(recoverHistory = recoverHistory),
+                                SourceRefreshOptions(
+                                    recoverHistory = recoverHistory,
+                                    withoutConsent =
+                                        setOfNotNull(
+                                            io.polion.core.bitcoin.BITCOIN_MAINNET.takeIf { !app.sourceConsent() },
+                                            io.polion.core.evm.EVM_FAMILY.takeIf { !app.evmConsent() },
+                                        ),
+                                ),
                             )
                         val states = outcomes.flatMap { it.jobs }
                         val sourceNotes = outcomes.flatMap { it.notes }.joinToString(" ").ifEmpty { null }

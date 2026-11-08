@@ -24,6 +24,8 @@ data class SourceRefreshOptions(
     /** Start history again from the provider instead of continuing from saved history. */
     val recoverHistory: Boolean = false,
     val onProgress: (String) -> Unit = {},
+    /** Tracked networks whose provider the user has not allowed; they are skipped without a "no connector" note. */
+    val withoutConsent: Set<NetworkId> = emptySet(),
 )
 
 data class SourceRefreshOutcome(
