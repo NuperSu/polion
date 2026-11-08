@@ -53,7 +53,9 @@ jobs:
           :androidApp:lintDebug
           :androidApp:assembleDebug
           :androidApp:assembleDebugAndroidTest
+          :androidApp:assembleRelease
           :desktopApp:packageUberJarForCurrentOS
+          :desktopApp:createDistributable
 
       - name: Upload test reports on failure
         if: failure()
