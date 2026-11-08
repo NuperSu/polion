@@ -25,13 +25,16 @@ kotlin {
     sourceSets.named("jvmTest") { kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin")) }
     sourceSets.jvmMain.dependencies {
         implementation("org.xerial:sqlite-jdbc:3.49.1.0")
-        implementation("org.bouncycastle:bcprov-jdk18on:1.84")
+        // libsecp256k1 (Bitcoin Core's curve library) for bitcoin-kmp, with natives for Linux, macOS and Windows.
+        implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.24.0")
     }
     sourceSets.androidMain.dependencies {
-        implementation("org.bouncycastle:bcprov-jdk18on:1.84")
+        implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.24.0")
     }
     sourceSets.commonMain.dependencies {
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+        // ACINQ's Bitcoin library (used by Phoenix): BIP32 derivation, addresses and descriptor checksums.
+        implementation("fr.acinq.bitcoin:bitcoin-kmp:0.32.0")
     }
     sourceSets.commonTest.dependencies {
         implementation(kotlin("test"))
