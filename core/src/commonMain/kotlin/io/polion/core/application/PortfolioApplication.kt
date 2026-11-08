@@ -45,6 +45,7 @@ import io.polion.core.holdings.HoldingsRepository
 import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityKind
 import io.polion.core.ledger.ActivityRepository
+import io.polion.core.ledger.ActivityStatus
 import io.polion.core.market.AssetDefinition
 import io.polion.core.market.AssetMetadata
 import io.polion.core.market.CoingeckoHistoricalResult
@@ -357,6 +358,7 @@ class PortfolioApplication(
     private val notifications =
         io.polion.core.alerts
             .NotificationRepository(db)
+    private val csvImports = CsvImportRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
     private val bitcoinGraph =
         io.polion.core.bitcoin
@@ -3188,9 +3190,26 @@ class PortfolioApplication(
         editing: Boolean = false,
     ) {
         ensureDefaultAssets()
+        val prepared = prepareTransaction(draft, editing)
+        db.transaction { writeTransaction(draft, prepared) }
+        invalidate()
+    }
+
+    /**
+     * Validates [draft] against the current accounts and asset precision. A new entry needs an unused ID; [restoring]
+     * also accepts an ID whose latest revision is a reversed manual entry, which an import brings back.
+     */
+    private fun prepareTransaction(
+        draft: TransactionDraft,
+        editing: Boolean,
+        restoring: Boolean = false,
+    ): PreparedTransaction {
         val previous = activities.history(draft.id).lastOrNull()
-        require(if (editing) previous?.manual == true else previous == null) { "Entry identity already exists or cannot be edited" }
-        require(previous == null || previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
+        val restorable = restoring && previous?.manual == true && previous.status == io.polion.core.ledger.ActivityStatus.REVERSED
+        require(restorable || if (editing) previous?.manual == true else previous == null) {
+            "Entry identity already exists or cannot be edited"
+        }
+        require(restorable || previous == null || previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
             "Only active manual entries can be edited"
         }
         require(
@@ -3218,28 +3237,233 @@ class PortfolioApplication(
         }
         val assets = listOfNotNull(draft.asset, draft.quote, draft.feeAsset).distinct()
         val precision = assets.associateWith { requireNotNull(market.metadataAt(it, draft.atMillis)) { "Unknown asset" }.decimals }
-        val prepared = TransactionDrafts.prepare(draft, precision)
-        db.transaction {
-            activities.saveInTransaction(prepared.activity)
-            treatments.saveInTransaction(draft.id, prepared.treatments)
-            overlays.saveOverlayInTransaction(
-                ActivityOverlay(
-                    draft.id,
-                    label =
-                        overlays
-                            .overlay(
-                                draft.id,
-                            )?.second
-                            ?.label,
-                    note = draft.notes,
-                ),
-            )
-            db.execute(
-                "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
-                listOf("transaction_draft:${draft.id.value}", draft.encode()),
-            )
+        return TransactionDrafts.prepare(draft, precision)
+    }
+
+    /** Writes a prepared entry; callers hold the database transaction. */
+    private fun writeTransaction(
+        draft: TransactionDraft,
+        prepared: PreparedTransaction,
+    ) {
+        activities.saveInTransaction(prepared.activity)
+        treatments.saveInTransaction(draft.id, prepared.treatments)
+        overlays.saveOverlayInTransaction(ActivityOverlay(draft.id, label = overlays.overlay(draft.id)?.second?.label, note = draft.notes))
+        db.execute(
+            "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
+            listOf("transaction_draft:${draft.id.value}", draft.encode()),
+        )
+    }
+
+    /**
+     * Reads a CSV file and checks every row without saving anything. Each row becomes a manual entry in
+     * [CsvImportOptions.account] with an ID derived from the account and the row (or its reference), so a row imported
+     * before is recognised in any later file. Identical rows in one file are kept as separate entries.
+     */
+    fun previewCsvImport(
+        fileName: String,
+        text: String,
+        options: CsvImportOptions,
+        mapping: CsvMapping? = null,
+    ): CsvPreview {
+        ensureDefaultAssets()
+        val table = CsvImport.read(text)
+        require(table.isNotEmpty()) { "The file is empty" }
+        val header = table.first()
+        val columns = mapping ?: CsvImport.detect(header)
+        require(columns.missing.isEmpty()) { "Choose columns for: " + columns.missing.joinToString { it.header } }
+        require(columns.columns.values.all { it in header.indices }) { "A chosen column is not in the file" }
+        val accounts = scopedAccounts(ownership.load(), null)
+        require(options.account in accounts) { "Select an active account" }
+        val known = market.assetIds().associateWith { market.metadataAt(it, Long.MAX_VALUE) }
+        val unresolved = mutableSetOf<String>()
+
+        fun asset(text: String): AssetId? {
+            val key = text.trim()
+            options.assets[key]?.let { return it }
+            val matches =
+                known.filter { (id, metadata) -> id.value.equals(key, true) || metadata?.symbol?.equals(key, true) == true }.keys
+            return matches.singleOrNull().also { if (it == null) unresolved += key }
         }
+        val occurrences = mutableMapOf<String, Int>()
+        val rows =
+            table.drop(1).mapIndexed { index, cells ->
+                val line = index + 2
+
+                fun cell(field: CsvField) =
+                    columns.columns[field]
+                        ?.let { cells.getOrNull(it) }
+                        ?.trim()
+                        .orEmpty()
+                try {
+                    val (type, incoming) = requireNotNull(CsvImport.type(cell(CsvField.TYPE))) { "Unknown type \"${cell(CsvField.TYPE)}\"" }
+                    val assetText = cell(CsvField.ASSET)
+                    val assetId = requireNotNull(asset(assetText)) { "Choose which asset \"$assetText\" is" }
+                    val quote =
+                        cell(CsvField.CURRENCY).takeIf { it.isNotEmpty() }?.let {
+                            requireNotNull(asset(it)) { "Choose which asset \"$it\" is" }
+                        } ?: options.currency
+                    val fee = cell(CsvField.FEE).takeIf { it.isNotEmpty() }?.let(CsvImport::number)?.takeIf { it.coefficient.sign > 0 }
+                    val feeAsset =
+                        fee?.let {
+                            cell(CsvField.FEE_CURRENCY).takeIf { it.isNotEmpty() }?.let { text ->
+                                requireNotNull(asset(text)) { "Choose which asset \"$text\" is" }
+                            } ?: if (options.feeDefault == CsvFeeDefault.CURRENCY) quote else assetId
+                        }
+                    val draft =
+                        TransactionDraft(
+                            ActivityId("pending"),
+                            type,
+                            assetId,
+                            options.account,
+                            CsvImport.number(cell(CsvField.QUANTITY)),
+                            CsvImport.date(cell(CsvField.DATE), options.localToMillis),
+                            quote,
+                            cell(CsvField.PRICE).takeIf { it.isNotEmpty() }?.let(CsvImport::number),
+                            incomingExternal = incoming,
+                            feeAsset = feeAsset,
+                            feeQuantity = fee,
+                            notes = cell(CsvField.NOTES).take(4000),
+                        )
+                    val reference = cell(CsvField.REFERENCE)
+                    val identity =
+                        if (reference.isNotEmpty()) {
+                            "ref|$reference"
+                        } else {
+                            val content = draft.copy(notes = "").encode()
+                            val n = occurrences.getOrElse(content) { 0 } + 1
+                            occurrences[content] = n
+                            "row|$content|$n"
+                        }
+                    val id = ActivityId("csv-" + sha256("${options.account.value}|$identity").take(32))
+                    val identified = draft.copy(id = id)
+                    val previous = activities.history(id).lastOrNull()
+                    when {
+                        previous == null -> {
+                            prepareTransaction(identified, editing = false)
+                            CsvRowResult(line, CsvRowStatus.NEW, identified)
+                        }
+                        previous.status == io.polion.core.ledger.ActivityStatus.REVERSED -> {
+                            prepareTransaction(identified, editing = false, restoring = true)
+                            CsvRowResult(line, CsvRowStatus.RESTORE, identified)
+                        }
+                        else -> CsvRowResult(line, CsvRowStatus.ALREADY_IMPORTED, identified, "Imported before")
+                    }
+                } catch (failure: IllegalArgumentException) {
+                    CsvRowResult(line, CsvRowStatus.INVALID, null, failure.message ?: "This row is not valid")
+                }
+            }
+        val duplicateIds =
+            rows
+                .mapNotNull { it.draft?.id }
+                .groupingBy { it }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
+        val checked =
+            rows.map {
+                if (it.draft?.id in duplicateIds && it.status != CsvRowStatus.INVALID) {
+                    it.copy(status = CsvRowStatus.INVALID, draft = null, message = "Another row has the same reference")
+                } else {
+                    it
+                }
+            }
+        val hash = CsvImportRepository.hash(text)
+        return CsvPreview(
+            fileName,
+            hash,
+            header,
+            columns,
+            checked,
+            unresolved,
+            csvImports.receipts().filter { it.fileHash == hash && it.reversedAtMillis == null },
+        )
+    }
+
+    /**
+     * Saves every NEW and RESTORE row of [preview] in one transaction with its receipt; if any row fails, nothing is
+     * saved. Rows are checked again inside the transaction, so a row saved meanwhile is skipped rather than duplicated.
+     */
+    fun importCsv(preview: CsvPreview): CsvImportReceipt {
+        require(preview.importable > 0) { "There are no new rows to import" }
+        val account = preview.rows.firstNotNullOf { it.draft?.account }
+        // Validation reads accounts and precision outside the write transaction; the ID check is repeated inside it.
+        val prepared =
+            preview.rows
+                .filter { it.status == CsvRowStatus.NEW || it.status == CsvRowStatus.RESTORE }
+                .filter { row ->
+                    activities
+                        .history(row.draft!!.id)
+                        .lastOrNull()
+                        ?.status
+                        .let { it == null || it == ActivityStatus.REVERSED }
+                }.associate { it.draft!!.id to prepareTransaction(it.draft!!, editing = false, restoring = true) }
+        val receipt =
+            db.transaction {
+                val outcomes =
+                    preview.rows.map { row ->
+                        val draft = row.draft
+                        if (draft == null || row.status !in setOf(CsvRowStatus.NEW, CsvRowStatus.RESTORE)) {
+                            CsvReceiptRow(row.line, row.status, draft?.id, row.message)
+                        } else {
+                            val previous = activities.history(draft.id).lastOrNull()
+                            if (draft.id !in prepared || previous != null && previous.status != ActivityStatus.REVERSED) {
+                                CsvReceiptRow(row.line, CsvRowStatus.ALREADY_IMPORTED, draft.id, "Imported before")
+                            } else {
+                                writeTransaction(draft, prepared.getValue(draft.id))
+                                CsvReceiptRow(row.line, if (previous == null) CsvRowStatus.NEW else CsvRowStatus.RESTORE, draft.id, null)
+                            }
+                        }
+                    }
+                val saved =
+                    CsvImportReceipt(
+                        "import-${now()}-${kotlin.random.Random.nextLong().toULong().toString(16)}",
+                        preview.fileName.take(200),
+                        preview.fileHash,
+                        now(),
+                        account,
+                        outcomes.size,
+                        outcomes.count { it.status == CsvRowStatus.NEW || it.status == CsvRowStatus.RESTORE },
+                        outcomes.count { it.status == CsvRowStatus.ALREADY_IMPORTED },
+                        outcomes.count { it.status == CsvRowStatus.INVALID },
+                        null,
+                    )
+                csvImports.save(saved, outcomes)
+                saved
+            }
         invalidate()
+        return receipt
+    }
+
+    fun csvImportReceipts(): List<CsvImportReceipt> = csvImports.receipts()
+
+    fun csvImportRows(id: String): List<CsvReceiptRow> = csvImports.rows(id)
+
+    /**
+     * Undoes an import: every entry it saved that is still active becomes reversed, in one transaction. Entries edited
+     * since are reversed too. Importing the same rows again brings them back. Returns how many entries were reversed.
+     */
+    fun reverseCsvImport(id: String): Int {
+        val reversed =
+            db.transaction {
+                val receipt = requireNotNull(csvImports.receipts().firstOrNull { it.id == id }) { "Unknown import" }
+                require(receipt.reversedAtMillis == null) { "This import was already undone" }
+                var count = 0
+                csvImports
+                    .rows(id)
+                    .filter { it.status == CsvRowStatus.NEW || it.status == CsvRowStatus.RESTORE }
+                    .mapNotNull { it.activity }
+                    .forEach { activity ->
+                        val previous = activities.history(activity).lastOrNull()
+                        if (previous != null && previous.manual && previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
+                            activities.saveInTransaction(previous.copy(status = io.polion.core.ledger.ActivityStatus.REVERSED))
+                            count++
+                        }
+                    }
+                csvImports.markReversed(id, now())
+                count
+            }
+        invalidate()
+        return reversed
     }
 
     /** Effective evidence intersecting the requested scope; callers paginate after computing summary metrics. */

@@ -119,6 +119,9 @@ class MarketRepository(
         db.execute("INSERT OR IGNORE INTO market_metadata VALUES (?, ?, ?, ?, ?)", values)
     }
 
+    /** Every registered asset ID, in ID order. */
+    fun assetIds(): List<AssetId> = db.query("SELECT id FROM market_assets ORDER BY id").map { AssetId(it.single()!!) }
+
     fun asset(id: AssetId): AssetDefinition? =
         db.query("SELECT kind, network, reference, token_id FROM market_assets WHERE id=?", listOf(id.value)).singleOrNull()?.let {
             AssetDefinition(
