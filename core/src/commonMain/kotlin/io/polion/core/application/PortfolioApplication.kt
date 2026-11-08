@@ -1500,6 +1500,12 @@ class PortfolioApplication(
         marketFeeds.putDeviceSetting("blockscout_api_key", trimmed)
     }
 
+    /** EVM chains CoinGecko knows, by name, from the cached catalog; empty until [refreshEvmCatalog] has run. */
+    fun evmChainChoices(): List<io.polion.core.market.EvmPlatform> =
+        marketFeeds.catalog()?.second?.platforms.orEmpty().sortedBy {
+            it.name.lowercase()
+        }
+
     /** EVM addresses are sent to Blockscout only after this consent. */
     fun evmConsent(): Boolean = setting("evm_consent") == "true"
 

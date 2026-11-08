@@ -218,6 +218,14 @@ interface PlatformActions {
         onResult(OrderBookResult.Failed("Order books are not available here."))
     }
 
+    /**
+     * Loads CoinGecko's chain and token catalog in the background when it is missing or older than a week, then links held
+     * EVM assets to coins. [onResult] receives null on success or a message, on the main thread. Needs market data consent.
+     */
+    fun refreshEvmCatalog(onResult: (String?) -> Unit) {
+        onResult("EVM chains are not available here.")
+    }
+
     /** How long the app may be left before it locks. Main thread; hosts keep the saved value in memory. */
     val lockDelayMillis: Long get() = 0L
 
