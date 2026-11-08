@@ -3434,6 +3434,12 @@ class PortfolioApplication(
         return receipt
     }
 
+    /** Assets a CSV row can name, with their current symbol and name, for choosing what unresolved text means. */
+    fun importAssets(): List<Pair<AssetId, AssetMetadata>> {
+        ensureDefaultAssets()
+        return market.assetIds().mapNotNull { id -> market.metadataAt(id, Long.MAX_VALUE)?.let { id to it } }
+    }
+
     fun csvImportReceipts(): List<CsvImportReceipt> = csvImports.receipts()
 
     fun csvImportRows(id: String): List<CsvReceiptRow> = csvImports.rows(id)
