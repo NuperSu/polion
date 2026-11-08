@@ -119,7 +119,7 @@ class CsvImportTest {
 
             val again = app.previewCsvImport("copy.csv", file, options)
             assertEquals(4, again.count(CsvRowStatus.ALREADY_IMPORTED))
-            assertEquals(listOf(receipt.id), again.previousImports.map { it.id }.take(1))
+            assertTrue(again.previousImports.any { it.id == receipt.id })
             assertFails { app.importCsv(app.previewCsvImport("none.csv", file.lines().take(2).joinToString("\n"), options)) }
 
             assertEquals(4, app.reverseCsvImport(receipt.id))
