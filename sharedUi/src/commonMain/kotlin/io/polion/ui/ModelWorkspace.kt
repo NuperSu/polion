@@ -647,7 +647,7 @@ internal fun ModelWorkspace(
                                     listOf(
                                         ModelMetric("24h Change", percentChange(listing.change24h)),
                                         ModelMetric("7d Change", percentChange(listing.change7d)),
-                                        ModelMetric("Market Cap", listing.marketCap?.let { money(it, data.currency) } ?: "—"),
+                                        ModelMetric("Market Cap", listing.marketCap?.let { compactMoney(it, data.currency) } ?: "—"),
                                         ModelMetric("Market Cap Rank", listing.rank?.let { "#$it" } ?: "—"),
                                     )
                                 } else {

@@ -2591,6 +2591,43 @@ internal fun formatUnits(
         }
     }
 
+/** Large market figures such as market cap, rounded to three significant digits with a T, B or M suffix. */
+internal fun compactMoney(
+    value: ExactDecimal,
+    currency: AssetId,
+): String {
+    val amount = value.toString().toDouble()
+    val (divisor, suffix) =
+        listOf(1e12 to "T", 1e9 to "B", 1e6 to "M").firstOrNull { kotlin.math.abs(amount) >= it.first } ?: return money(value, currency)
+    val scaled = amount / divisor
+    val digits =
+        if (kotlin.math.abs(scaled) >= 100) {
+            0
+        } else if (kotlin.math.abs(scaled) >= 10) {
+            1
+        } else {
+            2
+        }
+    val factor = listOf(1.0, 10.0, 100.0)[digits]
+    val rounded = kotlin.math.round(scaled * factor) / factor
+    val text =
+        if (digits ==
+            0
+        ) {
+            rounded.toLong().toString()
+        } else {
+            rounded.toString().let { it + "0".repeat(maxOf(0, digits - it.substringAfter('.').length)) }
+        }
+    val prefix =
+        when (currency.value) {
+            "USD" -> "$"
+            "EUR" -> "€"
+            "GBP" -> "£"
+            else -> ""
+        }
+    return if (prefix.isEmpty()) "$text$suffix ${currency.value}" else "$prefix$text$suffix"
+}
+
 internal fun money(
     value: ExactDecimal,
     currency: AssetId,
