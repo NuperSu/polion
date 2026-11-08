@@ -71,3 +71,6 @@ internal expect fun localToEpochMillis(stamp: io.polion.core.application.LocalSt
 
 /** The device's time zone name, for example "Europe/Berlin". */
 internal expect fun localZoneName(): String
+
+/** Local time of day with seconds, for example "14:03:27". */
+internal expect fun clockTime(millis: Long): String

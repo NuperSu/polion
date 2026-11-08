@@ -34,3 +34,9 @@ internal actual fun localZoneName(): String =
     java.time.ZoneId
         .systemDefault()
         .id
+
+internal actual fun clockTime(millis: Long): String =
+    java.time.format.DateTimeFormatter
+        .ofPattern("HH:mm:ss")
+        .withZone(java.time.ZoneId.systemDefault())
+        .format(java.time.Instant.ofEpochMilli(millis))

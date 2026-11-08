@@ -82,8 +82,7 @@ private suspend fun awaitOrderBook(
     }
 
 /** Line above the book: the venue, the pair and the local time the app received it. */
-internal fun orderBookSource(book: OrderBookSnapshot): String =
-    "${book.venue} · ${book.pair} · updated ${chartTime(book.observedAtMillis, 0L)}"
+internal fun orderBookSource(book: OrderBookSnapshot): String = "${book.venue} · ${book.pair} · updated ${clockTime(book.observedAtMillis)}"
 
 /** Bid and ask levels side by side, matched by index; the shorter side is padded with empty cells. */
 internal fun orderBookRows(book: OrderBookSnapshot?): List<ModelOrderRow> {
@@ -100,7 +99,7 @@ internal fun orderBookRows(book: OrderBookSnapshot?): List<ModelOrderRow> {
     }
 }
 
-/** The exact value without trailing zeros in its fraction, keeping one fraction digit: "90000.10", "90000.1", "2.0". */
+/** The exact value without trailing zeros in its fraction, keeping one fraction digit: "90000.10" shows as "90000.1", "2.000" as "2.0". */
 internal fun exactText(value: ExactDecimal): String {
     val text = value.toString()
     if (!text.contains('.')) return text
