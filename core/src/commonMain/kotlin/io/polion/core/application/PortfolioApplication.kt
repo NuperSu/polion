@@ -1536,6 +1536,12 @@ class PortfolioApplication(
         chains,
     )
 
+    /** Whether [address] should be checked for chains it has started to use: never checked yet, or not for a week. */
+    fun evmDiscoveryDue(address: String): Boolean =
+        setting("evm_discovered:$address")?.toLongOrNull()?.let { now() - it >= 7 * 86_400_000L } ?: true
+
+    fun recordEvmDiscovery(address: String) = putSetting("evm_discovered:$address", now().toString())
+
     fun recordEvmCoverage(
         address: String,
         chainId: Long,

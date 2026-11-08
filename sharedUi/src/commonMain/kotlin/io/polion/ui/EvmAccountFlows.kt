@@ -226,6 +226,10 @@ internal fun EvmChainPicker(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     Text("Chains", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "Polion also adds the chains this address has used, on the first refresh and then weekly.",
+        style = MaterialTheme.typography.bodySmall,
+    )
     if (choices.isNotEmpty()) {
         OutlinedTextField(
             query,

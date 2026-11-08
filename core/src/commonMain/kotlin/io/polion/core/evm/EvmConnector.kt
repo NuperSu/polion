@@ -25,7 +25,8 @@ val EVM_MANIFEST =
 /**
  * Refreshes every tracked EVM address through Alchemy.
  *
- * - **Discovery:** balances and newest transfers per group of five networks find the chains an address has used.
+ * - **Discovery:** balances and newest transfers per group of five networks find the chains an address has used, on the
+ *   first refresh and then weekly; chains the user chose are kept.
  * - **Skip check per chain:** the newest transfer (plus the newest contract-made transfer where listed) and the count of
  *   transactions the address has sent form the head. Nothing else is read while it is unchanged.
  * - **Full read:** every transfer page, then receipts for transactions the address sent, which give their fee
@@ -52,7 +53,11 @@ class EvmConnector(
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
         targets.forEach { (account, address) ->
-            if (app.evmChainStates(address).isEmpty() || options.recoverHistory) app.addEvmChains(address, discover(address))
+            // Chains the address has started to use are added on the first refresh and then weekly; chosen chains stay.
+            if (options.recoverHistory || app.evmDiscoveryDue(address)) {
+                app.addEvmChains(address, discover(address))
+                app.recordEvmDiscovery(address)
+            }
             val states = app.evmChainStates(address)
             if (states.isEmpty()) notes += "No activity found yet for ${address.take(10)}…"
             states.forEachIndexed { index, state ->
