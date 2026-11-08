@@ -35,6 +35,8 @@ kotlin {
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
         // ACINQ's Bitcoin library (used by Phoenix): BIP32 derivation, addresses and descriptor checksums.
         implementation("fr.acinq.bitcoin:bitcoin-kmp:0.32.0")
+        // Keccak-256 for EIP-55 address checksums.
+        implementation("org.kotlincrypto.hash:sha3:0.8.0")
     }
     sourceSets.commonTest.dependencies {
         implementation(kotlin("test"))

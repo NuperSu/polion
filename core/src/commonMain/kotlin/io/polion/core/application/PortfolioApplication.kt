@@ -273,6 +273,8 @@ data class PortfolioSnapshot(
     /** The same balances valued in the secondary currency from Settings; null when none is chosen or it equals [currency]. */
     val secondaryCurrency: AssetId? = null,
     val secondaryValuations: List<AssetValuation> = emptyList(),
+    /** Held assets that are hidden: unknown tokens and NFTs until the user shows them. Not in [valuations] or totals. */
+    val hiddenAssets: List<AssetValuation> = emptyList(),
 )
 
 /** Wallet discovery refused an address because another account already tracks it. The message is safe to show. */
@@ -356,6 +358,9 @@ class PortfolioApplication(
         io.polion.core.alerts
             .NotificationRepository(db)
     private val csvImports = CsvImportRepository(db)
+    private val assetLinks =
+        io.polion.core.market
+            .AssetLinkRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
     private val bitcoinGraph =
         io.polion.core.bitcoin
@@ -463,7 +468,172 @@ class PortfolioApplication(
             },
             secondary,
             secondary?.let { valuations(balance, it, at, pricePolicy(current = true)) }.orEmpty(),
+            valuations(balance, currency, at, pricePolicy(current = true), hidden = true),
         )
+    }
+
+    /**
+     * Assets hidden from values and lists. An EVM token without a CoinGecko coin, and every NFT, starts hidden, because
+     * unknown tokens are often spam; the user's choice to show or hide an asset always wins.
+     */
+    fun hiddenAssets(): Set<AssetId> = hiddenAmong(heldAssets())
+
+    /** Assets with a recorded balance in any account, from up-to-date holdings. */
+    private fun heldAssets(): Set<AssetId> {
+        if (!holdingsCurrent) {
+            holdings.refresh(ledger().activities.map { it.activity })
+            holdingsCurrent = true
+        }
+        return holdings
+            .current(BalanceCoverage.UNKNOWN, now())
+            .quantities
+            .filterValues { it.sign != 0 }
+            .keys
+            .map { it.asset }
+            .toSet()
+    }
+
+    private fun hiddenAmong(assets: Set<AssetId>): Set<AssetId> {
+        if (assets.none { it.value.startsWith("eip155:") }) return emptySet()
+        val links = assetLinks.links()
+        val choices = assetLinks.choices()
+        return assets
+            .filter { asset ->
+                choices[asset]?.not() ?: (
+                    asset.value.startsWith("eip155:") &&
+                        (asset.value.contains("/nft:") || (!asset.value.endsWith("/native") && asset !in links))
+                )
+            }.toSet()
+    }
+
+    fun setAssetShown(
+        asset: AssetId,
+        shown: Boolean,
+    ) = assetLinks.setShown(asset, shown)
+
+    /** Every portfolio asset that is the CoinGecko coin [coinId], for example ETH on each EVM chain. */
+    fun assetsForCoin(coinId: String): List<AssetId> =
+        (if (coinId == "bitcoin") listOf(BITCOIN_ASSET) else emptyList()) +
+            assetLinks.assetsOf(coinId) +
+            listOfNotNull(market.resolveProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId))
+
+    /**
+     * Refreshes the CoinGecko chain and contract catalog when it is older than a week (two keyless requests), then links
+     * held EVM assets to their coins. Needs market data consent.
+     */
+    fun refreshEvmCatalog(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ) {
+        require(marketDataConsent()) { "Market data consent required" }
+        val cached = marketFeeds.catalog()
+        if (cached == null || now() - cached.first > 7 * 86_400_000L) {
+            val key = coingeckoApiKey()
+            val platforms =
+                io.polion.core.market.CoingeckoCatalog.parsePlatforms(
+                    transport(
+                        baseUrl + io.polion.core.market.CoingeckoCatalog.PLATFORMS_PATH,
+                        key,
+                    ),
+                )
+            require(platforms.isNotEmpty()) { "CoinGecko returned no chains" }
+            val contracts =
+                io.polion.core.market.CoingeckoCatalog.parseContracts(
+                    transport(baseUrl + io.polion.core.market.CoingeckoCatalog.COINS_PATH, key),
+                    platforms,
+                )
+            marketFeeds.saveCatalog(
+                io.polion.core.market
+                    .CoingeckoCatalog(platforms, contracts),
+                now(),
+            )
+        }
+        linkEvmAssets()
+    }
+
+    /**
+     * Current CoinGecko prices for held coins linked to EVM assets, in the display and secondary currencies, from one
+     * keyless request per 50 coins. Each price is saved for every asset linked to that coin, so ETH on Base and on
+     * Ethereum get the same observation. Needs market data consent. Returns how many prices were saved.
+     */
+    fun refreshLinkedCoinPrices(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        val held = heldAssets()
+        val hidden = hiddenAmong(held)
+        val links = assetLinks.links().filterKeys { it in held && it !in hidden }
+        if (links.isEmpty()) return 0
+        val currencies = listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct()
+        val observed = now()
+        val prices = mutableListOf<PriceObservation>()
+        links.values.distinct().sorted().chunked(50).forEach { batch ->
+            val url =
+                "$baseUrl/simple/price?ids=${batch.joinToString(",")}&vs_currencies=" +
+                    currencies.joinToString(",") { it.value.lowercase() } + "&include_last_updated_at=true"
+            val document = Json.parseToJsonElement(transport(url, coingeckoApiKey())).jsonObject
+            batch.forEach { coin ->
+                val entry = document[coin] as? kotlinx.serialization.json.JsonObject ?: return@forEach
+                val validAt =
+                    (entry["last_updated_at"] as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.content
+                        ?.toLongOrNull()
+                        ?.times(1000)
+                        ?.takeIf { it in 1..observed } ?: observed
+                currencies.forEach { quote ->
+                    val number =
+                        (entry[quote.value.lowercase()] as? kotlinx.serialization.json.JsonPrimitive)
+                            ?.takeIf { !it.isString }
+                            ?.content
+                    val value =
+                        number?.let { runCatching { CoingeckoPrices.parseJsonNumber(it) }.getOrNull() }?.takeIf {
+                            it.coefficient.sign >
+                                0
+                        }
+                    if (value != null) {
+                        links.filterValues { it == coin }.keys.forEach { asset ->
+                            prices +=
+                                PriceObservation(
+                                    "coingecko:${asset.value}:${quote.value}:$validAt",
+                                    io.polion.core.model
+                                        .Price(asset, quote, value),
+                                    ProviderId(CoingeckoPrices.PROVIDER_ID),
+                                    validAt,
+                                    observed,
+                                )
+                        }
+                    }
+                }
+            }
+        }
+        market.recordChangedProviderPrices(prices)
+        return prices.size
+    }
+
+    /** Links registered EVM native and token assets to CoinGecko coins from the cached catalog. Links never change once set. */
+    fun linkEvmAssets(): Int {
+        val catalog = marketFeeds.catalog()?.second ?: return 0
+        val linked = assetLinks.links()
+        var count = 0
+        db.transaction {
+            market.assetIds().filter { it.value.startsWith("eip155:") && it !in linked }.forEach { asset ->
+                val chain =
+                    io.polion.core.evm.EvmAssets
+                        .chainOf(asset) ?: return@forEach
+                val coin =
+                    when {
+                        asset.value.endsWith("/native") -> catalog.nativeCoin(chain)
+                        asset.value.contains("/erc20:") -> catalog.tokenCoin(chain, asset.value.substringAfter("/erc20:"))
+                        else -> null
+                    }
+                if (coin != null) {
+                    assetLinks.link(asset, coin)
+                    count++
+                }
+            }
+        }
+        return count
     }
 
     /** Match the current activity's raw source IDs; manual records have no inferred network. */
@@ -2385,7 +2555,7 @@ class PortfolioApplication(
 
     /** The CoinGecko coin ID for a portfolio or market asset, or null when it has none. */
     fun marketCoinId(asset: AssetId): String? =
-        when {
+        assetLinks.coinOf(asset) ?: when {
             asset == BITCOIN_ASSET -> "bitcoin"
             asset.value.startsWith("coingecko:") -> asset.value.removePrefix("coingecko:")
             else ->
@@ -2755,8 +2925,17 @@ class PortfolioApplication(
         // Series callers pass prices and metadata resolved in bulk; the results are the same as the per-asset queries.
         priceAt: ((AssetId) -> PriceResult?)? = null,
         metadataAt: ((AssetId) -> AssetMetadata?)? = null,
-    ): List<AssetValuation> =
-        balance.quantities.entries
+        // Hidden assets (unknown tokens, NFTs) stay in the ledger but out of values and totals unless asked for.
+        hidden: Boolean = false,
+    ): List<AssetValuation> {
+        val hiddenSet =
+            hiddenAmong(
+                balance.quantities.keys
+                    .map { it.asset }
+                    .toSet(),
+            )
+        return balance.quantities.entries
+            .filter { (it.key.asset in hiddenSet) == hidden }
             .groupBy { it.key.asset }
             .map { (asset, rows) ->
                 val units = rows.fold(io.polion.core.model.ExactInteger.ZERO) { sum, row -> sum + row.value }
@@ -2793,6 +2972,7 @@ class PortfolioApplication(
                     result?.observation,
                 )
             }.sortedBy { it.asset.value }
+    }
 
     fun accountOverview(portfolio: PortfolioId? = null): List<AccountOverview> {
         ensureDefaultAssets()
