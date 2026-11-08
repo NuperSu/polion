@@ -7,6 +7,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import io.polion.core.ApplicationInfo
+import io.polion.core.alerts.NotificationMessage
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
@@ -14,6 +15,7 @@ import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.model.TrackingTargetId
 import io.polion.core.storage.JvmSqliteDatabase
 import io.polion.ui.MARKET_SCHEDULED_AGE_MILLIS
+import io.polion.ui.OrderBookResult
 import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
@@ -22,6 +24,7 @@ import io.polion.ui.SyncStatus
 import io.polion.ui.UnlockResult
 import io.polion.ui.WALLET_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.cooldownDelayMillis
+import io.polion.ui.loadOrderBook
 import io.polion.ui.marketRefreshMessage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -31,7 +34,11 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
+import java.time.LocalDate
+import java.time.LocalTime
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
 
@@ -88,6 +95,12 @@ internal fun discoverWalletStatus(
 
 /** Switching windows is routine on desktop, so leaving locks after five minutes unless Settings says otherwise. */
 const val DEFAULT_LOCK_DELAY_MILLIS = 300_000L
+
+/** Notification checks start this long after launch while an alert or notification setting is on, then repeat. */
+private const val NOTIFICATION_FIRST_CHECK_MILLIS = 30_000L
+private const val NOTIFICATION_INTERVAL_MILLIS = 300_000L
+
+private const val MARKET_PAUSED_MESSAGE = "Market data is paused while data is restored."
 
 internal class DesktopHost(
     private val directory: Path,
@@ -159,6 +172,7 @@ internal class DesktopHost(
     }
 
     private var refreshTask: java.util.concurrent.ScheduledFuture<*>? = null
+    private var notificationTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val hostLock = Any()
     private val closing = AtomicBoolean(false)
     private val refreshPreference = directory.resolve("background-refresh")
@@ -184,6 +198,7 @@ internal class DesktopHost(
         if (runCatching { reconcileRefreshPreferences() }.isFailure) {
             runCatching { app.value.recordAutomaticPriceSchedulingFailure() }
         }
+        reconcileNotificationChecks()
     }
 
     override fun saveFile(
@@ -311,6 +326,8 @@ internal class DesktopHost(
                     } finally {
                         if (pricePaused) {
                             priceRestorePaused = false
+                            // Restored data can turn alerts on or off, so the check schedule follows it.
+                            if (swapped && replacementReady) runCatching { reconcileNotificationChecks() }
                             if (swapped &&
                                 replacementReady &&
                                 runCatching { reconcileRefreshPreferences() }.isFailure
@@ -647,6 +664,98 @@ internal class DesktopHost(
         }
     }
 
+    override fun fetchOrderBook(
+        coinId: String,
+        onResult: (OrderBookResult) -> Unit,
+    ) {
+        try {
+            priceExecutor.execute {
+                val result =
+                    synchronized(priceGate) {
+                        if (priceRestorePaused || closing.get()) {
+                            OrderBookResult.Failed(MARKET_PAUSED_MESSAGE)
+                        } else {
+                            runCatching {
+                                JvmSqliteDatabase(file.toString()).use { connection ->
+                                    loadOrderBook(
+                                        PortfolioApplication(connection, System::currentTimeMillis),
+                                        coinId,
+                                        priceTransport::feed,
+                                        // Checked before each request, so a restore or close stops the book request early.
+                                        KrakenPriceTransport(beforeRequest = { check(!priceRestorePaused && !closing.get()) })::get,
+                                    )
+                                }
+                            }.getOrElse { OrderBookResult.Failed("Could not load Kraken's order book.") }
+                        }
+                    }
+                SwingUtilities.invokeLater { onResult(result) }
+            }
+        } catch (_: RejectedExecutionException) {
+            SwingUtilities.invokeLater { onResult(OrderBookResult.Failed("Could not schedule an order book request.")) }
+        }
+    }
+
+    override fun checkNotifications(onResult: (Int) -> Unit) {
+        try {
+            priceExecutor.execute { notificationCheck(onResult) }
+        } catch (_: RejectedExecutionException) {
+            SwingUtilities.invokeLater { onResult(0) }
+        }
+    }
+
+    override fun notificationSettingsChanged() {
+        if (reconcileNotificationChecks()) checkNotifications()
+    }
+
+    /** One check on the price worker with its own connection, then shows what it found and reports the count on the Swing thread. */
+    private fun notificationCheck(onResult: (Int) -> Unit) {
+        val messages: List<NotificationMessage> =
+            runCatching {
+                synchronized(priceGate) {
+                    if (priceRestorePaused || closing.get()) {
+                        emptyList()
+                    } else {
+                        JvmSqliteDatabase(file.toString()).use { connection ->
+                            PortfolioApplication(connection, System::currentTimeMillis).runNotificationCheck(
+                                priceTransport::feed,
+                                LocalDate.now().toString(),
+                                LocalTime.now().hour,
+                            )
+                        }
+                    }
+                }
+            }.getOrDefault(emptyList())
+        messages.forEach { DesktopNotifications.show(it.title, it.body) }
+        dataRevision.update { it + 1 }
+        SwingUtilities.invokeLater { onResult(messages.size) }
+    }
+
+    /**
+     * Runs the periodic check only while an alert or notification setting is on. Returns whether checks are running.
+     * Called at launch, when settings change, and after a restore; the schedule is guarded by [hostLock].
+     */
+    private fun reconcileNotificationChecks(): Boolean {
+        val active = !closing.get() && runCatching { app.value.notificationsActive() }.getOrDefault(false)
+        synchronized(hostLock) {
+            val running = notificationTask?.isDone == false
+            if (!active) {
+                notificationTask?.cancel(false)
+                notificationTask = null
+            } else if (!running) {
+                notificationTask =
+                    runCatching {
+                        priceExecutor.scheduleWithFixedDelay(
+                            { runCatching { notificationCheck {} } },
+                            NOTIFICATION_FIRST_CHECK_MILLIS,
+                            NOTIFICATION_INTERVAL_MILLIS,
+                            TimeUnit.MILLISECONDS,
+                        )
+                    }.getOrNull()
+            }
+        }
+        return active
+    }
+
     private fun runAutomaticPriceRefresh() {
         synchronized(priceGate) {
             if (priceRestorePaused) {
@@ -799,6 +908,7 @@ internal class DesktopHost(
         if (!closing.compareAndSet(false, true)) return
         refreshTask?.cancel(false)
         automaticPriceTask?.cancel(false)
+        synchronized(hostLock) { notificationTask?.cancel(false) }
         priceExecutor.shutdownNow()
         syncQueue.shutdown()
         executor.execute {

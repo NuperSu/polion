@@ -165,4 +165,37 @@ class KrakenPriceTransportTest {
         }
         assertEquals(2, requests)
     }
+
+    @Test fun orderBookDepthRequestsAreAllowedOnlyWithinTheCountLimit() {
+        var requests = 0
+        val response =
+            object : HttpURLConnection(URI("https://api.kraken.com").toURL()) {
+                override fun connect() = Unit
+
+                override fun disconnect() = Unit
+
+                override fun usingProxy() = false
+
+                override fun getResponseCode() = 200
+
+                override fun getInputStream() = "{}".byteInputStream()
+            }
+        val transport =
+            KrakenPriceTransport(openConnection = {
+                requests++
+                response
+            }, pacer = KrakenPricePacer(clock = { 0 }, sleep = {}))
+        assertEquals("{}", transport.get("https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=10"))
+        assertEquals("{}", transport.get("https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=25"))
+        assertEquals("{}", transport.get("https://api.kraken.com/0/public/Depth?pair=ETHUSDT&count=1"))
+        assertEquals(3, requests)
+        listOf(
+            "https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=0",
+            "https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=26",
+            "https://api.kraken.com/0/public/Depth?pair=xbtusd&count=10",
+            "https://api.kraken.com/0/public/Depth?pair=XBT&count=10",
+            "https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=10&since=1",
+        ).forEach { url -> assertFailsWith<IllegalArgumentException> { transport.get(url) } }
+        assertEquals(3, requests)
+    }
 }

@@ -26,6 +26,7 @@ class AndroidCoingeckoTransport(
         val MARKETS_PATH =
             Regex("coins/markets\\?vs_currency=[a-z]{3,4}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=1h,24h,7d")
         const val TRENDING_PATH = "search/trending"
+        val KRAKEN_TICKERS_PATH = Regex("coins/[a-z0-9][a-z0-9-]{0,99}/tickers\\?exchange_ids=kraken")
 
         /** The top-250 list with sparklines is about 1 MB. */
         const val FEED_LIMIT = 4 * 1024 * 1024
@@ -53,7 +54,8 @@ class AndroidCoingeckoTransport(
     }
 
     /**
-     * Market feeds are not paced here: the application refreshes them at most once a minute and pauses after a rate limit.
+     * Market feeds and Kraken ticker lookups are not paced here: the application refreshes feeds at most once a minute and
+     * pauses after a rate limit.
      */
     @Synchronized
     fun feed(
@@ -61,7 +63,9 @@ class AndroidCoingeckoTransport(
         apiKey: String?,
     ): String {
         val path = url.removePrefix("${baseUrl.trimEnd('/')}/")
-        require(url != path && (path.matches(MARKETS_PATH) || path == TRENDING_PATH)) { "Unsupported CoinGecko request" }
+        require(url != path && (path.matches(MARKETS_PATH) || path == TRENDING_PATH || path.matches(KRAKEN_TICKERS_PATH))) {
+            "Unsupported CoinGecko request"
+        }
         require(apiKey == null || apiKey.length <= 512 && apiKey.all { it.code in 33..126 }) { "Invalid API key" }
         activeApiKey = apiKey.orEmpty()
         try {

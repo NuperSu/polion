@@ -78,4 +78,17 @@ class DesktopCoingeckoTransportTest {
             "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90&address=private",
         ).forEach { url -> assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().get(url) } }
     }
+
+    @Test fun krakenTickerLookupIsAllowedOnlyAsAFeedRequest() {
+        val tickers = "https://api.coingecko.com/api/v3/coins/chainlink/tickers?exchange_ids=kraken"
+        val response = Response(200)
+        assertEquals("{}", DesktopCoingeckoTransport(openConnection = { response }).feed(tickers, "key"))
+        assertEquals("key", response.getRequestProperty("x-cg-demo-api-key"))
+        listOf(
+            "https://api.coingecko.com/api/v3/coins/chainlink/tickers?exchange_ids=binance",
+            "https://api.coingecko.com/api/v3/coins/Chainlink/tickers?exchange_ids=kraken",
+            "https://api.coingecko.com/api/v3/coins/chainlink/tickers?exchange_ids=kraken&page=2",
+        ).forEach { bad -> assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().feed(bad, null) } }
+        assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().get(tickers) }
+    }
 }

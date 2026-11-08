@@ -30,6 +30,7 @@ import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.storage.AndroidSqliteDatabase
 import io.polion.ui.BiometricUnlock
+import io.polion.ui.OrderBookResult
 import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
@@ -85,6 +86,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         host?.returned()
         RefreshWorker.dataRevision.update { it + 1 }
+        // Runs in the background and does nothing unless an alert or notification setting is on.
+        host?.checkNotifications()
     }
 
     override fun onStop() {
@@ -126,6 +129,37 @@ private class AndroidHost(
         onResult: (String) -> Unit,
     ) {
         MarketFeedRefresher.refresh(activity, maxAgeMillis) { message -> main.post { if (!closed) onResult(message) } }
+    }
+
+    override fun fetchOrderBook(
+        coinId: String,
+        onResult: (OrderBookResult) -> Unit,
+    ) {
+        MarketFeedRefresher.orderBook(activity, coinId, closing = { closed }) { result -> main.post { if (!closed) onResult(result) } }
+    }
+
+    override fun checkNotifications(onResult: (Int) -> Unit) {
+        MarketFeedRefresher.checkNotifications(activity, closing = { closed }) { count -> main.post { if (!closed) onResult(count) } }
+    }
+
+    /**
+     * Reschedules the periodic check on the database thread. On the main thread, asks for notification permission when
+     * it is missing, then runs a check now.
+     */
+    override fun notificationSettingsChanged() {
+        executor.execute {
+            val active = runCatching { app.value?.notificationsActive() }.getOrNull() == true
+            NotificationWorker.schedule(activity, active)
+            main.post {
+                if (active && !closed) {
+                    val needsPermission =
+                        Build.VERSION.SDK_INT >= 33 &&
+                            activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    if (needsPermission) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    checkNotifications()
+                }
+            }
+        }
     }
 
     override fun biometricUnlock(): BiometricUnlock = biometrics.status(lockStore.hasLock)
@@ -209,6 +243,7 @@ private class AndroidHost(
                 if (runCatching { reconcileRefreshPreferences(opened) }.isFailure) {
                     runCatching { opened.recordAutomaticPriceSchedulingFailure() }
                 }
+                runCatching { NotificationWorker.schedule(activity, opened.notificationsActive()) }
                 main.post { if (!closed) app.value = opened }
             } catch (_: Exception) {
                 if (::db.isInitialized) runCatching { db.close() }
