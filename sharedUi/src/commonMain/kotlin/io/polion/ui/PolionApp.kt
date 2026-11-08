@@ -851,6 +851,7 @@ private fun Product(
                                 ),
                                 general = generalPreferences,
                                 device = SettingsDevice(host.defaultDeviceName, biometric, hasCoingeckoKey, lockDelay),
+                                notifications = { NotificationSettingsSection(app, host) },
                             ) {
                                 snapshot?.let { data ->
                                     AccountsWorkspace(

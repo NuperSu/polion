@@ -98,6 +98,7 @@ internal fun ColumnScope.ProductSettings(
     actions: SettingsActions,
     general: GeneralPreferences = GeneralPreferences(),
     device: SettingsDevice = SettingsDevice(),
+    notifications: @Composable () -> Unit = {},
     connections: @Composable () -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf("") }
@@ -181,17 +182,7 @@ internal fun ColumnScope.ProductSettings(
         }
         "notifications" -> {
             SettingsSubHeader("Notifications", back)
-            SettingsNote("Notifications and price alerts are planned.")
-            SettingsSectionLabel("Portfolio")
-            SettingsSwitchRow("Daily Portfolio Update", false, enabled = false, description = "Daily portfolio performance and top movers")
-            SettingsSectionLabel("Market Data")
-            SettingsSwitchRow("Significant Price Changes", false, enabled = false, description = "Large moves for coins you follow")
-            SettingsSwitchRow(
-                "High/Low Prices",
-                false,
-                enabled = false,
-                description = "All-time and 52-week highs and lows for coins you follow",
-            )
+            notifications()
         }
         "connections" -> {
             SettingsSubHeader("Connections", back)

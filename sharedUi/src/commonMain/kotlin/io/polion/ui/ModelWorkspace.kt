@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.core.alerts.AlertCondition
 import io.polion.core.application.AccountingView
 import io.polion.core.application.ActivityFilter
 import io.polion.core.application.AssetListPreference
@@ -47,6 +48,8 @@ import io.polion.core.reconcile.EffectiveActivity
 import io.polion.ui.model.ChartData
 import io.polion.ui.model.ChartStyle
 import io.polion.ui.model.LocalCoinLogos
+import io.polion.ui.model.ModelAlertEditor
+import io.polion.ui.model.ModelAlertEditorState
 import io.polion.ui.model.ModelAllocationBar
 import io.polion.ui.model.ModelAllocationSlice
 import io.polion.ui.model.ModelChangeTone
@@ -151,6 +154,101 @@ internal fun ModelWorkspace(
                     .toEpochMilliseconds()
             if (observed == null || now - observed >= MARKET_SCHEDULED_AGE_MILLIS) onMarketRefresh(MARKET_SCHEDULED_AGE_MILLIS)
         }
+    }
+    // Coin pages load alerts and consent on the host dispatcher. A load for another asset is ignored, so the page never
+    // shows the previous coin's alerts.
+    val selectedCoin = selectedAsset?.asset
+    var coinMarket by remember { mutableStateOf<CoinMarketLoad?>(null) }
+    var coinReload by remember { mutableStateOf(0) }
+    var alertEditor by remember(selectedCoin) { mutableStateOf<ModelAlertEditorState?>(null) }
+    var alertNotice by remember(selectedCoin) { mutableStateOf<String?>(null) }
+    var orderNotice by remember(selectedCoin) { mutableStateOf<String?>(null) }
+    LaunchedEffect(app, selectedCoin, dataRevision, coinReload) {
+        if (selectedCoin != null) {
+            try {
+                coinMarket = loadCoinMarket(app, host, selectedCoin)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keeps the previous load; the Alerts tab stays empty until a later load succeeds.
+            }
+        }
+    }
+
+    /** Runs one change on the host dispatcher, then reloads the coin page. A failure is passed on, never dropped. */
+    fun changeCoin(
+        onDone: () -> Unit = {},
+        onFailure: (Exception) -> Unit,
+        change: () -> Unit,
+    ) {
+        transactionScope.launch {
+            try {
+                withContext(host.dispatcher) { change() }
+                coinReload++
+                onDone()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                onFailure(failure)
+            }
+        }
+    }
+
+    fun updateEditor(update: (ModelAlertEditorState) -> ModelAlertEditorState) {
+        alertEditor = alertEditor?.let(update)
+    }
+
+    fun saveAlert(
+        coinId: String,
+        editor: ModelAlertEditorState,
+    ) {
+        val threshold =
+            try {
+                parseAlertThreshold(editor.threshold)
+            } catch (invalid: IllegalArgumentException) {
+                alertEditor = editor.copy(error = invalid.message)
+                return
+            }
+        alertEditor = editor.copy(saving = true, error = null)
+        changeCoin(
+            onDone = {
+                alertEditor = null
+                alertNotice = null
+                host.notificationSettingsChanged()
+            },
+            onFailure = { failure ->
+                alertEditor =
+                    editor.copy(error = (failure as? IllegalArgumentException)?.message ?: "Could not save this alert. Try again.")
+            },
+        ) { app.savePriceAlert(coinId, editor.condition, threshold, editor.alertId) }
+    }
+
+    fun setAlertEnabled(
+        id: String,
+        enabled: Boolean,
+    ) {
+        changeCoin(
+            onDone = {
+                alertNotice = null
+                host.notificationSettingsChanged()
+            },
+            onFailure = { alertNotice = "Could not change this alert. Try again." },
+        ) { app.setPriceAlertEnabled(id, enabled) }
+    }
+
+    fun deleteAlert(
+        editor: ModelAlertEditorState,
+        id: String,
+    ) {
+        alertEditor = editor.copy(saving = true, error = null)
+        changeCoin(
+            onDone = {
+                alertEditor = null
+                alertNotice = null
+                host.notificationSettingsChanged()
+            },
+            onFailure = { alertEditor = editor.copy(error = "Could not delete this alert. Try again.") },
+        ) { app.deletePriceAlert(id) }
     }
     var transactionSearch by rememberSaveable { mutableStateOf("") }
     var transactionType by rememberSaveable { mutableStateOf("All") }
@@ -499,6 +597,22 @@ internal fun ModelWorkspace(
                             null
                         }
                     }
+                val coinLoad = coinMarket?.takeIf { it.asset == asset.asset }
+                val coinId = coinLoad?.coinId
+                // Alerts and order books need the coin in the cached list for the display currency.
+                val listedCoin =
+                    coinId
+                        ?.let { id -> marketOverview?.markets?.items?.find { it.coinId == id } }
+                        ?.takeIf { marketOverview?.currency == data.currency }
+                val alertBlock = coinLoad?.let { alertBlockReason(coinId, it.marketConsent, listedCoin != null) }
+                val orderConsent = coinLoad?.orderConsent == true
+                val orderBook =
+                    rememberCoinOrderBook(
+                        host,
+                        coinId,
+                        active = orderConsent && ModelCoinTab.valueOf(tab) == ModelCoinTab.ORDER_BOOK,
+                    )
+                val orderBookData = orderBook.book
                 val quantity =
                     if (!tracked) {
                         "—"
@@ -605,16 +719,33 @@ internal fun ModelWorkspace(
                                     )
                                 }
                             },
-                        alerts = emptyList(),
-                        orderSource = "Unavailable",
-                        orderRows = emptyList(),
+                        alerts = coinLoad?.alerts.orEmpty().map(::coinAlertRule),
+                        orderSource =
+                            when {
+                                orderBookData != null -> orderBookSource(orderBookData)
+                                coinId != null && orderConsent && orderBook.noMarket == null && orderBook.issue == null ->
+                                    "Loading Kraken order book…"
+                                else -> ""
+                            },
+                        orderRows = orderBookRows(orderBookData),
                         enabledRanges = if (useListing) setOf("1W") else setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
                         canAddTransaction = !asset.asset.value.startsWith("coingecko:"),
                         chart = coinChart,
                         chartStyle = chartStyle,
                         transactionEmpty = if (timelineLoading) "Loading saved transactions…" else "No matching transactions",
-                        alertsUnavailable = "Price alerts are unavailable.",
-                        orderUnavailable = "Order book data is unavailable.",
+                        alertsUnavailable = alertBlock,
+                        alertNotice = alertNotice,
+                        canAddAlert = coinLoad != null && alertBlock == null,
+                        orderUnavailable =
+                            when {
+                                coinLoad == null -> null
+                                coinId == null -> "Order books are available for coins with market data."
+                                else -> orderBook.noMarket
+                            },
+                        orderConsentNeeded = coinId != null && coinLoad?.orderConsent == false,
+                        orderIssue = orderBook.issue,
+                        orderOutOfDate = orderBook.outOfDate,
+                        orderNotice = orderNotice,
                         changeTone = ModelChangeTone.NEUTRAL,
                     ),
                     ModelCoinDetailActions(
@@ -624,6 +755,36 @@ internal fun ModelWorkspace(
                         onChartStyle = onChartStyle,
                         onAddTransaction = { onManual(asset) },
                         onTransaction = { id -> timeline?.entries?.find { it.activity.id.value == id }?.let(onTransaction) },
+                        onAddAlert = {
+                            alertEditor =
+                                ModelAlertEditorState(
+                                    alertId = null,
+                                    currency = data.currency.value,
+                                    currentPrice = listedCoin?.let { marketPrice(it.price, data.currency) },
+                                    condition = AlertCondition.ABOVE,
+                                    threshold = "",
+                                )
+                        },
+                        onAlertOpen = { id ->
+                            coinLoad?.alerts?.find { it.id == id }?.let { alert ->
+                                alertEditor =
+                                    ModelAlertEditorState(
+                                        alertId = alert.id,
+                                        currency = data.currency.value,
+                                        currentPrice = listedCoin?.let { marketPrice(it.price, data.currency) },
+                                        condition = alert.condition,
+                                        threshold = alert.threshold.toString(),
+                                    )
+                            }
+                        },
+                        onAlertEnabled = ::setAlertEnabled,
+                        onOrderConsent = {
+                            changeCoin(
+                                onDone = { orderNotice = null },
+                                onFailure = { orderNotice = "Could not turn on Kraken order books. Try again." },
+                            ) { app.setOrderBookConsent(true) }
+                        },
+                        onOrderRetry = orderBook.retry,
                     ),
                     transactionControls = {
                         OutlinedTextField(transactionSearch, {
@@ -701,6 +862,16 @@ internal fun ModelWorkspace(
                         ) { Text("More transactions") }
                     },
                 )
+                alertEditor?.let { editor ->
+                    ModelAlertEditor(
+                        state = editor,
+                        onCondition = { condition -> updateEditor { it.copy(condition = condition, error = null) } },
+                        onThreshold = { text -> updateEditor { it.copy(threshold = text, error = null) } },
+                        onSave = { coinId?.let { saveAlert(it, editor) } },
+                        onDelete = { editor.alertId?.let { deleteAlert(editor, it) } },
+                        onCancel = { alertEditor = null },
+                    )
+                }
                 if (ModelCoinTab.valueOf(tab) == ModelCoinTab.GENERAL && asset.asset.value.startsWith("coingecko:")) {
                     Text(
                         "Price, 7-day chart and market figures from CoinGecko, updated " +
