@@ -42,12 +42,14 @@ Each phase is separately executable; its exit gate is defined in its document. P
 - **Implemented and verified; user visual review pending** · [Phase 2 — Finish Portfolio and coin General with existing data](ui-model-phases/2-finish-portfolio-and-coin-general-with-existing-data.md)
 - **Implemented and verified; user visual review pending** · [Phase 3 — Implement the model's transaction system](ui-model-phases/3-implement-the-model-s-transaction-system.md)
 - **Implemented and verified; user visual review pending** · [Phase 4 — Finish Accounts, history refresh and recovery](ui-model-phases/4-finish-accounts-history-refresh-and-recovery.md)
-- **Not started** · [Phase 5 — Make Main a real market-discovery screen](ui-model-phases/5-make-main-a-real-market-discovery-screen.md)
-- **Not started** · [Phase 6 — Implement Insights in the model's composition](ui-model-phases/6-implement-insights-in-the-model-s-composition.md)
-- **Not started** · [Phase 7 — Finish alerts, order books and CSV import](ui-model-phases/7-finish-alerts-order-books-and-csv-import.md)
-- **Not started** · [Phase 8 — Product acceptance and release](ui-model-phases/8-product-acceptance-and-release.md)
+- **Implemented and verified; user visual review pending** · [Phase 5 — Make Main a real market-discovery screen](ui-model-phases/5-make-main-a-real-market-discovery-screen.md)
+- **Implemented and verified; user visual review pending** · [Phase 6 — Implement Insights in the model's composition](ui-model-phases/6-implement-insights-in-the-model-s-composition.md)
+- **Implemented and verified; user visual review pending** · [Phase 7 — Finish alerts, order books and CSV import](ui-model-phases/7-finish-alerts-order-books-and-csv-import.md)
+- **Implemented; user review pending, Gate D items remaining** · [Phase 8 — Product acceptance and release](ui-model-phases/8-product-acceptance-and-release.md)
 
 ## Execution and completion tracking
+
+The current order of these phases, the work before them and the long-term phases after release are in [the November 2026 plan](plan-2026-11.md).
 
 Start with Phases 0–1, then deliver Portfolio/coin General and transactions as complete vertical slices. Follow with account reliability, market discovery, Insights, remaining services and final release validation. Provider research and financial specification work can proceed independently once the shared screen contracts are stable; dependent implementation follows the relevant evidence gate.
 

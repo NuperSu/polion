@@ -21,13 +21,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 
 data class ModelMarketCoin(
     val identity: ModelCoinIdentity,
@@ -35,6 +39,7 @@ data class ModelMarketCoin(
     val change: String,
     val sparkline: List<Float?> = emptyList(),
     val smoothChart: Boolean = false,
+    val favorite: Boolean = false,
 )
 
 data class ModelMainState(
@@ -51,6 +56,12 @@ data class ModelMainState(
     val gainersEmptyMessage: String = "Unavailable",
     val losersEmptyMessage: String = "Unavailable",
     val canToggleFavorites: Boolean = false,
+    /** Names the ranked universe and window behind Top Gainers and Top Losers. */
+    val moversEyebrow: String? = null,
+    /** Feed freshness, failures and attribution, shown under the sections. */
+    val status: String? = null,
+    /** Label of the button that turns market data on; null when it is already on. */
+    val loadAction: String? = null,
 )
 
 sealed interface ModelMainAction {
@@ -61,6 +72,8 @@ sealed interface ModelMainAction {
     data class ToggleFavorite(
         val identity: ModelCoinIdentity,
     ) : ModelMainAction
+
+    data object LoadMarkets : ModelMainAction
 }
 
 @Composable
@@ -70,6 +83,25 @@ fun ModelMain(
     onAction: (ModelMainAction) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        state.loadAction?.let { label ->
+            MarketCard {
+                Text(
+                    "Top coins, trending coins, daily movers and coin logos come from CoinGecko. CoinGecko sees your IP " +
+                        "address and display currency; no wallet data is sent.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    label,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier =
+                        Modifier
+                            .clickable(role = Role.Button) { onAction(ModelMainAction.LoadMarkets) }
+                            .testTag("market-load")
+                            .padding(vertical = 4.dp),
+                )
+            }
+        }
         MarketSection(state.topCoinsTitle, state.topCoinsEyebrow) {
             if (state.topCoins.isEmpty()) {
                 MarketEmpty(state.topCoinsEmptyMessage)
@@ -77,7 +109,10 @@ fun ModelMain(
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.topCoins.forEach { coin ->
                         MarketCard(
-                            Modifier.width(if (wide) 210.dp else 142.dp).clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) },
+                            Modifier
+                                .width(if (wide) 210.dp else 142.dp)
+                                .clickable(role = Role.Button) { onAction(ModelMainAction.OpenCoin(coin.identity)) }
+                                .testTag("market-top-${coin.identity.id}"),
                         ) {
                             ModelCoinLogo(coin.identity)
                             Text(coin.identity.ticker, fontWeight = FontWeight.Bold)
@@ -96,7 +131,7 @@ fun ModelMain(
             }
         }
         MarketSection("Favorites") {
-            MarketCoinList(state.favorites, state.favoritesEmptyMessage, onAction)
+            MarketCoinList(state.favorites, state.favoritesEmptyMessage, onAction, state.canToggleFavorites, "favorites")
         }
         MarketSection("Trending", "DISCOVER WHAT'S HOT") {
             if (state.trending.isEmpty()) {
@@ -104,22 +139,15 @@ fun ModelMain(
             } else {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.trending.forEach { coin ->
-                        MarketCard(Modifier.width(156.dp).clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) }) {
+                        MarketCard(
+                            Modifier
+                                .width(156.dp)
+                                .clickable(role = Role.Button) { onAction(ModelMainAction.OpenCoin(coin.identity)) }
+                                .testTag("market-trending-${coin.identity.id}"),
+                        ) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 ModelCoinLogo(coin.identity)
-                                Text(
-                                    "☆",
-                                    fontSize = 24.sp,
-                                    modifier =
-                                        if (state.canToggleFavorites) {
-                                            Modifier.semantics { contentDescription = "Favorite ${coin.identity.name}" }.clickable(
-                                                role = Role.Button,
-                                                onClickLabel = "Toggle favorite ${coin.identity.name}",
-                                            ) { onAction(ModelMainAction.ToggleFavorite(coin.identity)) }
-                                        } else {
-                                            Modifier
-                                        },
-                                )
+                                FavoriteStar(coin, state.canToggleFavorites, onAction)
                             }
                             Spacer(Modifier.height(4.dp))
                             Column {
@@ -132,12 +160,51 @@ fun ModelMain(
                 }
             }
         }
-        MarketSection("Top Gainers") {
-            MarketCoinList(state.gainers, state.gainersEmptyMessage, onAction)
+        MarketSection("Top Gainers", state.moversEyebrow) {
+            MarketCoinList(state.gainers, state.gainersEmptyMessage, onAction, state.canToggleFavorites, "gainers")
         }
-        MarketSection("Top Losers") {
-            MarketCoinList(state.losers, state.losersEmptyMessage, onAction)
+        MarketSection("Top Losers", state.moversEyebrow) {
+            MarketCoinList(state.losers, state.losersEmptyMessage, onAction, state.canToggleFavorites, "losers")
         }
+        state.status?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                modifier = Modifier.testTag("market-status"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FavoriteStar(
+    coin: ModelMarketCoin,
+    enabled: Boolean,
+    onAction: (ModelMainAction) -> Unit,
+) {
+    val name = coin.identity.name
+    val star =
+        Modifier.semantics {
+            contentDescription = "Favorite $name"
+            stateDescription = if (coin.favorite) "Favorite" else "Not favorite"
+        }
+    TouchTarget(
+        target =
+            if (enabled) {
+                star
+                    .clickable(role = Role.Button, onClickLabel = "Toggle favorite $name") {
+                        onAction(ModelMainAction.ToggleFavorite(coin.identity))
+                    }.testTag("favorite-${coin.identity.id}")
+            } else {
+                star
+            },
+    ) {
+        Text(
+            if (coin.favorite) "★" else "☆",
+            fontSize = 24.sp,
+            color = if (coin.favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
@@ -183,7 +250,14 @@ internal fun MarketHeading(
         ) {
             Text(eyebrow, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
-        Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 27.sp)
+        Text(
+            title,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 27.sp,
+            modifier = Modifier.semantics { heading() },
+        )
     }
 }
 
@@ -227,6 +301,8 @@ private fun MarketCoinList(
     coins: List<ModelMarketCoin>,
     emptyMessage: String,
     onAction: (ModelMainAction) -> Unit,
+    canToggleFavorites: Boolean = false,
+    section: String = "list",
 ) {
     MarketCard(gap = 0) {
         if (coins.isEmpty()) Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -234,9 +310,10 @@ private fun MarketCoinList(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .clickable(role = Role.Button) {
                         onAction(ModelMainAction.OpenCoin(coin.identity))
-                    }.padding(
+                    }.testTag("market-$section-${coin.identity.id}")
+                    .padding(
                         vertical = 10.dp,
                     ),
                 verticalAlignment = Alignment.CenterVertically,
@@ -257,6 +334,7 @@ private fun MarketCoinList(
                     Text(coin.price, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     MarketChange(coin.change)
                 }
+                if (canToggleFavorites) FavoriteStar(coin, true, onAction)
             }
             if (index < coins.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = .5.dp)
         }

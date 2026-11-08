@@ -1,5 +1,8 @@
 package io.polion.core.bitcoin
 
+import io.polion.core.model.isCanonicalUnsigned
+import io.polion.core.model.isHash64
+
 /** Default maximum depth, in blocks below the tip, that an automatic rewind may reach. */
 const val BITCOIN_MAX_REWIND_DEPTH = 100L
 
@@ -50,7 +53,7 @@ class BitcoinReorgDetector(
         val checkedTipHeight =
             tipHeight ?: run {
                 val tip = transport.get("/blocks/tip/height").trim()
-                require(tip.matches(Regex("0|[1-9][0-9]{0,18}"))) { "Invalid tip height" }
+                require(tip.isCanonicalUnsigned(19)) { "Invalid tip height" }
                 tip.toLong()
             }
         require(checkedTipHeight >= 0) { "Invalid tip height" }
@@ -64,7 +67,7 @@ class BitcoinReorgDetector(
                 throw BitcoinReorgBeyondBoundException(checkedTipHeight, stale.last().height, maxDepth)
             }
             val hash = transport.get("/block-height/${anchor.height}").trim()
-            require(hash.matches(Regex("[0-9a-f]{64}"))) { "Invalid block hash" }
+            require(hash.isHash64()) { "Invalid block hash" }
             if (hash == anchor.hash) return BitcoinReorgCheck(checkedTipHeight, anchor, stale, above)
             stale.add(anchor)
         }

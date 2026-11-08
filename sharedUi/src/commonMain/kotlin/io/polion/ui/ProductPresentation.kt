@@ -207,7 +207,7 @@ internal fun ProductPresentation.reduce(event: ProductEvent): ProductPresentatio
         is ProductEvent.Period ->
             copy(
                 period = event.days.also { require(it in setOf(-2, -1, 0, 1, 7, 30, 90, 365)) },
-                chart = if (period != event.days) emptyList() else chart,
+                // The previous range stays on screen, dimmed, until the new one is ready.
                 chartLoading =
                     if (period !=
                         event.days

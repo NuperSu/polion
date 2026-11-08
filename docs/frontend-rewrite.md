@@ -36,3 +36,5 @@ Automatic refresh and Wi-Fi-only preferences live in existing portable applicati
 Executed checks and remaining device limitations are recorded in [validation](validation.md). This frontend work does not close the open financial, chain-verification or release gates in [Milestone D](milestone-d.md).
 
 Account/source identity and acceptance definitions, public fixture provenance and scheduling checks are recorded in [Phase 4 evidence](ui-model-phases/phase-4-evidence.md).
+
+Android wallet-discovery requests received during existing Bitcoin work are queued on the host serial executor. Earlier completions cannot stop later starts. A request acknowledgement does not mean discovery has completed; rejected requests expose the saved wallet's rediscovery action in Accounts.

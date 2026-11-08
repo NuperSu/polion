@@ -1,6 +1,6 @@
 # Incremental Bitcoin history project
 
-Status: design only. Ordinary wallet refresh scans the active saved address scope using the existing provider scan behavior. It can fetch already saved history. No missing-data-only or incremental network fetching is enabled by this document.
+Status: design only, with one narrow path live. Ordinary wallet refresh first compares each active address's chain and mempool counts with the last applied scan. When the fingerprint, anchor and every count match and no mempool activity was recorded, it fetches no history and applies nothing. Any other case runs the full scan. No partial or newest-pages-only fetching is enabled by this document. The live skip relies on the provider's counters and the canonical accepted anchor; it does not verify older history independently.
 
 ## Provider capability boundary
 

@@ -21,10 +21,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 
 data class ModelHoldingRow(
     val coin: ModelCoinIdentity,
@@ -53,21 +57,27 @@ fun ColumnScope.ModelPortfolioHoldings(
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Box {
-            Text(
-                "☷",
-                color = colors.onSurface,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier =
+            TouchTarget(
+                target =
                     Modifier
-                        .clip(
-                            CircleShape,
-                        ).background(
-                            colors.surfaceVariant,
-                        ).border(1.dp, colors.surfaceVariant, CircleShape)
-                        .clickable(onClick = onView)
-                        .padding(horizontal = 13.dp, vertical = 9.dp),
-            )
+                        .clickable(role = Role.Button, onClick = onView)
+                        .semantics { contentDescription = "Change holdings view" },
+            ) {
+                Text(
+                    "☷",
+                    color = colors.onSurface,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier =
+                        Modifier
+                            .clip(
+                                CircleShape,
+                            ).background(
+                                colors.surfaceVariant,
+                            ).border(1.dp, colors.surfaceVariant, CircleShape)
+                            .padding(horizontal = 13.dp, vertical = 9.dp),
+                )
+            }
             viewMenuContent()
         }
         Box {
@@ -81,7 +91,7 @@ fun ColumnScope.ModelPortfolioHoldings(
                         .clip(
                             CircleShape,
                         ).border(1.dp, colors.surfaceVariant, CircleShape)
-                        .clickable(onClick = onSort)
+                        .clickable(role = Role.Button, onClick = onSort)
                         .padding(horizontal = 13.dp, vertical = 9.dp),
             )
             sortMenuContent()
@@ -108,7 +118,7 @@ fun ColumnScope.ModelPortfolioHoldings(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable {
+                        .clickable(role = Role.Button) {
                             onHolding(
                                 holding.coin,
                             )

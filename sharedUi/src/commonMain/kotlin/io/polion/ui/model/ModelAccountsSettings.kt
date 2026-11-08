@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,14 +60,21 @@ fun ColumnScope.ModelAccounts(
     onConnect: () -> Unit,
     onAccount: (String) -> Unit = {},
 ) {
-    Text("Your accounts", color = foreground, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "Your accounts",
+        color = foreground,
+        fontSize = 22.sp,
+        lineHeight = 27.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.semantics { heading() },
+    )
     if (state.accounts.isEmpty()) Text(state.emptyMessage, color = muted)
     state.accounts.forEach { account ->
         Column(
             Modifier
                 .fillMaxWidth()
                 .background(card, RoundedCornerShape(14.dp))
-                .clickable {
+                .clickable(role = Role.Button) {
                     onAccount(account.id)
                 }.testTag("account-${account.id}")
                 .padding(16.dp),
@@ -87,7 +98,7 @@ fun ColumnScope.ModelAccounts(
                     1.dp,
                     divider,
                     RoundedCornerShape(50),
-                ).clickable(onClick = onConnect)
+                ).clickable(role = Role.Button, onClick = onConnect)
                 .padding(horizontal = 13.dp, vertical = 9.dp),
     )
 }
@@ -98,25 +109,41 @@ fun ColumnScope.ModelSettings(
     onAutomatic: (Boolean) -> Unit,
     onWifi: (Boolean) -> Unit,
 ) {
-    Text("Sync settings", color = foreground, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "Sync settings",
+        color = foreground,
+        fontSize = 22.sp,
+        lineHeight = 27.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.semantics { heading() },
+    )
     Column(
         Modifier.fillMaxWidth().background(card, RoundedCornerShape(14.dp)).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Each row is the toggle, so its title and description are read together with the switch state.
+        Row(
+            Modifier
+                .toggleable(value = state.automatic, role = Role.Switch, onValueChange = onAutomatic)
+                .testTag("automatic-refresh"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(Modifier.weight(1f)) {
                 Text("Automatic refresh", fontWeight = FontWeight.Bold)
                 Text("Prices and wallet history", fontSize = 12.sp, color = muted)
             }
-            Switch(state.automatic, onAutomatic, modifier = Modifier.testTag("automatic-refresh"))
+            Switch(checked = state.automatic, onCheckedChange = null)
         }
         HorizontalDivider(color = divider)
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.toggleable(value = state.wifiOnly, role = Role.Switch, onValueChange = onWifi),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(Modifier.weight(1f)) {
                 Text("Wi-Fi only in background", fontWeight = FontWeight.Bold)
                 Text("Manual refresh can use your connection", fontSize = 12.sp, color = muted)
             }
-            Switch(state.wifiOnly, onWifi)
+            Switch(checked = state.wifiOnly, onCheckedChange = null)
         }
     }
     Text(state.description, color = muted, fontSize = 13.sp)

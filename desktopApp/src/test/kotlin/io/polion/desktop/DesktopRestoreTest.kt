@@ -124,7 +124,7 @@ class DesktopRestoreTest {
                 }
             val done = CountDownLatch(1)
             var message = ""
-            host.restoreBackup(archive, "password") {
+            host.restoreBackup(file(archive), "password") {
                 message = it
                 done.countDown()
             }
@@ -150,6 +150,13 @@ class DesktopRestoreTest {
         }
     }
 
+    /** The host restores from a file the user picks; tests hand it a temporary file. */
+    private fun file(archive: ByteArray): java.nio.file.Path =
+        Files.createTempFile("polion-backup-", ".polion").also {
+            Files.write(it, archive)
+            it.toFile().deleteOnExit()
+        }
+
     private fun restore(
         host: DesktopHost,
         archive: ByteArray,
@@ -157,7 +164,7 @@ class DesktopRestoreTest {
     ): String {
         val done = CountDownLatch(1)
         var message = ""
-        host.restoreBackup(archive, password) {
+        host.restoreBackup(file(archive), password) {
             message = it
             done.countDown()
         }
@@ -225,7 +232,7 @@ class DesktopRestoreTest {
         val host = DesktopHost(directory, false)
         try {
             sync(host) { it.saveOwner(Owner(OwnerId("old"), "Existing")) }
-            assertEquals("Could not restore backup", restore(host, byteArrayOf(1, 2, 3), "password"))
+            assertEquals("This is not a Polion backup", restore(host, byteArrayOf(1, 2, 3), "password"))
             sync(host) {
                 assertEquals(
                     listOf(OwnerId("old")),

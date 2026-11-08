@@ -10,6 +10,33 @@ import kotlin.test.assertFails
 import kotlin.test.assertTrue
 
 class BackupTest {
+    private fun encrypt(
+        body: ByteArray,
+        password: String = "password",
+    ): ByteArray {
+        val out = ByteArraySink()
+        BackupEncryption.encrypt(out, password.toCharArray()).apply {
+            write(body)
+            close()
+        }
+        return out.toByteArray()
+    }
+
+    private fun decrypt(
+        file: ByteArray,
+        password: String = "password",
+    ): ByteArray {
+        val source = BackupEncryption.decrypt(ByteArraySource(file), password.toCharArray())
+        val out = ByteArraySink()
+        val buffer = ByteArray(1000)
+        while (true) {
+            val count = source.read(buffer, 0, buffer.size)
+            if (count < 0) break
+            out.write(buffer, 0, count)
+        }
+        return out.toByteArray()
+    }
+
     @Test fun snapshotAndEncryptionRoundTrip() {
         JvmSqliteDatabase(":memory:").use { source ->
             val store = Store(source)
@@ -17,26 +44,56 @@ class BackupTest {
                 RawObservation("id", "btc", "tx", "main", "provider", "2026-10-28T00:00:00Z", "payload", "1", sha256("payload"), "{}"),
             )
             val backup = PortableBackup.discover(source)
-            val archive = backup.export(source)
-            val encrypted = BackupEncryption.encrypt(archive.encodeToByteArray(), "password".toCharArray())
+            val body = backup.export(source)
+            val encrypted = encrypt(body)
             assertTrue(!encrypted.decodeToString().contains("payload"))
-            assertFails { BackupEncryption.decrypt(encrypted, "wrong".toCharArray()) }
-            val broken = encrypted.copyOf()
-            broken[broken.lastIndex] = (broken.last() + 1).toByte()
-            assertFails { BackupEncryption.decrypt(broken, "password".toCharArray()) }
+            assertFails { decrypt(encrypted, "wrong") }
             JvmSqliteDatabase(":memory:").use { staging ->
                 val restored = Store(staging)
-                backup.restoreToStaging(staging, BackupEncryption.decrypt(encrypted, "password".toCharArray()).decodeToString())
+                backup.restoreToStaging(staging, decrypt(encrypted))
                 assertEquals(store.records(), restored.records())
                 assertEquals(store.revisions(), restored.revisions())
                 assertEquals(store.observations(), restored.observations())
-                assertFails { backup.restoreToStaging(staging, archive) }
+                assertFails { backup.restoreToStaging(staging, body) }
             }
             assertEquals(1, store.records().size)
         }
     }
 
-    @Test fun scanWorkingTablesAreExcludedAndOlderBackupsRestore() {
+    @Test fun envelopeStreamsManyChunksAndRejectsTamperingTruncationAndExtension() {
+        // Several 64 KiB chunks plus a partial one.
+        val body = ByteArray(300_000) { (it * 31 % 251).toByte() }
+        val file = encrypt(body)
+        assertTrue(decrypt(file).contentEquals(body))
+
+        val flipped = file.copyOf().also { it[it.size / 2] = (it[it.size / 2] + 1).toByte() }
+        assertFails { decrypt(flipped) }
+        // Cutting the file at a chunk boundary is caught because that chunk was not sealed as the last one.
+        val firstFrame = 34 + 4 + 64 * 1024 + 16
+        assertFails { decrypt(file.copyOf(firstFrame)) }
+        assertFails { decrypt(file.copyOf(file.size - 1)) }
+        assertFails { decrypt(file + file.copyOfRange(34, firstFrame)) }
+        val otherVersion = file.copyOf().also { it[5] = 2 }
+        assertFails { decrypt(otherVersion) }
+        // An empty body still has one authenticated final chunk.
+        assertTrue(decrypt(encrypt(ByteArray(0))).isEmpty())
+    }
+
+    @Test fun restoreRejectsDataAfterTheEndOfTheBody() {
+        JvmSqliteDatabase(":memory:").use { source ->
+            source.execute("CREATE TABLE item (id TEXT PRIMARY KEY)")
+            source.execute("INSERT INTO item VALUES ('one')")
+            val backup = PortableBackup.discover(source)
+            val body = backup.export(source) + byteArrayOf(0)
+            JvmSqliteDatabase(":memory:").use { staging ->
+                staging.execute("CREATE TABLE item (id TEXT PRIMARY KEY)")
+                assertFails { backup.restoreToStaging(staging, body) }
+                assertEquals(0, staging.query("SELECT * FROM item").size)
+            }
+        }
+    }
+
+    @Test fun scanWorkingTablesAreExcludedFromBackups() {
         JvmSqliteDatabase(":memory:").use { source ->
             val store = Store(source)
             store.ingest(
@@ -52,8 +109,8 @@ class BackupTest {
                 )
             source.execute("INSERT INTO bitcoin_scan_blocks VALUES ('scratch-sensitive', 42, 0)")
             val archiveWithScratch = PortableBackup.discover(source).export(source)
-            assertEquals(oldArchive, archiveWithScratch)
-            assertTrue(!archiveWithScratch.contains("scratch-sensitive"))
+            assertTrue(oldArchive.contentEquals(archiveWithScratch))
+            assertTrue(!archiveWithScratch.decodeToString().contains("scratch-sensitive"))
             JvmSqliteDatabase(":memory:").use { staging ->
                 val target = Store(staging)
                 io.polion.core.bitcoin
@@ -125,7 +182,7 @@ class BackupTest {
                     }
                 assertFails { backup.restoreToStaging(interrupted, archive) }
                 assertEquals(0, staging.query("SELECT * FROM item").size)
-                assertFails { backup.restoreToStaging(staging, archive.dropLast(1) + "X") }
+                assertFails { backup.restoreToStaging(staging, archive.copyOf(archive.size - 1) + "X".encodeToByteArray()) }
                 assertEquals(2, source.query("SELECT * FROM item").size)
             }
         }
@@ -169,7 +226,7 @@ class BackupTest {
             JvmSqliteDatabase(":memory:").use { staging ->
                 setup(staging)
                 backup.restoreToStaging(staging, archive)
-                assertEquals(archive, backup.export(staging))
+                assertTrue(archive.contentEquals(backup.export(staging)))
                 assertEquals(listOf(listOf(null, null)), staging.query("SELECT numerator, denominator FROM accounting_treatments"))
                 assertEquals("note", staging.query("SELECT note FROM overlay_revisions").single().single())
                 val ledger =
@@ -248,7 +305,7 @@ class BackupTest {
                 .forEach { source.execute("DROP TABLE $it") }
             source.execute("PRAGMA user_version = 3")
             val archive = PortableBackup.discover(source).export(source)
-            assertTrue(!archive.contains("ledger_unallocated_fees"))
+            assertTrue(!archive.decodeToString().contains("ledger_unallocated_fees"))
             JvmSqliteDatabase(":memory:").use { staging ->
                 Store(staging)
                 val backup = PortableBackup.discover(staging)

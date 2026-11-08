@@ -1,17 +1,36 @@
 package io.polion.core.backup
 
 import io.polion.core.bitcoin.BitcoinScanStage
+import io.polion.core.model.isLowerIdentifier
 import io.polion.core.storage.SqliteDatabase
-import io.polion.core.storage.sha256
 
-/** Callers choose durable tables explicitly in foreign-key dependency order; never include credentials. */
+/**
+ * Portable backup body, format 3: a stream of length-prefixed UTF-8 fields (see [FieldWriter]).
+ *
+ * ```
+ * "POLION-BACKUP" "3" <schema user_version> <table count>
+ * per table, in dependency order:
+ *   <table> <column count> <column>...
+ *   per row: "R" <value>...        (null values are encoded as null fields)
+ *   "E" <row count>
+ * "END"
+ * ```
+ *
+ * Rows stream in rowid order straight from the database and straight into the staging database, so memory use does not
+ * grow with the backup. Integrity and confidentiality come from the [BackupEncryption] envelope around this body.
+ */
 class PortableBackup(
     private val tables: List<String>,
 ) {
     companion object {
-        private val excludedTables = (BitcoinScanStage.SCRATCH_TABLES + "android_metadata").joinToString(",") { "'$it'" }
+        const val FORMAT = "3"
+        private const val MAGIC = "POLION-BACKUP"
+        private const val PAGE = 500
+        private val excludedTables =
+            (BitcoinScanStage.SCRATCH_TABLES + io.polion.core.market.MarketFeedRepository.LOCAL_TABLES + "android_metadata")
+                .joinToString(",") { "'$it'" }
 
-        /** Discover durable application tables; transient Bitcoin scan working tables are excluded. */
+        /** Discover durable application tables; Bitcoin scan working tables, market feed caches and device settings are excluded. */
         fun discover(db: SqliteDatabase): PortableBackup {
             val tables =
                 db
@@ -24,44 +43,76 @@ class PortableBackup(
 
     init {
         require(tables.isNotEmpty() && tables.distinct().size == tables.size)
-        require(tables.all { it.matches(Regex("[a-z][a-z0-9_]*")) && !it.contains("secret") && !it.contains("credential") })
+        require(tables.all { it.isLowerIdentifier() && !it.contains("secret") && !it.contains("credential") })
     }
 
-    fun export(db: SqliteDatabase): String =
-        db.transaction {
-            val fields = mutableListOf<String?>("POLION", "2", tables.size.toString(), db.query("PRAGMA user_version").single().single())
-            tables.forEach { table ->
-                val metadata = db.query("PRAGMA table_info($table)")
-                require(metadata.none { (it[2] ?: "").uppercase().contains("BLOB") }) { "Binary columns require an explicit backup codec" }
-                val columns = metadata.map { it[1]!! }
-                require(columns.isNotEmpty() && columns.all { it.matches(Regex("[a-z][a-z0-9_]*")) })
-                val rows = db.query("SELECT ${columns.joinToString(",")} FROM $table").sortedBy { row -> encode(row) }
-                fields.add(table)
-                fields.add(columns.size.toString())
-                fields.addAll(columns)
-                fields.add(rows.size.toString())
-                rows.forEach { fields.addAll(it) }
+    /** Streams one consistent snapshot of every durable table into [sink]. */
+    fun export(
+        db: SqliteDatabase,
+        sink: ByteSink,
+    ) = db.transaction {
+        val out = FieldWriter(sink)
+        out.field(MAGIC)
+        out.field(FORMAT)
+        out.field(
+            db
+                .query("PRAGMA user_version")
+                .single()
+                .single(),
+        )
+        out.field(tables.size.toString())
+        tables.forEach { table ->
+            val metadata = db.query("PRAGMA table_info($table)")
+            require(metadata.none { (it[2] ?: "").uppercase().contains("BLOB") }) { "Binary columns require an explicit backup codec" }
+            val columns = metadata.map { it[1]!! }
+            require(columns.isNotEmpty() && columns.all { it.isLowerIdentifier() })
+            out.field(table)
+            out.field(columns.size.toString())
+            columns.forEach(out::field)
+            var rows = 0L
+            var after = Long.MIN_VALUE
+            while (true) {
+                val page =
+                    db.query(
+                        "SELECT rowid, ${columns.joinToString(
+                            ",",
+                        )} FROM $table WHERE rowid > CAST(? AS INTEGER) ORDER BY rowid LIMIT $PAGE",
+                        listOf(after.toString()),
+                    )
+                page.forEach { row ->
+                    out.field("R")
+                    row.drop(1).forEach(out::field)
+                }
+                rows += page.size
+                if (page.size < PAGE) break
+                after = page.last()[0]!!.toLong()
             }
-            val payload = encode(fields)
-            encode(listOf(sha256(payload), payload))
+            out.field("E")
+            out.field(rows.toString())
         }
+        out.field("END")
+        out.flush()
+    }
 
-    /** Restore to a new, empty database with application-created schemas. The original DB remains untouched. */
+    /** In-memory body (unencrypted), for tests and small data. */
+    fun export(db: SqliteDatabase): ByteArray = ByteArraySink().also { export(db, it) }.toByteArray()
+
     fun restoreToStaging(
         db: SqliteDatabase,
-        archive: String,
-    ) {
-        require(archive.length <= 100_000_000)
-        val outer = decode(archive)
-        require(outer.size == 2 && outer[0] == sha256(requireNotNull(outer[1]))) { "Corrupt archive" }
-        val fields = decode(outer[1]!!)
-        var i = 0
+        body: ByteArray,
+    ) = restoreToStaging(db, ByteArraySource(body))
 
-        fun next(): String = requireNotNull(fields.getOrNull(i++)) { "Malformed archive" }
-        require(next() == "POLION" && next() == "2")
-        val sourceTableCount = next().toInt()
-        require(sourceTableCount in 1..tables.size + 1)
-        val archiveVersion = next().toInt()
+    /** Restore into a new, empty database with application-created schemas. The original database is untouched. */
+    fun restoreToStaging(
+        db: SqliteDatabase,
+        source: ByteSource,
+    ) {
+        val input = FieldReader(source)
+        require(input.next() == MAGIC) { "This is not a Polion backup" }
+        require(input.next() == FORMAT) { "This backup was made by an unsupported Polion version" }
+        val archiveVersion = input.required().toInt()
+        val tableCount = input.required().toInt()
+        require(tableCount in 1..tables.size) { "Backup table set mismatch" }
         db.transaction {
             val stagingVersion =
                 db
@@ -74,9 +125,7 @@ class PortableBackup(
                 db
                     .query(
                         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ($excludedTables) ORDER BY name",
-                    ).map {
-                        it.single()!!
-                    }
+                    ).map { it.single()!! }
             require(targetTables.toSet() == tables.toSet()) { "Staging table set mismatch" }
             BitcoinScanStage.SCRATCH_TABLES.forEach { table ->
                 val exists = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", listOf(table)).isNotEmpty()
@@ -95,158 +144,66 @@ class PortableBackup(
                 if (count != 0) db.execute("DELETE FROM $table")
             }
             var expectedIndex = 0
-            repeat(sourceTableCount) {
-                val table = next()
-                if (table == "android_metadata") {
-                    require(next().toInt() == 1 && next() == "locale")
-                    val platformRows = next().toInt()
-                    require(platformRows in 0..1)
-                    repeat(platformRows) { next() }
-                    return@repeat
-                }
+            repeat(tableCount) {
+                val table = input.required()
                 val position = tables.indexOf(table)
-                require(position >= expectedIndex) { "Archive table order mismatch" }
+                require(position >= expectedIndex) { "Backup table order mismatch" }
                 expectedIndex = position + 1
-                val count = next().toInt()
-                require(count in 1..1000)
-                val columns = List(count) { next() }
+                val columnCount = input.required().toInt()
+                require(columnCount in 1..1000)
+                val columns = List(columnCount) { input.required() }
                 require(columns == db.query("PRAGMA table_info($table)").map { it[1]!! }) { "Schema mismatch" }
-                require(db.query("SELECT COUNT(*) FROM $table").single().single() == "0") { "Staging database is not empty" }
-                val rowCount = next().toInt()
-                require(rowCount in 0..1_000_000)
-                if (table in expectedVersions) require(rowCount == expectedVersions.getValue(table).size) { "Subsystem schema mismatch" }
-                repeat(rowCount) {
-                    val row = List(count) { fields.getOrNull(i++).also { require(i <= fields.size) } }
-                    if (table in
-                        expectedVersions
-                    ) {
-                        require(row == expectedVersions.getValue(table).single()) { "Subsystem schema version mismatch" }
+                val insert = "INSERT INTO $table (${columns.joinToString(",")}) VALUES (${List(columnCount) { "?" }.joinToString(",")})"
+                var rows = 0L
+                while (true) {
+                    when (input.required()) {
+                        "R" -> {
+                            val row = List(columnCount) { input.next() }
+                            if (table in expectedVersions) {
+                                require(row == expectedVersions.getValue(table).single()) { "Subsystem schema version mismatch" }
+                            }
+                            db.execute(insert, row)
+                            rows++
+                        }
+                        "E" -> {
+                            require(input.required().toLong() == rows) { "Backup row count mismatch" }
+                            break
+                        }
+                        else -> throw IllegalArgumentException("Malformed backup")
                     }
-                    db.execute("INSERT INTO $table (${columns.joinToString(",")}) VALUES (${List(count) { "?" }.joinToString(",")})", row)
+                }
+                if (table in
+                    expectedVersions
+                ) {
+                    require(rows == expectedVersions.getValue(table).size.toLong()) { "Subsystem schema mismatch" }
                 }
             }
-            require(i == fields.size)
+            require(input.required() == "END") { "Malformed backup" }
+            input.requireEnd()
             require(db.query("PRAGMA foreign_key_check").isEmpty())
         }
     }
 }
 
-private fun encode(fields: List<String?>): String =
-    buildString {
-        fields.forEach {
-            if (it == null) {
-                append("-1:")
-            } else {
-                append(it.length)
-                append(':')
-                append(it)
-            }
-        }
-    }
-
-private fun decode(data: String): List<String?> {
-    val out = mutableListOf<String?>()
-    var i = 0
-    while (i < data.length) {
-        val colon = data.indexOf(':', i)
-        require(colon in i..(i + 10).coerceAtMost(data.lastIndex))
-        val length = data.substring(i, colon).toInt()
-        i = colon + 1
-        require(length >= -1 && (length == -1 || length <= data.length - i))
-        if (length == -1) {
-            out.add(null)
-        } else {
-            out.add(data.substring(i, i + length))
-            i += length
-        }
-        require(out.size <= 10_000_000)
-    }
-    return out
-}
-
+/**
+ * Password-based streaming encryption around the backup body. The envelope is described in `docs/backup-format.md`:
+ * a versioned header with the KDF parameters, then authenticated chunks whose nonces carry a counter and a final-chunk
+ * flag, so a wrong password, tampering, reordering and truncation are all rejected.
+ */
 expect object BackupEncryption {
+    /** Returns a sink that encrypts into [output]; [EncryptingSink.close] writes the final chunk and must be called. */
     fun encrypt(
-        plaintext: ByteArray,
+        output: ByteSink,
         password: CharArray,
-    ): ByteArray
+    ): EncryptingSink
 
+    /** Returns the decrypted body of [input]; a wrong password or damaged file fails with [IllegalArgumentException]. */
     fun decrypt(
-        ciphertext: ByteArray,
+        input: ByteSource,
         password: CharArray,
-    ): ByteArray
+    ): ByteSource
 }
 
-data class ImportDiagnostic(
-    val row: Int,
-    val message: String,
-)
-
-data class ImportPreview<T>(
-    val valid: List<T>,
-    val diagnostics: List<ImportDiagnostic>,
-)
-
-interface RowImporter<T> {
-    fun parse(row: String): T
-
-    fun key(value: T): String
-
-    fun preview(rows: List<String>): ImportPreview<T> {
-        val valid = mutableListOf<T>()
-        val diagnostics = mutableListOf<ImportDiagnostic>()
-        val keys = mutableSetOf<String>()
-        rows.forEachIndexed { index, row ->
-            try {
-                val value = parse(row)
-                if (keys.add(key(value))) valid.add(value) else diagnostics.add(ImportDiagnostic(index + 1, "Duplicate row"))
-            } catch (_: IllegalArgumentException) {
-                diagnostics.add(ImportDiagnostic(index + 1, "Invalid row"))
-            }
-        }
-        return ImportPreview(valid, diagnostics)
-    }
-}
-
-/** Durable importer commits accepted rows and deduplication keys in the same transaction. */
-class ImportJournal(
-    private val db: SqliteDatabase,
-) {
-    init {
-        db.transaction {
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS import_journal (importer TEXT NOT NULL, row_key TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(importer, row_key))",
-            )
-        }
-    }
-
-    fun <T> commit(
-        importerId: String,
-        importer: RowImporter<T>,
-        preview: ImportPreview<T>,
-        canonical: (T) -> String,
-        apply: (T) -> Unit,
-    ): Int =
-        db.transaction {
-            require(importerId.isNotBlank())
-            var inserted = 0
-            preview.valid.forEach { value ->
-                val key = importer.key(value)
-                require(key.isNotBlank())
-                val fingerprint = sha256(canonical(value))
-                val existing =
-                    db
-                        .query(
-                            "SELECT fingerprint FROM import_journal WHERE importer=? AND row_key=?",
-                            listOf(importerId, key),
-                        ).singleOrNull()
-                        ?.single()
-                require(existing == null || existing == fingerprint) { "Import key conflict" }
-                if (existing == null) {
-                    apply(value)
-                    db.execute("INSERT INTO import_journal VALUES (?, ?, ?)", listOf(importerId, key, fingerprint))
-                    inserted++
-                }
-            }
-            inserted
-        }
+interface EncryptingSink : ByteSink {
+    fun close()
 }

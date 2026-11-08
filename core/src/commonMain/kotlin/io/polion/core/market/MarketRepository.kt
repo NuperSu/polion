@@ -57,6 +57,11 @@ class MarketRepository(
                     "Market schema is incomplete"
                 }
             }
+            // Each lookup asks for one source (manual or a provider); this index finds its newest row directly.
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS market_prices_source_time ON market_prices(base_asset, quote_asset, manual, provider, valid_at, observed_at)",
+            )
+            db.execute("CREATE INDEX IF NOT EXISTS market_withdrawals_price ON market_override_withdrawals(price_id, effective_at)")
         }
     }
 
@@ -114,6 +119,9 @@ class MarketRepository(
         db.execute("INSERT OR IGNORE INTO market_metadata VALUES (?, ?, ?, ?, ?)", values)
     }
 
+    /** Every registered asset ID, in ID order. */
+    fun assetIds(): List<AssetId> = db.query("SELECT id FROM market_assets ORDER BY id").map { AssetId(it.single()!!) }
+
     fun asset(id: AssetId): AssetDefinition? =
         db.query("SELECT kind, network, reference, token_id FROM market_assets WHERE id=?", listOf(id.value)).singleOrNull()?.let {
             AssetDefinition(
@@ -150,6 +158,14 @@ class MarketRepository(
                 listOf(asset.value, atMillis.toString()),
             ).singleOrNull()
             ?.let { AssetMetadata(it[0]!!, it[1]!!, it[2]!!.toInt(), it[3]!!.toLong()) }
+
+    /** Every metadata version of [asset], newest first, for resolving many instants without one query each. */
+    fun metadataHistory(asset: AssetId): List<AssetMetadata> =
+        db
+            .query(
+                "SELECT symbol, name, decimals, effective_at FROM market_metadata WHERE asset_id=? ORDER BY effective_at DESC",
+                listOf(asset.value),
+            ).map { AssetMetadata(it[0]!!, it[1]!!, it[2]!!.toInt(), it[3]!!.toLong()) }
 
     fun mapProvider(
         provider: ProviderId,
@@ -287,7 +303,10 @@ class MarketRepository(
             ids.size
         }
 
-    /** Select manual override first; other observations follow freshness and provider policy. */
+    /**
+     * The most recent valid observation wins, whether manual or provider. A manual observation wins only a tie, so newer
+     * automatic data replaces an older manual override while a newer manual entry still takes precedence.
+     */
     fun lookup(
         base: AssetId,
         quote: AssetId,
@@ -297,47 +316,65 @@ class MarketRepository(
     ): PriceResult {
         require(base != quote)
 
-        fun latest(provider: ProviderId?): PriceObservation? {
-            val filter = if (provider == null) "p.manual=1" else "p.manual=0 AND p.provider=?"
-            val args =
-                listOf(
-                    base.value,
-                    quote.value,
-                    atMillis.toString(),
-                    knownAtMillis.toString(),
-                    atMillis.toString(),
-                    knownAtMillis.toString(),
-                ) +
-                    listOfNotNull(provider?.value)
-            val row =
-                db
-                    .query(
-                        "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p " +
-                            "WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) " +
-                            "AND p.observed_at<=CAST(? AS INTEGER) " +
-                            "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id " +
-                            "AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER)) AND $filter " +
-                            "ORDER BY p.valid_at DESC, p.observed_at DESC, p.id ASC LIMIT 1",
-                        args,
-                    ).singleOrNull() ?: return null
-            return PriceObservation(
-                row[0]!!,
-                Price(base, quote, ExactDecimal.parse(row[1]!!)),
-                row[2]?.let(::ProviderId),
-                row[3]!!.toLong(),
-                row[4]!!.toLong(),
-                row[5] == "1",
-            )
-        }
-        val observations = listOfNotNull(latest(null)) + policy.providerPriority.mapNotNull(::latest)
+        val observations =
+            listOfNotNull(latest(base, quote, atMillis, knownAtMillis, null)) +
+                policy.providerPriority.mapNotNull { latest(base, quote, atMillis, knownAtMillis, it) }
+        return select(observations, atMillis, policy)
+    }
 
+    /** The newest manual ([provider] null) or provider observation valid and known at the instant, if not withdrawn. */
+    private fun latest(
+        base: AssetId,
+        quote: AssetId,
+        atMillis: Long,
+        knownAtMillis: Long,
+        provider: ProviderId?,
+    ): PriceObservation? {
+        val filter = if (provider == null) "p.manual=1" else "p.manual=0 AND p.provider=?"
+        val args =
+            listOf(
+                base.value,
+                quote.value,
+                atMillis.toString(),
+                knownAtMillis.toString(),
+                atMillis.toString(),
+                knownAtMillis.toString(),
+            ) +
+                listOfNotNull(provider?.value)
+        val row =
+            db
+                .query(
+                    "SELECT p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual FROM market_prices p " +
+                        "WHERE p.base_asset=? AND p.quote_asset=? AND p.valid_at<=CAST(? AS INTEGER) " +
+                        "AND p.observed_at<=CAST(? AS INTEGER) " +
+                        "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=p.id " +
+                        "AND w.effective_at<=CAST(? AS INTEGER) AND w.observed_at<=CAST(? AS INTEGER)) AND $filter " +
+                        "ORDER BY p.valid_at DESC, p.observed_at DESC, p.id ASC LIMIT 1",
+                    args,
+                ).singleOrNull() ?: return null
+        return PriceObservation(
+            row[0]!!,
+            Price(base, quote, ExactDecimal.parse(row[1]!!)),
+            row[2]?.let(::ProviderId),
+            row[3]!!.toLong(),
+            row[4]!!.toLong(),
+            row[5] == "1",
+        )
+    }
+
+    /** Chooses among the latest manual and per-provider observations exactly as [lookup] documents. */
+    private fun select(
+        observations: List<PriceObservation>,
+        atMillis: Long,
+        policy: PricePolicy,
+    ): PriceResult {
         fun isStale(observation: PriceObservation): Boolean =
             atMillis >= Long.MIN_VALUE + policy.maxAgeMillis && observation.validAtMillis < atMillis - policy.maxAgeMillis
         val selected =
             observations.minWithOrNull(
-                compareBy<PriceObservation> { if (it.manual) 0 else 1 }
-                    .thenBy { if (!it.manual && policy.preferFresh && isStale(it)) 1 else 0 }
-                    .thenByDescending { if (!it.manual && policy.preferLatest) it.validAtMillis else Long.MIN_VALUE }
+                compareBy<PriceObservation> { if (policy.preferFresh && isStale(it)) 1 else 0 }
+                    .thenByDescending { if (policy.preferLatest) it.validAtMillis else Long.MIN_VALUE }
+                    .thenBy { if (it.manual) 0 else 1 }
                     .thenBy { if (it.manual) -1 else policy.providerPriority.indexOf(it.providerId) }
                     .thenByDescending { it.validAtMillis }
                     .thenByDescending { it.observedAtMillis }
@@ -346,6 +383,191 @@ class MarketRepository(
         val stale = isStale(selected)
         return PriceResult(if (stale) PriceStatus.STALE else PriceStatus.FRESH, selected)
     }
+
+    /**
+     * [lookup] for many instants at once, with identical results. Dense recent data is read once and resolved in memory;
+     * when the range holds many more rows than instants, SQLite resolves each instant instead. Measured on a phone, each
+     * strategy is several times faster than the other in its own case.
+     */
+    fun lookupSeries(
+        base: AssetId,
+        quote: AssetId,
+        times: List<Long>,
+        knownAtMillis: Long,
+        policyAt: (Long) -> PricePolicy,
+        windowMillis: Long = 2 * 86_400_000L,
+        // Above this many rows per instant and source, SQLite resolves each instant; tests set it to force either path.
+        rowsPerInstant: Long = 10,
+    ): List<PriceResult> {
+        require(base != quote)
+        if (times.isEmpty()) return emptyList()
+        val policies = times.map(policyAt)
+        val sources = listOf<ProviderId?>(null) + policies.flatMap { it.providerPriority }.distinct()
+        val low = times.min().let { if (it >= Long.MIN_VALUE + windowMillis) it - windowMillis else Long.MIN_VALUE }
+        val high = times.max()
+        val rowsInRange =
+            db
+                .query(
+                    "SELECT COUNT(*) FROM market_prices WHERE base_asset=? AND quote_asset=? " +
+                        "AND valid_at>=CAST(? AS INTEGER) AND valid_at<=CAST(? AS INTEGER)",
+                    listOf(base.value, quote.value, low.toString(), high.toString()),
+                ).single()
+                .single()!!
+                .toLong()
+        val found =
+            if (rowsInRange <= times.size.toLong() * sources.size * rowsPerInstant) {
+                latestInWindow(base, quote, times, knownAtMillis, sources, low, high)
+            } else {
+                latestPerInstant(base, quote, times, knownAtMillis, sources)
+            }
+        return times.mapIndexed { index, at ->
+            val policy = policies[index]
+            select((listOf<ProviderId?>(null) + policy.providerPriority).mapNotNull { found[it]?.get(at) }, at, policy)
+        }
+    }
+
+    /** For each source, SQLite finds the newest usable observation at every instant with [latest]'s conditions. */
+    private fun latestPerInstant(
+        base: AssetId,
+        quote: AssetId,
+        times: List<Long>,
+        knownAtMillis: Long,
+        sources: List<ProviderId?>,
+    ): Map<ProviderId?, Map<Long, PriceObservation>> {
+        val distinct = times.distinct()
+        return sources.associateWith { source ->
+            val filter = if (source == null) "q.manual=1" else "q.manual=0 AND q.provider=?"
+            val found = mutableMapOf<Long, PriceObservation>()
+            // SQLite limits bound parameters, so long series are asked for in chunks.
+            distinct.chunked(400).forEach { chunk ->
+                val instants = chunk.joinToString(",") { "(CAST(? AS INTEGER))" }
+                db
+                    .query(
+                        "WITH t(at) AS (VALUES $instants) SELECT t.at, p.id, p.value, p.provider, p.valid_at, p.observed_at, p.manual " +
+                            "FROM t JOIN market_prices p ON p.id = (SELECT q.id FROM market_prices q " +
+                            "WHERE q.base_asset=? AND q.quote_asset=? AND q.valid_at<=t.at AND q.observed_at<=CAST(? AS INTEGER) " +
+                            "AND NOT EXISTS (SELECT 1 FROM market_override_withdrawals w WHERE w.price_id=q.id " +
+                            "AND w.effective_at<=t.at AND w.observed_at<=CAST(? AS INTEGER)) AND $filter " +
+                            "ORDER BY q.valid_at DESC, q.observed_at DESC, q.id ASC LIMIT 1)",
+                        chunk.map { it.toString() } +
+                            listOf(base.value, quote.value, knownAtMillis.toString(), knownAtMillis.toString()) +
+                            listOfNotNull(source?.value),
+                    ).forEach { row ->
+                        found[row[0]!!.toLong()] =
+                            PriceObservation(
+                                row[1]!!,
+                                Price(base, quote, ExactDecimal.parse(row[2]!!)),
+                                row[3]?.let(::ProviderId),
+                                row[4]!!.toLong(),
+                                row[5]!!.toLong(),
+                                row[6] == "1",
+                            )
+                    }
+            }
+            found
+        }
+    }
+
+    /**
+     * Reads the rows valid in [low]..[high] once and resolves each instant in memory, parsing only selected rows. An
+     * instant with nothing usable in the window falls back to [latest] when older rows exist, so results match.
+     */
+    private fun latestInWindow(
+        base: AssetId,
+        quote: AssetId,
+        times: List<Long>,
+        knownAtMillis: Long,
+        sources: List<ProviderId?>,
+        low: Long,
+        high: Long,
+    ): Map<ProviderId?, Map<Long, PriceObservation>> {
+        val rows =
+            db
+                .query(
+                    "SELECT id, value, provider, valid_at, observed_at, manual FROM market_prices WHERE base_asset=? AND quote_asset=? " +
+                        "AND valid_at>=CAST(? AS INTEGER) AND valid_at<=CAST(? AS INTEGER) AND observed_at<=CAST(? AS INTEGER)",
+                    listOf(base.value, quote.value, low.toString(), high.toString(), knownAtMillis.toString()),
+                ).map { WindowRow(it[0]!!, it[1]!!, it[2]?.let(::ProviderId), it[3]!!.toLong(), it[4]!!.toLong(), it[5] == "1") }
+        val withdrawals =
+            db
+                .query(
+                    "SELECT w.price_id, w.effective_at FROM market_override_withdrawals w JOIN market_prices p ON p.id=w.price_id " +
+                        "WHERE p.base_asset=? AND p.quote_asset=? AND w.observed_at<=CAST(? AS INTEGER)",
+                    listOf(base.value, quote.value, knownAtMillis.toString()),
+                ).groupBy({ it[0]!! }, { it[1]!!.toLong() })
+                .mapValues { (_, at) -> at.min() }
+        val order = compareByDescending<WindowRow> { it.validAt }.thenByDescending { it.observedAt }.thenBy { it.id }
+        // Manual observations form one source; provider observations one source per provider, as in [lookup].
+        val bySource =
+            rows
+                .filter { it.manual || it.provider != null }
+                .groupBy { if (it.manual) null else it.provider }
+                .mapValues { (_, list) -> list.sortedWith(order) }
+        val parsed = mutableMapOf<String, PriceObservation>()
+
+        fun observation(row: WindowRow) =
+            parsed.getOrPut(row.id) {
+                PriceObservation(
+                    row.id,
+                    Price(base, quote, ExactDecimal.parse(row.value)),
+                    row.provider,
+                    row.validAt,
+                    row.observedAt,
+                    row.manual,
+                )
+            }
+        val olderData = mutableMapOf<ProviderId?, Boolean>()
+
+        // A source with no observation before the window can never match there, so it needs no per-instant fallback.
+        fun hasOlder(source: ProviderId?): Boolean =
+            olderData.getOrPut(source) {
+                val filter = if (source == null) "manual=1" else "manual=0 AND provider=?"
+                db
+                    .query(
+                        "SELECT 1 FROM market_prices WHERE base_asset=? AND quote_asset=? AND valid_at<CAST(? AS INTEGER) " +
+                            "AND observed_at<=CAST(? AS INTEGER) AND $filter LIMIT 1",
+                        listOf(base.value, quote.value, low.toString(), knownAtMillis.toString()) + listOfNotNull(source?.value),
+                    ).isNotEmpty()
+            }
+
+        fun inWindow(
+            source: ProviderId?,
+            at: Long,
+        ): PriceObservation? {
+            val list = bySource[source].orEmpty()
+            // Descending by validity: skip entries valid after this instant, then take the first not yet withdrawn.
+            var lo = 0
+            var hi = list.size
+            while (lo < hi) {
+                val mid = (lo + hi) / 2
+                if (list[mid].validAt > at) lo = mid + 1 else hi = mid
+            }
+            for (index in lo until list.size) {
+                val candidate = list[index]
+                val withdrawnAt = withdrawals[candidate.id]
+                if (withdrawnAt == null || withdrawnAt > at) return observation(candidate)
+            }
+            return if (hasOlder(source)) latest(base, quote, at, knownAtMillis, source) else null
+        }
+        val distinct = times.distinct()
+        return sources.associateWith { source -> distinct.mapNotNull { at -> inWindow(source, at)?.let { at to it } }.toMap() }
+    }
+
+    /** Every external ID [provider] maps to a portfolio asset, in one query. */
+    fun providerMappings(provider: ProviderId): Map<String, AssetId> =
+        db
+            .query("SELECT external_id, asset_id FROM market_provider_mappings WHERE provider=?", listOf(provider.value))
+            .associate { it[0]!! to AssetId(it[1]!!) }
+
+    /** A price row read for a window, kept as text until an instant selects it. */
+    private class WindowRow(
+        val id: String,
+        val value: String,
+        val provider: ProviderId?,
+        val validAt: Long,
+        val observedAt: Long,
+        val manual: Boolean,
+    )
 
     private fun requireAsset(id: AssetId) {
         require(db.query("SELECT id FROM market_assets WHERE id=?", listOf(id.value)).isNotEmpty()) { "Unknown asset" }

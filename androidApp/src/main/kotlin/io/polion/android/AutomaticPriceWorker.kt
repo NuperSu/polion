@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import io.polion.core.application.PortfolioApplication
+import io.polion.ui.MARKET_SCHEDULED_AGE_MILLIS
 import io.polion.core.market.KrakenRateLimitedException
 import io.polion.core.storage.AndroidSqliteDatabase
 import io.polion.ui.PriceRefreshPhase
@@ -92,6 +93,10 @@ class AutomaticPriceWorker(
                         })
                     app.refreshAutomaticPriceSet(transport::get) { check(!isStopped && !AutomaticPriceGate.paused) }
                     app.recordAutomaticPriceStatus(true)
+                    // Market lists ride on the same schedule; a failure here never fails the price refresh.
+                    if (app.marketDataConsent()) {
+                        runCatching { app.refreshMarketFeeds(MarketFeedRefresher.transport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
+                    }
                 } catch (failure: Exception) {
                     if (!isStopped &&
                         !AutomaticPriceGate.paused

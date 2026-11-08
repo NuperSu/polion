@@ -139,7 +139,7 @@ class PhaseThreeTransactionsTest {
                             val density = LocalDensity.current
                             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                                 PolionTheme(AppearanceTheme.DARK) {
-                                    TransactionEntry(app, host, data, true, btc, null, {}, {}, {}, { saved++ }, {})
+                                    TransactionEntry(app, host, data, true, btc, null, {}, {}, {}, {}, { saved++ }, {})
                                 }
                             }
                         }
@@ -241,7 +241,9 @@ class PhaseThreeTransactionsTest {
                     setContent {
                         if (visible.value) {
                             CompositionLocalProvider(LocalSaveableStateRegistry provides registry) {
-                                PolionTheme(AppearanceTheme.DARK) { TransactionEntry(app, host, data, true, btc, null, {}, {}, {}, {}, {}) }
+                                PolionTheme(
+                                    AppearanceTheme.DARK,
+                                ) { TransactionEntry(app, host, data, true, btc, null, {}, {}, {}, {}, {}, {}) }
                             }
                         }
                     }

@@ -8,6 +8,6 @@ Polion's production default uses the shared typed `ModelShell` and screen render
 - Insights binds portfolio and priced balance; analytics and reports remain in contextual tools until their data is available to the shared screen.
 - Accounts exposes source/portfolio/accepted-history cards, connection review, per-account holdings and archive/restore. Accounts and Settings open history refresh/retry, consent and confirmed recovery directly. Deeper owner/group/derived-address and accounting workflows remain in contextual tools.
 - Advanced tools retains account, portfolio, activity, reporting and settings workflows, including existing transaction records and accounting review.
-- The inline alert editor is fixture-only; production alert delivery is planned for Phase 7.
+- Coin Alerts and Order book tabs are live: CoinGecko-priced alerts with delivery on Android and desktop ([notifications](notifications.md)), and Kraken's book for one pair ([order book](order-book.md)).
 
 Financial presentation follows the [product contract](product-contract.md): saved evidence, partial coverage and unknown basis remain distinct from provider success. See [validation](validation.md) for executed responsive, platform and workflow checks.

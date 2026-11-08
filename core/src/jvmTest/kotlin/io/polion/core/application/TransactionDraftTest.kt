@@ -8,10 +8,12 @@ import io.polion.core.model.ActivityId
 import io.polion.core.model.AssetId
 import io.polion.core.model.ExactDecimal
 import io.polion.core.model.OwnerId
+import io.polion.core.model.PortfolioId
 import io.polion.core.model.Rational
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
 import io.polion.core.ownership.Owner
+import io.polion.core.ownership.Portfolio
 import io.polion.core.storage.JvmSqliteDatabase
 import java.nio.file.Files
 import kotlin.test.Test
@@ -154,6 +156,31 @@ class TransactionDraftTest {
         }
     }
 
+    @Test fun zeroBasisRewardsReplaceOnlyRewardCostAndAreReversible() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 10000L }
+            setup(app)
+            app.saveTransaction(draft("buy", TransactionType.BUY, "1", "100", time = 2000))
+            app.saveTransaction(draft("reward", TransactionType.REWARD, "0.1", "120", time = 3000))
+            app.saveTransaction(draft("unpriced", TransactionType.REWARD, "0.2", time = 3500))
+            app.saveTransaction(draft("sell", TransactionType.SELL, "1.3", "150", time = 4000))
+
+            fun report() = app.accountingReport().report
+            // The unpriced reward has unknown basis, so the gain is unknown until the policy gives it zero.
+            assertNull(report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
+
+            app.setZeroBasisRewards(true)
+            assertTrue(app.generalPreferences().zeroBasisRewards)
+            val zero = report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }
+            // Proceeds 195; basis 100 bought + 0 for both rewards.
+            assertEquals(Rational.of("95"), zero.gain)
+
+            app.setZeroBasisRewards(false)
+            assertNull(report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
+            assertEquals(TransactionType.REWARD, app.transactionDraft(ActivityId("reward"))?.type)
+        }
+    }
+
     @Test fun failedTreatmentWriteRollsBackAllLegsNotesAndDraft() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }
@@ -202,6 +229,30 @@ class TransactionDraftTest {
             }
         } finally {
             Files.deleteIfExists(file)
+        }
+    }
+
+    @Test fun treatmentsPricedInAnotherCurrencyKeepTheirLotWithUnknownBasis() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 10000L }
+            setup(app)
+            app.saveTransaction(draft("buy", TransactionType.BUY, "2", "100"))
+            val eur = PortfolioId("eur")
+            app.savePortfolio(Portfolio(eur, "EUR", "EUR"))
+            val view = app.accountingReport(eur)
+            assertEquals(listOf(ActivityId("buy")), view.currencyMismatch)
+            assertTrue(view.invalidTreatments.isEmpty(), "a currency change must not invalidate the treatment")
+            val lot = view.report.lots.single { it.acquisitionActivityId == ActivityId("buy") && it.asset == btc }
+            assertEquals("200000000", lot.quantity.toString())
+            assertNull(lot.basis)
+            // The same ledger still reports the USD basis in its own currency.
+            val usdView = app.accountingReport()
+            assertTrue(usdView.currencyMismatch.isEmpty())
+            val usdLot =
+                usdView.report.lots.single {
+                    it.acquisitionActivityId == ActivityId("buy") && it.asset == btc
+                }
+            assertEquals(Rational.of("200"), usdLot.basis)
         }
     }
 }

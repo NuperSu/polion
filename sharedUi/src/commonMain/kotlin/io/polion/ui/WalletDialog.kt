@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -28,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import io.polion.core.application.PortfolioApplication
@@ -140,8 +142,13 @@ internal fun WalletDialog(
                 Text(
                     "Discovery queries derived addresses at ${data.sourceEndpoint}. It stops after 20 unused addresses per branch; activity beyond that gap may be missed.",
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Checkbox(consent, { consent = it }, enabled = !busy, modifier = Modifier.testTag("wallet-source-consent"))
+                Row(
+                    Modifier
+                        .toggleable(value = consent, enabled = !busy, role = Role.Checkbox) { consent = it }
+                        .testTag("wallet-source-consent"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Checkbox(checked = consent, onCheckedChange = null, enabled = !busy)
                     Text("Allow public address queries to this provider.")
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

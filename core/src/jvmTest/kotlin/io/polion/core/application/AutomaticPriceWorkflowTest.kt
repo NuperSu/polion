@@ -10,6 +10,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 
 class AutomaticPriceWorkflowTest {
     @Test fun cooldownSurvivesDatabaseCloseAndReopen() {
@@ -158,6 +159,41 @@ class AutomaticPriceWorkflowTest {
             assertEquals(4, urls.size)
             assertEquals(setOf("USD", "EUR"), db.query("SELECT DISTINCT quote_asset FROM market_prices").map { it.single() }.toSet())
             assertEquals("1", db.query("SELECT COUNT(*) FROM market_prices WHERE quote_asset='USD'").single().single())
+        }
+    }
+
+    @Test fun automaticRefreshSwitchSetsPreferenceAndPriceConsentTogether() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { now }
+            assertEquals(null, app.automaticRefreshPreference())
+            assertEquals(false, app.automaticPriceConsent())
+
+            val before = app.automaticPriceGeneration()
+            app.setAutomaticRefresh(true)
+            assertEquals(true, app.automaticRefreshPreference())
+            assertEquals(true, app.automaticPriceConsent())
+            assertEquals(true, app.automaticPortfolioPriceConsent())
+            val enabledGeneration = app.automaticPriceGeneration()
+            assertNotEquals(before, enabledGeneration)
+
+            app.setAutomaticRefresh(false)
+            assertEquals(false, app.automaticRefreshPreference())
+            assertEquals(false, app.automaticPriceConsent())
+            assertNotEquals(enabledGeneration, app.automaticPriceGeneration())
+        }
+    }
+
+    @Test fun everyFinishedPriceRefreshStartsTheCooldown() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            var clock = now
+            val app = PortfolioApplication(db) { clock }
+            app.setAutomaticRefresh(true)
+            assertEquals(null, app.automaticPriceLastRunMillis())
+            app.recordAutomaticPriceStatus(success = true)
+            assertEquals(now, app.automaticPriceLastRunMillis())
+            clock = now + 1000
+            app.recordAutomaticPriceStatus(success = false)
+            assertEquals(now + 1000, app.automaticPriceLastRunMillis())
         }
     }
 

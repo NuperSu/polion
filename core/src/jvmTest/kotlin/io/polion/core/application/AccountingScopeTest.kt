@@ -163,7 +163,7 @@ class AccountingScopeTest {
         }
     }
 
-    @Test fun destinationPortfolioReportsMissingAndInvalidSourceDependencies() {
+    @Test fun destinationPortfolioReportsMissingAndCurrencyMismatchedSourceDependencies() {
         listOf(null, "EUR").forEach { sourceQuote ->
             JvmSqliteDatabase(":memory:").use { db ->
                 val app = setup(db)
@@ -171,11 +171,22 @@ class AccountingScopeTest {
                 transfer(app, first, destination)
                 app.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
                 val view = app.accountingReport(selected)
-                assertEquals(if (sourceQuote == null) listOf(ActivityId("source")) else emptyList(), view.missingTreatments)
-                assertEquals(if (sourceQuote == null) emptyList() else listOf(ActivityId("source")), view.invalidTreatments)
-                assertTrue(view.report.lots.isEmpty())
+                if (sourceQuote == null) {
+                    // Missing treatments drop the dependent inventory: no lot is invented.
+                    assertEquals(listOf(ActivityId("source")), view.missingTreatments)
+                    assertTrue(view.invalidTreatments.isEmpty())
+                    assertTrue(view.currencyMismatch.isEmpty())
+                    assertTrue(view.report.lots.isEmpty())
+                } else {
+                    // A treatment priced in another currency keeps its lot with unknown basis, marked as a mismatch.
+                    assertTrue(view.missingTreatments.isEmpty())
+                    assertTrue(view.invalidTreatments.isEmpty())
+                    assertEquals(listOf(ActivityId("source")), view.currencyMismatch)
+                    val lot = view.report.lots.single()
+                    assertEquals(destination, lot.account)
+                    assertEquals(null, lot.basis)
+                }
                 assertTrue(view.report.disposals.isEmpty())
-                assertTrue(view.report.valuations.isEmpty())
             }
         }
     }

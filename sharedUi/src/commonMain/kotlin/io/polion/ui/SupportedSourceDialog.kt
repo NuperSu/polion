@@ -29,6 +29,7 @@ internal fun SourceWorkflow.productDialog(): ProductDialog =
 @Composable
 internal fun SupportedSourceDialog(
     onSelect: (SourceChoice) -> Unit,
+    onImportCsv: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -52,11 +53,15 @@ internal fun SupportedSourceDialog(
                     }
                 }
                 item {
-                    Text("Import CSV · unavailable", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "File import is not connected. Add a manual transaction or connect a supported public Bitcoin source.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    OutlinedButton(
+                        onClick = onImportCsv,
+                        modifier = Modifier.fillMaxWidth().testTag("source-choice-csv"),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Import CSV File", style = MaterialTheme.typography.titleSmall)
+                            Text("Import transactions from a file", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             }
         },

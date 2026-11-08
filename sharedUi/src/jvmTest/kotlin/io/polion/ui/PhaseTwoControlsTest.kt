@@ -49,8 +49,6 @@ class PhaseTwoControlsTest {
                     onNodeWithText("All portfolios").assertIsDisplayed()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("coin-accounting-ready").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("93250.00 USD", substring = true).performScrollTo().assertIsDisplayed()
-                    onNodeWithText("Review activity and corrections").performScrollTo().performClick()
-                    onNodeWithText("Back").performClick()
                     onNodeWithText("All portfolios").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("model-PORTFOLIO").performClick()
                     onNodeWithText("Euro test").assertIsDisplayed()

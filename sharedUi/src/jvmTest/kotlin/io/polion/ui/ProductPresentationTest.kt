@@ -83,10 +83,14 @@ class ProductPresentationTest {
             presenter.loadChart(1)
             presenter.loadChart(2)
             assertEquals(5, calls)
-            time += 60_000
+            // Cached ranges expire after five minutes.
+            time += 299_999
+            presenter.loadChart(2)
+            assertEquals(5, calls)
+            time += 1
             presenter.loadChart(2)
             assertEquals(6, calls)
-            time -= 120_000
+            time -= 600_000
             presenter.loadChart(2)
             assertEquals(7, calls)
             snapshot = snapshot.copy(currency = AssetId("EUR"))
@@ -170,8 +174,9 @@ class ProductPresentationTest {
             presenter.loadChart(0)
             assertEquals(end - 86_400_000L, requested.first())
             assertEquals(end, requested.last())
-            assertEquals(25, requested.size)
-            assertEquals(3_600_000L, requested[1] - requested[0])
+            // One day in 15-minute steps: enough for a smooth line and 24 four-sample candles.
+            assertEquals(97, requested.size)
+            assertEquals(900_000L, requested[1] - requested[0])
         }
 
     @Test

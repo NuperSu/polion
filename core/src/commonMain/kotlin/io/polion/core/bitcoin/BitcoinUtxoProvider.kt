@@ -2,6 +2,7 @@ package io.polion.core.bitcoin
 
 import io.polion.core.model.AccountId
 import io.polion.core.model.ExactInteger
+import io.polion.core.model.isCanonicalUnsigned
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
@@ -45,7 +46,7 @@ fun parseEsploraUtxos(
         Json.parseToJsonElement(payload).jsonArray.map { entry ->
             val item = entry.jsonObject
             val value = item.getValue("value").jsonPrimitive
-            require(!value.isString && value.content.matches(Regex("0|[1-9][0-9]*"))) { "Invalid UTXO amount" }
+            require(!value.isString && value.content.isCanonicalUnsigned()) { "Invalid UTXO amount" }
             val status = item.getValue("status").jsonObject
             val confirmed = status.getValue("confirmed").jsonPrimitive.boolean
             EsploraUtxo(

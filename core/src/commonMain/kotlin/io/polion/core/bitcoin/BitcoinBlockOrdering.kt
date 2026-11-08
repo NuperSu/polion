@@ -1,5 +1,6 @@
 package io.polion.core.bitcoin
 
+import io.polion.core.model.isHash64
 import io.polion.core.storage.RawObservation
 import io.polion.core.storage.sha256
 import kotlinx.serialization.json.Json
@@ -31,12 +32,12 @@ object BitcoinBlockOrdering {
                 } else {
                     val hash = status.getValue("block_hash").jsonPrimitive.content
                     val height = status.getValue("block_height").jsonPrimitive.long
-                    require(hash.matches(Regex("[0-9a-f]{64}")) && height >= 0)
+                    require(hash.isHash64() && height >= 0)
                     if (hash !in blocks) {
                         val payload = transport.get("/block/$hash/txids")
                         val txids = Json.parseToJsonElement(payload).jsonArray.map { it.jsonPrimitive.content }
                         require(
-                            txids.isNotEmpty() && txids.all { it.matches(Regex("[0-9a-f]{64}")) } && txids.distinct().size == txids.size,
+                            txids.isNotEmpty() && txids.all { it.isHash64() } && txids.distinct().size == txids.size,
                         )
                         indices[hash] = txids.withIndex().associate { it.value to it.index }
                         blocks[hash] = height to

@@ -20,10 +20,15 @@ class SupportedSourceDialogTest {
     fun catalogChoicesDisplayTheirMetadataAndDispatchTheSelectedWorkflow() {
         var selected: SourceChoice? = null
         var dismissed = false
+        var importedCsv = false
         runDesktopComposeUiTest(width = 800, height = 900) {
             setContent {
                 PolionTheme(AppearanceTheme.LIGHT) {
-                    SupportedSourceDialog(onSelect = { selected = it }, onDismiss = { dismissed = true })
+                    SupportedSourceDialog(
+                        onSelect = { selected = it },
+                        onImportCsv = { importedCsv = true },
+                        onDismiss = { dismissed = true },
+                    )
                 }
             }
             SupportedSources.choices.forEach { choice ->
@@ -33,6 +38,10 @@ class SupportedSourceDialogTest {
                 onNodeWithTag("source-choice-${choice.id}").performClick()
                 assertEquals(choice, selected)
             }
+            onNodeWithTag("source-choice-csv").performScrollTo().assertIsDisplayed()
+            onNodeWithText("Import transactions from a file").assertIsDisplayed()
+            onNodeWithTag("source-choice-csv").performClick()
+            assertTrue(importedCsv)
             onNodeWithText("Close").performClick()
             assertTrue(dismissed)
         }

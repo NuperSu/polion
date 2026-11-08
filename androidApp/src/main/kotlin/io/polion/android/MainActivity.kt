@@ -29,11 +29,16 @@ import androidx.core.view.WindowInsetsControllerCompat
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.storage.AndroidSqliteDatabase
+import io.polion.ui.BiometricUnlock
+import io.polion.ui.OrderBookResult
+import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
 import io.polion.ui.PlatformActions
 import io.polion.ui.PolionApp
 import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
 import io.polion.ui.UnlockResult
+import io.polion.ui.WALLET_REFRESH_INTERVAL_MILLIS
+import io.polion.ui.cooldownDelayMillis
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.update
@@ -79,11 +84,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        host?.returned()
         RefreshWorker.dataRevision.update { it + 1 }
+        // Runs in the background and does nothing unless an alert or notification setting is on.
+        host?.checkNotifications()
     }
 
     override fun onStop() {
-        host?.let { if (!it.isChoosing) it.lock() }
+        host?.let { if (!it.isChoosing) it.left() }
         super.onStop()
     }
 
@@ -107,14 +115,108 @@ private class AndroidHost(
     private val preferences = activity.getSharedPreferences("privacy", 0)
     private val lockStore = SecureLockStore(preferences)
     private val files = BackupFiles(activity)
+    private val biometrics = BiometricLock(activity, preferences)
     private val notificationPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    val isChoosing: Boolean get() = files.isChoosing
+    val isChoosing: Boolean get() = files.isChoosing || biometrics.prompting
+
+    override val defaultDeviceName: String
+        get() =
+            android.provider.Settings.Global.getString(activity.contentResolver, android.provider.Settings.Global.DEVICE_NAME)
+                ?.takeIf { it.isNotBlank() } ?: android.os.Build.MODEL
+
+    override fun refreshMarkets(
+        maxAgeMillis: Long,
+        onResult: (String) -> Unit,
+    ) {
+        MarketFeedRefresher.refresh(activity, maxAgeMillis) { message -> main.post { if (!closed) onResult(message) } }
+    }
+
+    override fun fetchOrderBook(
+        coinId: String,
+        onResult: (OrderBookResult) -> Unit,
+    ) {
+        MarketFeedRefresher.orderBook(activity, coinId, closing = { closed }) { result -> main.post { if (!closed) onResult(result) } }
+    }
+
+    override fun checkNotifications(onResult: (Int) -> Unit) {
+        MarketFeedRefresher.checkNotifications(activity, closing = { closed }) { count -> main.post { if (!closed) onResult(count) } }
+    }
+
+    /**
+     * Reschedules the periodic check on the database thread. On the main thread, asks for notification permission when
+     * it is missing, then runs a check now.
+     */
+    override fun notificationSettingsChanged() {
+        executor.execute {
+            val active = runCatching { app.value?.notificationsActive() }.getOrNull() == true
+            NotificationWorker.schedule(activity, active)
+            main.post {
+                if (active && !closed) {
+                    val needsPermission =
+                        Build.VERSION.SDK_INT >= 33 &&
+                            activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    if (needsPermission) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    checkNotifications()
+                }
+            }
+        }
+    }
+
+    override fun biometricUnlock(): BiometricUnlock = biometrics.status(lockStore.hasLock)
+
+    override fun setBiometricUnlock(
+        enabled: Boolean,
+        onResult: (String) -> Unit,
+    ) {
+        if (!enabled) {
+            biometrics.disable()
+            onResult("Fingerprint unlock off")
+        } else if (!lockStore.hasLock || locked.value) {
+            onResult("Turn on Passcode Lock first")
+        } else {
+            biometrics.enable { error -> onResult(if (error == null) "Fingerprint unlock on" else error.ifEmpty { "Fingerprint unlock not changed" }) }
+        }
+    }
+
+    override fun unlockWithBiometrics(onResult: (UnlockResult) -> Unit) {
+        if (biometricUnlock() != BiometricUnlock.ON) {
+            onResult(UnlockResult(false, "Fingerprint unlock is off. Unlock with your password."))
+            return
+        }
+        biometrics.unlock { error ->
+            if (error == null) locked.value = false
+            // An empty message means the user chose the password instead; nothing to report.
+            onResult(UnlockResult(error == null, error?.ifEmpty { null }))
+        }
+    }
     private lateinit var db: AndroidSqliteDatabase
     val app = mutableStateOf<PortfolioApplication?>(null)
     val openFailed = mutableStateOf(false)
 
     @Volatile private var closed = false
     val locked = mutableStateOf(lockStore.hasLock)
+
+    @Volatile private var lockDelay = 0L
+    private var leftAt: Long? = null
+
+    override val lockDelayMillis: Long get() = lockDelay
+
+    override fun setLockDelay(millis: Long) {
+        lockDelay = millis
+        executor.execute { runCatching { app.value?.setLockDelay(millis) } }
+    }
+
+    /** The app went to the background: lock now, or remember when, depending on the delay. */
+    fun left() {
+        if (lockDelay == 0L) lock() else leftAt = android.os.SystemClock.elapsedRealtime()
+    }
+
+    /** The app came back: lock if it was away at least as long as the delay. */
+    fun returned() {
+        val away = leftAt?.let { android.os.SystemClock.elapsedRealtime() - it }
+        leftAt = null
+        if (away != null && away >= lockDelay) lock()
+    }
 
     init {
         runCatching {
@@ -137,9 +239,11 @@ private class AndroidHost(
                 Files.createDirectories(file.parent)
                 db = AndroidSqliteDatabase(file.toString())
                 val opened = PortfolioApplication(db, System::currentTimeMillis)
+                opened.lockDelayMillis()?.let { lockDelay = it }
                 if (runCatching { reconcileRefreshPreferences(opened) }.isFailure) {
                     runCatching { opened.recordAutomaticPriceSchedulingFailure() }
                 }
+                runCatching { NotificationWorker.schedule(activity, opened.notificationsActive()) }
                 main.post { if (!closed) app.value = opened }
             } catch (_: Exception) {
                 if (::db.isInitialized) runCatching { db.close() }
@@ -156,16 +260,75 @@ private class AndroidHost(
         main.post { files.save(name, bytes) { onResult(if (it) "File saved" else "File was not saved") } }
     }
 
-    override fun openFile(onResult: (ByteArray?) -> Unit) {
-        main.post { files.open(onResult) }
+    override fun openTextFile(
+        maxChars: Int,
+        onResult: (name: String, text: String?) -> Unit,
+    ) {
+        main.post {
+            files.chooseSource { uri ->
+                if (uri == null) {
+                    onResult("", null)
+                } else {
+                    executor.execute {
+                        val resolver = activity.contentResolver
+                        val name =
+                            runCatching {
+                                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                                    if (it.moveToFirst()) it.getString(0) else null
+                                }
+                            }.getOrNull() ?: "import.csv"
+                        val text = runCatching { resolver.openInputStream(uri)?.let { readText(it, maxChars) } }.getOrNull()
+                        main.post { if (!closed) onResult(name, text) }
+                    }
+                }
+            }
+        }
     }
 
-    override fun restoreBackup(
-        bytes: ByteArray,
+    override fun saveBackup(
         password: String,
         onResult: (String) -> Unit,
     ) {
-        executor.execute {
+        main.post {
+            files.chooseDestination("polion-backup.polion") { uri ->
+                if (uri == null) {
+                    onResult("Backup was not saved")
+                } else {
+                    executor.execute {
+                        val secret = password.toCharArray()
+                        val success =
+                            try {
+                                runCatching {
+                                    files.write(uri) { out ->
+                                        requireNotNull(app.value).exportBackup(secret) { b, o, l -> out.write(b, o, l) }
+                                    }
+                                }.isSuccess
+                            } finally {
+                                secret.fill('\u0000')
+                            }
+                        main.post { onResult(if (success) "Backup saved" else "Could not save backup") }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun restoreBackup(
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
+        main.post {
+            files.chooseSource { uri -> if (uri == null) onResult("No backup selected") else restoreBackup(uri, password, onResult) }
+        }
+    }
+
+    private fun restoreBackup(
+        uri: android.net.Uri,
+        password: String,
+        onResult: (String) -> Unit,
+    ) {
+        // Restore replaces the database file, so it shares the sync thread and cannot overlap a running scan.
+        RefreshWorker.syncExecutor.execute {
             var staging: java.nio.file.Path? = null
             var result = "Could not restore backup"
             var swapped = false
@@ -176,7 +339,11 @@ private class AndroidHost(
                 staging = Files.createTempFile(file.parent, "restore-", ".sqlite")
                 AndroidSqliteDatabase(
                     staging.toString(),
-                ).use { requireNotNull(app.value).restoreToStaging(it, bytes, password.toCharArray()) }
+                ).use { stagingDb ->
+                    files.read(uri) { input ->
+                        requireNotNull(app.value).restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
+                    }
+                }
                 java.nio.channels.FileChannel
                     .open(staging, java.nio.file.StandardOpenOption.WRITE)
                     .use { it.force(true) }
@@ -189,6 +356,8 @@ private class AndroidHost(
                 synchronized(AutomaticPriceGate.lock) {
                     db.close()
                     try {
+                                // Another connection still holding a write-ahead log would replay it into the restored file.
+                                check(walIsEmpty(file)) { "Polion is still writing; retry the restore" }
                         Files.move(staging, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
                         swapped = true
                     } finally {
@@ -206,7 +375,9 @@ private class AndroidHost(
                     replacementReady = true
                 }
                 result = "Backup restored"
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
+                // Validation messages (wrong password, damaged or unsupported backup) explain a rejected file.
+                if (!swapped && failure is IllegalArgumentException) result = failure.message ?: result
                 if (swapped) result = "Backup restored; reopen the app to load it"
                 if (reopened && !swapped) {
                     runCatching {
@@ -253,17 +424,17 @@ private class AndroidHost(
     ) {
         main.post {
             try {
-                syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…", io.polion.ui.SyncOperation.DISCOVERY)
                 activity.startForegroundService(Intent(activity, BitcoinRefreshService::class.java).putExtra("wallet_id", walletId.value))
-                onResult("Wallet discovery continues in the background.")
+                onResult("Wallet discovery requested. It runs after any current Bitcoin work; progress appears in the notification.")
             } catch (_: Exception) {
-                syncStatus.value =
+                val failure =
                     SyncStatus(
                         SyncPhase.ERROR,
-                        "Could not start wallet discovery. Open Polion and retry.",
+                        "Could not request discovery. Open this wallet in Accounts and choose Discover addresses to retry.",
                         io.polion.ui.SyncOperation.DISCOVERY,
                     )
-                onResult(syncStatus.value.message)
+                if (syncStatus.value.phase != SyncPhase.SYNCING) syncStatus.value = failure
+                onResult(failure.message)
             }
         }
     }
@@ -347,8 +518,18 @@ private class AndroidHost(
         val preference = readRefreshPreferences(application)
         application.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
         val plan = io.polion.ui.refreshSchedulePlan(preference, application.sourceConsent(), application.automaticPriceConsent())
-        scheduleWalletRefresh(plan.walletHistory, plan.wifiOnly)
-        scheduleAutomaticPrices(plan.prices, plan.wifiOnly, application.automaticPriceConsent())
+        val now = System.currentTimeMillis()
+        scheduleWalletRefresh(
+            plan.walletHistory,
+            plan.wifiOnly,
+            cooldownDelayMillis(application.sourceLastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, now),
+        )
+        scheduleAutomaticPrices(
+            plan.prices,
+            plan.wifiOnly,
+            application.automaticPriceConsent(),
+            cooldownDelayMillis(application.automaticPriceLastRunMillis(), PRICE_REFRESH_INTERVAL_MILLIS, now),
+        )
     }
 
     override fun setBackgroundRefresh(enabled: Boolean) = updateRefreshPreferences(refreshPreferences().copy(automaticRefresh = enabled))
@@ -356,24 +537,21 @@ private class AndroidHost(
     private fun scheduleWalletRefresh(
         enabled: Boolean,
         wifiOnly: Boolean,
+        initialDelayMillis: Long,
     ) {
-        AndroidRefreshScheduling.wallets(activity, enabled, wifiOnly)
+        AndroidRefreshScheduling.wallets(activity, enabled, wifiOnly, initialDelayMillis = initialDelayMillis)
     }
 
     override fun backgroundRefreshEnabled(): Boolean = refreshPreferences().automaticRefresh
-
-    override fun setAutomaticPriceRefresh(enabled: Boolean) {
-        val preference = refreshPreferences()
-        scheduleAutomaticPrices(enabled && preference.automaticRefresh, preference.wifiOnly, enabled)
-    }
 
     private fun scheduleAutomaticPrices(
         enabled: Boolean,
         wifiOnly: Boolean,
         consent: Boolean,
+        initialDelayMillis: Long,
     ) {
         val manager = androidx.work.WorkManager.getInstance(activity)
-        AndroidRefreshScheduling.prices(activity, enabled, wifiOnly)
+        AndroidRefreshScheduling.prices(activity, enabled, wifiOnly, initialDelayMillis = initialDelayMillis)
         if (!consent) {
             manager.cancelUniqueWork("polion-price-refresh-now")
             AutomaticPriceWorker.tracker.setWorkState(queued = false, running = false)
@@ -412,11 +590,44 @@ private class AndroidHost(
             return
         }
         val success = runCatching { lockStore.remove() }.isSuccess
+        if (success) biometrics.disable()
         onResult(if (success) "Privacy lock removed" else "Could not remove privacy lock")
     }
 
+    override fun checkBitcoinEndpoint(endpoint: String): String? =
+        try {
+            io.polion.core.bitcoin.requireMainnetEndpoint(BlockstreamTransport(endpoint))
+            null
+        } catch (failure: io.polion.core.bitcoin.BitcoinProviderException) {
+            failure.reason.userMessage
+        } catch (_: Exception) {
+            "Could not check this endpoint. Use an HTTPS Esplora API address."
+        }
+
     override fun lock() {
         if (lockStore.hasLock) locked.value = true
+    }
+
+    override fun eraseAndRemoveLock(onResult: (String) -> Unit) {
+        executor.execute {
+            val success =
+                runCatching {
+                    app.value?.let { application ->
+                        application.wipe()
+                        application.setAutomaticRefresh(false)
+                        reconcileRefreshPreferences(application)
+                    }
+                    lockStore.remove()
+                }.isSuccess
+            main.post {
+                if (success) {
+                    biometrics.disable()
+                    locked.value = false
+                    dataRevision.update { it + 1 }
+                }
+                onResult(if (success) "Local data erased and privacy lock removed" else "Could not finish erasing; retry")
+            }
+        }
     }
 
     override fun unlock(
@@ -470,3 +681,35 @@ private class AndroidHost(
         executor.execute { if (::db.isInitialized) db.close() }
     }
 }
+
+/** True when [database] has no pending write-ahead log, so the file alone holds every committed change. */
+internal fun walIsEmpty(database: java.nio.file.Path): Boolean {
+    val wal = database.resolveSibling("${database.fileName}-wal")
+    return !java.nio.file.Files.exists(wal) || java.nio.file.Files.size(wal) == 0L
+}
+
+/** Strict UTF-8 text of at most [maxChars] characters, or null; reads at most four bytes per allowed character. */
+internal fun readText(
+    input: java.io.InputStream,
+    maxChars: Int,
+): String? =
+    input.use {
+        val limit = maxChars.toLong() * 4
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val count = it.read(buffer)
+            if (count < 0) break
+            out.write(buffer, 0, count)
+            if (out.size() > limit) return null
+        }
+        val bytes = out.toByteArray()
+        val text =
+            runCatching {
+                java.nio.charset.StandardCharsets.UTF_8
+                    .newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(bytes))
+                    .toString()
+            }.getOrNull()
+        text?.takeIf { value -> value.length <= maxChars }
+    }

@@ -1,5 +1,6 @@
 package io.polion.core.backup
 
+import java.security.GeneralSecurityException
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
@@ -7,16 +8,23 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
+/** Keep identical to the JVM implementation; see `docs/backup-format.md`. */
 actual object BackupEncryption {
-    private const val ITERATIONS = 310_000
-    private val magic = byteArrayOf(80, 66, 75, 1)
+    private val magic = "PLNBK".encodeToByteArray()
+    private const val VERSION: Byte = 3
+    private const val KDF_PBKDF2_SHA256: Byte = 1
+    private const val ITERATIONS = 600_000
+    private const val HEADER = 5 + 1 + 1 + 4 + 16 + 7
+    private const val CHUNK = 64 * 1024
+    private const val TAG = 16
 
     private fun key(
         password: CharArray,
         salt: ByteArray,
+        iterations: Int,
     ): SecretKeySpec {
         require(password.isNotEmpty())
-        val spec = PBEKeySpec(password, salt, ITERATIONS, 256)
+        val spec = PBEKeySpec(password, salt, iterations, 256)
         return try {
             SecretKeySpec(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded, "AES")
         } finally {
@@ -24,35 +32,137 @@ actual object BackupEncryption {
         }
     }
 
+    private fun nonce(
+        prefix: ByteArray,
+        counter: Int,
+        last: Boolean,
+    ): ByteArray = prefix + int(counter) + byteArrayOf(if (last) 1 else 0)
+
+    private fun int(value: Int) = byteArrayOf((value ushr 24).toByte(), (value ushr 16).toByte(), (value ushr 8).toByte(), value.toByte())
+
+    private fun int(
+        bytes: ByteArray,
+        at: Int,
+    ) = ((bytes[at].toInt() and 0xff) shl 24) or ((bytes[at + 1].toInt() and 0xff) shl 16) or
+        ((bytes[at + 2].toInt() and 0xff) shl 8) or (bytes[at + 3].toInt() and 0xff)
+
     actual fun encrypt(
-        plaintext: ByteArray,
+        output: ByteSink,
         password: CharArray,
-    ): ByteArray {
+    ): EncryptingSink {
         val random = SecureRandom()
-        val salt = ByteArray(16)
-        val nonce = ByteArray(12)
-        random.nextBytes(salt)
-        random.nextBytes(nonce)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key(password, salt), GCMParameterSpec(128, nonce))
-        val header = magic + salt + nonce
-        cipher.updateAAD(header)
-        return header + cipher.doFinal(plaintext)
+        val salt = ByteArray(16).also(random::nextBytes)
+        val prefix = ByteArray(7).also(random::nextBytes)
+        val header = magic + byteArrayOf(VERSION, KDF_PBKDF2_SHA256) + int(ITERATIONS) + salt + prefix
+        check(header.size == HEADER)
+        val key = key(password, salt, ITERATIONS)
+        output.write(header)
+        return object : EncryptingSink {
+            private val buffer = ByteArray(CHUNK)
+            private var filled = 0
+            private var counter = 0
+            private var closed = false
+
+            private fun emit(last: Boolean) {
+                check(counter != Int.MAX_VALUE) { "Backup is too large" }
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG * 8, nonce(prefix, counter, last)))
+                cipher.updateAAD(header)
+                val sealed = cipher.doFinal(buffer, 0, filled)
+                output.write(int(sealed.size))
+                output.write(sealed)
+                counter++
+                filled = 0
+            }
+
+            override fun write(
+                bytes: ByteArray,
+                offset: Int,
+                length: Int,
+            ) {
+                check(!closed)
+                var at = offset
+                val end = offset + length
+                while (at < end) {
+                    // A full chunk is sealed only once more data arrives, so the final chunk is always flagged as last.
+                    if (filled == CHUNK) emit(last = false)
+                    val count = minOf(CHUNK - filled, end - at)
+                    bytes.copyInto(buffer, filled, at, at + count)
+                    filled += count
+                    at += count
+                }
+            }
+
+            override fun close() {
+                if (closed) return
+                closed = true
+                emit(last = true)
+            }
+        }
     }
 
     actual fun decrypt(
-        ciphertext: ByteArray,
+        input: ByteSource,
         password: CharArray,
-    ): ByteArray {
-        require(ciphertext.size in 48..100_000_000 && ciphertext.copyOfRange(0, 4).contentEquals(magic))
-        val header = ciphertext.copyOfRange(0, 32)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            key(password, ciphertext.copyOfRange(4, 20)),
-            GCMParameterSpec(128, ciphertext.copyOfRange(20, 32)),
-        )
-        cipher.updateAAD(header)
-        return cipher.doFinal(ciphertext, 32, ciphertext.size - 32)
+    ): ByteSource {
+        val header = ByteArray(HEADER)
+        // A file shorter than the header is not a backup, rather than a damaged one.
+        require(runCatching { input.readFully(header) }.getOrDefault(false)) { "This is not a Polion backup" }
+        require(header.copyOfRange(0, 5).contentEquals(magic)) { "This is not a Polion backup" }
+        require(header[5] == VERSION) { "This backup was made by an unsupported Polion version" }
+        require(header[6] == KDF_PBKDF2_SHA256) { "Unsupported backup key derivation" }
+        val iterations = int(header, 7)
+        require(iterations in 100_000..10_000_000) { "Unsupported backup key derivation" }
+        val salt = header.copyOfRange(11, 27)
+        val prefix = header.copyOfRange(27, 34)
+        val key = key(password, salt, iterations)
+        return object : ByteSource {
+            private var plain = ByteArray(0)
+            private var position = 0
+            private var counter = 0
+            private var finished = false
+            private var nextLength: Int? = readLength()
+
+            private fun readLength(): Int? {
+                val bytes = ByteArray(4)
+                if (!input.readFully(bytes)) return null
+                return int(bytes, 0).also { require(it in TAG..CHUNK + TAG) { "Damaged backup" } }
+            }
+
+            private fun nextChunk() {
+                val length = requireNotNull(nextLength) { "Backup ends unexpectedly" }
+                val sealed = ByteArray(length)
+                require(input.readFully(sealed)) { "Backup ends unexpectedly" }
+                nextLength = readLength()
+                val last = nextLength == null
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG * 8, nonce(prefix, counter, last)))
+                cipher.updateAAD(header)
+                plain =
+                    try {
+                        cipher.doFinal(sealed)
+                    } catch (_: GeneralSecurityException) {
+                        throw IllegalArgumentException(if (counter == 0) "Wrong password or damaged backup" else "Damaged backup")
+                    }
+                position = 0
+                counter++
+                finished = last
+            }
+
+            override fun read(
+                buffer: ByteArray,
+                offset: Int,
+                length: Int,
+            ): Int {
+                while (position == plain.size) {
+                    if (finished) return -1
+                    nextChunk()
+                }
+                val count = minOf(length, plain.size - position)
+                plain.copyInto(buffer, offset, position, position + count)
+                position += count
+                return count
+            }
+        }
     }
 }

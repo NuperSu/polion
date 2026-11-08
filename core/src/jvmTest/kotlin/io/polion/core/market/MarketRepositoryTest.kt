@@ -60,9 +60,9 @@ class MarketRepositoryTest {
                                                 (it.manual || it.providerId in providers) &&
                                                 !(it == withdrawn && at >= 40 && known >= 50)
                                         }.minWithOrNull(
-                                            compareBy<PriceObservation> { if (it.manual) 0 else 1 }
-                                                .thenBy { if (!it.manual && fresh && stale(it)) 1 else 0 }
-                                                .thenByDescending { if (!it.manual && latest) it.validAtMillis else Long.MIN_VALUE }
+                                            compareBy<PriceObservation> { if (fresh && stale(it)) 1 else 0 }
+                                                .thenByDescending { if (latest) it.validAtMillis else Long.MIN_VALUE }
+                                                .thenBy { if (it.manual) 0 else 1 }
                                                 .thenBy { if (it.manual) -1 else providers.indexOf(it.providerId) }
                                                 .thenByDescending { it.validAtMillis }
                                                 .thenByDescending { it.observedAtMillis }
@@ -104,6 +104,23 @@ class MarketRepositoryTest {
             assertEquals(second, repository.lookup(token1, usd, 49, 50, policy).observation)
             assertEquals(provider, repository.lookup(token1, usd, 50, 50, policy).observation)
             assertEquals(other, repository.lookup(token2, usd, 50, 50, policy).observation)
+        }
+    }
+
+    @Test fun newerAutomaticPriceReplacesOlderManualOverrideButNewerManualStillWins() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            Store(db)
+            val repository = MarketRepository(db)
+            register(repository)
+            val policy = PricePolicy(listOf(provider1), 1000, preferLatest = true)
+            val manual = PriceObservation("old-manual", Price(token1, usd, ExactDecimal.parse("80689")), null, 10, 10, true)
+            val automatic = PriceObservation("automatic", Price(token1, usd, ExactDecimal.parse("83700")), provider1, 20, 20)
+            repository.recordPrice(manual)
+            repository.recordPrice(automatic)
+            assertEquals(automatic, repository.lookup(token1, usd, 30, 30, policy).observation)
+            val newerManual = PriceObservation("new-manual", Price(token1, usd, ExactDecimal.parse("84000")), null, 40, 40, true)
+            repository.recordPrice(newerManual)
+            assertEquals(newerManual, repository.lookup(token1, usd, 50, 50, policy).observation)
         }
     }
 

@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -32,10 +33,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 
 /** Preformatted values and normalized chart observations supplied by the host. */
 data class ModelPortfolioSummaryState(
@@ -52,6 +58,16 @@ data class ModelPortfolioSummaryState(
     val chartBottomLabel: String,
     val ranges: List<String> = listOf("1H", "1D", "1W", "1M", "YTD", "1Y", "ALL"),
     val changeLabel: String? = null,
+    /** The total in the secondary currency from Settings, already formatted. */
+    val secondaryBalance: String? = null,
+    val showChart: Boolean = true,
+    /** Amounts are already replaced by the caller; this only selects the eye icon. */
+    val amountsHidden: Boolean = false,
+    /** Values and times for the interactive chart; without it the plain [chartPoints] line is drawn. */
+    val chart: ChartData? = null,
+    val chartStyle: ChartStyle = ChartStyle.LINE,
+    /** A new range is loading; the previous chart and change stay visible, dimmed. */
+    val loading: Boolean = false,
 )
 
 enum class ModelChangeTone { POSITIVE, NEGATIVE, NEUTRAL }
@@ -72,6 +88,8 @@ fun ModelPortfolioSummary(
     onRangeSelected: (String) -> Unit,
     onExplain: (() -> Unit)? = null,
     onCurrency: (() -> Unit)? = null,
+    onToggleAmounts: (() -> Unit)? = null,
+    onChartStyle: ((ChartStyle) -> Unit)? = null,
     currencyMenuContent: @Composable () -> Unit = {},
     colors: ModelSummaryColors =
         ModelSummaryColors(
@@ -100,7 +118,7 @@ fun ModelPortfolioSummary(
                         if (onExplain !=
                             null
                         ) {
-                            Modifier.clickable(onClick = onExplain)
+                            Modifier.clickable(role = Role.Button, onClick = onExplain)
                         } else {
                             Modifier
                         },
@@ -121,7 +139,7 @@ fun ModelPortfolioSummary(
                                 if (onCurrency !=
                                     null
                                 ) {
-                                    Modifier.clickable(onClick = onCurrency)
+                                    Modifier.clickable(role = Role.Button, onClick = onCurrency)
                                 } else {
                                     Modifier
                                 },
@@ -129,9 +147,30 @@ fun ModelPortfolioSummary(
                 )
                 currencyMenuContent()
             }
+            onToggleAmounts?.let { toggle ->
+                TouchTarget(
+                    modifier = Modifier.padding(bottom = 12.dp),
+                    target =
+                        Modifier
+                            .clip(CircleShape)
+                            .clickable(
+                                role = Role.Button,
+                                onClickLabel = if (state.amountsHidden) "Show amounts" else "Hide amounts",
+                                onClick = toggle,
+                            ).semantics {
+                                contentDescription = if (state.amountsHidden) "Show amounts" else "Hide amounts"
+                                stateDescription = if (state.amountsHidden) "Amounts hidden" else "Amounts shown"
+                            }.testTag("balance-visibility"),
+                ) {
+                    Canvas(Modifier.size(26.dp).padding(3.dp)) { drawEye(colors.muted, closed = state.amountsHidden) }
+                }
+            }
+        }
+        state.secondaryBalance?.let {
+            Text(it, color = colors.muted, fontSize = 15.sp, modifier = Modifier.testTag("portfolio-secondary-balance"))
         }
         state.changeLabel?.let { Text(it, color = colors.muted, fontSize = 12.sp) }
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.alpha(if (state.loading) .4f else 1f), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(state.change, color = changeColor, fontSize = 17.sp)
             Text(
                 state.percentChange,
@@ -147,65 +186,87 @@ fun ModelPortfolioSummary(
             )
         }
         Spacer(Modifier.height(12.dp))
-        Box(
-            Modifier.fillMaxWidth().height(
-                if (wide) {
-                    280.dp
-                } else if (short) {
-                    100.dp
-                } else {
-                    200.dp
-                },
-            ),
-        ) {
-            Canvas(Modifier.fillMaxSize().padding(vertical = 20.dp)) {
-                val values = state.chartPoints
-                if (values.size >= 2) {
-                    repeat(2) { row ->
-                        val y = size.height * row
-                        var x = 0f
-                        while (x < size.width) {
-                            drawLine(colors.muted, Offset(x, y), Offset(x + 1, y), 1f)
-                            x += 4.dp.toPx()
-                        }
-                    }
-                    var start = 0
-                    while (start < values.size) {
-                        while (start < values.size && values[start] == null) start++
-                        var end = start
-                        while (end < values.size && values[end] != null) end++
-                        if (end - start >= 2) {
-                            val path = Path()
-                            for (i in start until end) {
-                                val x = size.width * i / values.lastIndex
-                                val y = size.height * (1 - values[i]!!)
-                                if (i == start) {
-                                    path.moveTo(x, y)
-                                } else {
-                                    val px = size.width * (i - 1) / values.lastIndex
-                                    val py = size.height * (1 - values[i - 1]!!)
-                                    if (state.smoothChart) path.cubicTo((px + x) / 2, py, (px + x) / 2, y, x, y) else path.lineTo(x, y)
-                                }
+        if (state.showChart && state.chart != null) {
+            ModelInteractiveChart(
+                state.chart,
+                state.chartStyle,
+                Modifier.testTag("portfolio-chart").alpha(if (state.loading) .4f else 1f).fillMaxWidth().height(
+                    if (wide) {
+                        280.dp
+                    } else if (short) {
+                        100.dp
+                    } else {
+                        200.dp
+                    },
+                ),
+                tint = colors.positive,
+                falling = colors.negative,
+                smooth = state.smoothChart,
+            )
+        } else if (state.showChart) {
+            Box(
+                Modifier.testTag("portfolio-chart").fillMaxWidth().height(
+                    if (wide) {
+                        280.dp
+                    } else if (short) {
+                        100.dp
+                    } else {
+                        200.dp
+                    },
+                ),
+            ) {
+                Canvas(Modifier.fillMaxSize().padding(vertical = 20.dp)) {
+                    val values = state.chartPoints
+                    if (values.size >= 2) {
+                        repeat(2) { row ->
+                            val y = size.height * row
+                            var x = 0f
+                            while (x < size.width) {
+                                drawLine(colors.muted, Offset(x, y), Offset(x + 1, y), 1f)
+                                x += 4.dp.toPx()
                             }
-                            val area =
-                                Path().apply {
-                                    addPath(path)
-                                    lineTo(size.width * (end - 1) / values.lastIndex, size.height)
-                                    lineTo(size.width * start / values.lastIndex, size.height)
-                                    close()
-                                }
-                            drawPath(
-                                area,
-                                Brush.verticalGradient(listOf(colors.positive.copy(alpha = .2f), colors.positive.copy(alpha = 0f))),
-                            )
-                            drawPath(path, colors.positive, style = Stroke(1.6.dp.toPx()))
                         }
-                        start = end + 1
+                        var start = 0
+                        while (start < values.size) {
+                            while (start < values.size && values[start] == null) start++
+                            var end = start
+                            while (end < values.size && values[end] != null) end++
+                            if (end - start >= 2) {
+                                val path = Path()
+                                for (i in start until end) {
+                                    val x = size.width * i / values.lastIndex
+                                    val y = size.height * (1 - values[i]!!)
+                                    if (i == start) {
+                                        path.moveTo(x, y)
+                                    } else {
+                                        val px = size.width * (i - 1) / values.lastIndex
+                                        val py = size.height * (1 - values[i - 1]!!)
+                                        if (state.smoothChart) path.cubicTo((px + x) / 2, py, (px + x) / 2, y, x, y) else path.lineTo(x, y)
+                                    }
+                                }
+                                val area =
+                                    Path().apply {
+                                        addPath(path)
+                                        lineTo(size.width * (end - 1) / values.lastIndex, size.height)
+                                        lineTo(size.width * start / values.lastIndex, size.height)
+                                        close()
+                                    }
+                                drawPath(
+                                    area,
+                                    Brush.verticalGradient(listOf(colors.positive.copy(alpha = .2f), colors.positive.copy(alpha = 0f))),
+                                )
+                                drawPath(path, colors.positive, style = Stroke(1.6.dp.toPx()))
+                            }
+                            start = end + 1
+                        }
                     }
                 }
+                Text(state.chartTopLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd))
+                Text(state.chartBottomLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd))
             }
-            Text(state.chartTopLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd))
-            Text(state.chartBottomLabel, color = colors.muted, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd))
+        }
+        if (onChartStyle != null && state.showChart) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { ChartStyleToggle(state.chartStyle, onChartStyle) }
         }
         Row(
             Modifier.fillMaxWidth().then(
@@ -239,5 +300,37 @@ fun ModelPortfolioSummary(
                 )
             }
         }
+    }
+}
+
+/** An open eye, or a closed one with lashes, so the button shows the current state at a glance. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEye(
+    tint: Color,
+    closed: Boolean,
+) {
+    val w = size.width
+    val h = size.height
+    val stroke = Stroke(width = w * 0.09f)
+    if (closed) {
+        val lid =
+            Path().apply {
+                moveTo(w * 0.06f, h * 0.42f)
+                quadraticTo(w * 0.5f, h * 0.86f, w * 0.94f, h * 0.42f)
+            }
+        drawPath(lid, tint, style = stroke)
+        listOf(0.22f, 0.5f, 0.78f).forEach { x ->
+            val y = if (x == 0.5f) h * 0.64f else h * 0.58f
+            drawLine(tint, Offset(w * x, y), Offset(w * x + (x - 0.5f) * w * 0.2f, y + h * 0.18f), strokeWidth = w * 0.08f)
+        }
+    } else {
+        val eye =
+            Path().apply {
+                moveTo(w * 0.06f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.06f, w * 0.94f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.94f, w * 0.06f, h * 0.5f)
+                close()
+            }
+        drawPath(eye, tint, style = stroke)
+        drawCircle(tint, w * 0.14f, Offset(w * 0.5f, h * 0.5f))
     }
 }

@@ -78,6 +78,7 @@ internal fun TransactionEntry(
     onManual: () -> Unit,
     onClose: () -> Unit,
     onWallet: () -> Unit,
+    onImport: () -> Unit,
     onSaved: () -> Unit,
     onAccountCreated: () -> Unit,
 ) {
@@ -185,10 +186,14 @@ internal fun TransactionEntry(
         TransactionDrafts.prepare(draft, scales)
         return draft
     }
+    // A trade pairs two different assets; the same currency cannot be both the traded asset and the quote.
+    val trade = type == "BUY" || type == "SELL"
+    val assetChoices = if (trade) options.filter { it.id != quote } else options
+    val quoteChoices = if (trade) options.filter { it.id != selected } else options
     ModelTransactionDialog(
         ModelTransactionDialogState(
             manual,
-            options,
+            assetChoices,
             selected,
             ModelTransactionType.valueOf(type),
             "Local manual account",
@@ -222,12 +227,13 @@ internal fun TransactionEntry(
             saveLabel = "Review transaction",
             priceLabel = "Executed / evidence price ($quote); optional outside trades",
             feeLabel = "Fee amount (${ticker(feeAsset)})",
+            canImport = true,
         ),
         ModelTransactionDialogActions(
             { if (!saving) onClose() },
             onWallet,
             onManual,
-            {},
+            onImport,
             { selected = it },
             {
                 type = it.name
@@ -289,7 +295,7 @@ internal fun TransactionEntry(
                 }
             }
         }) { Text("Create local account") }
-        TransactionChoice("Quote asset", options.map { it.id to it.ticker }, quote) { quote = it }
+        TransactionChoice("Quote asset", quoteChoices.map { it.id to it.ticker }, quote) { quote = it }
         if (type == "TRANSFER") {
             TransactionChoice("Destination", listOf("" to "External / unknown") + accounts.map { it.id.value to it.label }, destination) {
                 destination =

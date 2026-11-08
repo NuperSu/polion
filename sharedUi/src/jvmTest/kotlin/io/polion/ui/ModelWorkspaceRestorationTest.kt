@@ -180,8 +180,7 @@ class ModelWorkspaceRestorationTest {
                 app.seedDemo()
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { PolionApp(app, host) }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("Search activity").performTextInput("demo-deposit")
                     onNodeWithText("Back").performClick()
@@ -189,12 +188,9 @@ class ModelWorkspaceRestorationTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("coin-BTC").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("coin-BTC").performScrollTo().performClick()
                     onNodeWithTag("detail-Transactions").performScrollTo().performClick()
-                    onNodeWithText("Review activity and corrections").performScrollTo().performClick()
-                    onNodeWithText("Back").performClick()
                     onNodeWithText("Search transactions").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("model-back").performClick()
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNodeWithText("demo-deposit").assertIsDisplayed()
                 }
@@ -349,8 +345,7 @@ class ModelWorkspaceRestorationTest {
                             CompositionLocalProvider(LocalSaveableStateRegistry provides registry) { PolionApp(app, host) }
                         }
                     }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("more-ACTIVITY").performClick()
                     onNode(hasText("Deposit") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
                         .performScrollTo()
@@ -399,8 +394,6 @@ class ModelWorkspaceRestorationTest {
 
         @Volatile var priceRequests = 0
 
-        @Volatile var automaticPrices = false
-
         @Volatile var recoveryRequests = 0
 
         @Volatile var refreshRequests = 0
@@ -419,10 +412,12 @@ class ModelWorkspaceRestorationTest {
             onResult("Exported")
         }
 
-        override fun openFile(onResult: (ByteArray?) -> Unit) = onResult(null)
+        override fun saveBackup(
+            password: String,
+            onResult: (String) -> Unit,
+        ) = onResult("Not used")
 
         override fun restoreBackup(
-            bytes: ByteArray,
             password: String,
             onResult: (String) -> Unit,
         ) = onResult("Not used")
@@ -454,10 +449,6 @@ class ModelWorkspaceRestorationTest {
         ) {
             priceRequests++
             onResult("Saved Bitcoin price history.")
-        }
-
-        override fun setAutomaticPriceRefresh(enabled: Boolean) {
-            automaticPrices = enabled
         }
 
         override fun refreshAutomaticPrices(onResult: (String) -> Unit) {

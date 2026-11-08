@@ -45,7 +45,7 @@ object KrakenPrices {
                 require(cells.size == 8)
                 val seconds = cells[0].jsonPrimitive
                 val close = cells[4].jsonPrimitive
-                require(!seconds.isString && seconds.content.matches(Regex("[0-9]{1,12}")) && close.isString)
+                require(!seconds.isString && seconds.content.matches(SECONDS) && close.isString)
                 val start = seconds.content.toLong() * 1000
                 require(start % interval == 0L && start > previous && start <= now - interval)
                 previous = start
@@ -59,7 +59,7 @@ object KrakenPrices {
                 .jsonArray
                 .first()
                 .jsonPrimitive
-        require(!current.isString && current.content.matches(Regex("[0-9]{1,12}")))
+        require(!current.isString && current.content.matches(SECONDS))
         val currentStart = current.content.toLong() * 1000
         require(currentStart % interval == 0L && currentStart > previous && currentStart <= now && now - currentStart < interval)
         require(points.isNotEmpty())
@@ -95,3 +95,5 @@ object KrakenPrices {
         return points.size
     }
 }
+
+private val SECONDS = Regex("[0-9]{1,12}")

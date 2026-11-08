@@ -1,5 +1,11 @@
 package io.polion.core.bitcoin
 
+import fr.acinq.bitcoin.Bitcoin
+import fr.acinq.bitcoin.Block
+import fr.acinq.bitcoin.Descriptor
+import fr.acinq.bitcoin.DeterministicWallet
+import io.polion.core.model.isCanonicalUnsigned
+
 /** A deliberately limited mainnet public wallet expression. */
 class BitcoinWallet internal constructor(
     val canonical: String,
@@ -75,48 +81,60 @@ fun bitcoinWallet(input: String): BitcoinWallet {
     val fixed = if (ranged) suffix.dropLast(1) else suffix
     val path =
         fixed.map {
-            require(it.matches(Regex("0|[1-9][0-9]*"))) { "Only unhardened numeric derivation and a final wildcard are supported" }
+            require(it.isCanonicalUnsigned()) { "Only unhardened numeric derivation and a final wildcard are supported" }
             it.toLongOrNull()?.takeIf { n -> n < 0x80000000L }?.toInt()
                 ?: throw IllegalArgumentException("Derivation index is out of range")
         }
     return BitcoinWallet(body, type, key, listOf(path), ranged)
 }
 
-expect fun bitcoinValidateXpub(key: String)
+private val MAINNET = Block.LivenetGenesisBlock.hash
 
-expect fun bitcoinPublicAddress(
+private fun decodeXpub(key: String): DeterministicWallet.ExtendedPublicKey {
+    val (prefix, xpub) =
+        try {
+            DeterministicWallet.ExtendedPublicKey.decode(key)
+        } catch (failure: Exception) {
+            throw IllegalArgumentException("Invalid mainnet xpub")
+        }
+    require(prefix == DeterministicWallet.xpub && key.startsWith("xpub")) { "Only mainnet xpub public keys are supported" }
+    return xpub
+}
+
+/** Checks that [key] is a valid mainnet xpub (version, checksum and public key). */
+fun bitcoinValidateXpub(key: String) {
+    decodeXpub(key)
+}
+
+/** The address of the key at [path] below [key], by bitcoin-kmp's BIP32 derivation and address encoding. */
+fun bitcoinPublicAddress(
     key: String,
     path: List<Int>,
     type: String,
-): String
+): String {
+    require(path.all { it >= 0 })
+    val publicKey =
+        try {
+            decodeXpub(key).derivePublicKey(path.map { it.toLong() }).publicKey
+        } catch (failure: IllegalArgumentException) {
+            throw failure
+        } catch (_: Exception) {
+            throw IllegalArgumentException("Invalid BIP32 child; use another index")
+        }
+    return when (type) {
+        "pkh" -> Bitcoin.computeP2PkhAddress(publicKey, MAINNET)
+        "sh-wpkh" -> Bitcoin.computeP2ShOfP2WpkhAddress(publicKey, MAINNET)
+        "wpkh" -> Bitcoin.computeP2WpkhAddress(publicKey, MAINNET)
+        else -> error("Unsupported address type")
+    }
+}
 
 /** BIP-380 checksum for the descriptor body. */
 fun descriptorChecksum(body: String): String {
-    val input = "0123456789()[],'/*abcdefgh@:\$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ "
-    val output = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-    val generators = longArrayOf(0xf5dee51989, 0xa9fdca3312, 0x1bab10e32d, 0x3706b1677a, 0x644d626ffd)
-    var check = 1L
-
-    fun update(value: Int) {
-        val top = check shr 35
-        check = ((check and 0x7ffffffff) shl 5) xor value.toLong()
-        for (i in 0..4) if ((top shr i) and 1L != 0L) check = check xor generators[i]
+    require(body.all { it.code in 32..126 }) { "Invalid descriptor character" }
+    return try {
+        Descriptor.checksum(body)
+    } catch (_: Exception) {
+        throw IllegalArgumentException("Invalid descriptor character")
     }
-    var group = 0
-    var count = 0
-    body.forEach {
-        val value = input.indexOf(it)
-        require(value >= 0) { "Invalid descriptor character" }
-        update(value and 31)
-        group = group * 3 + (value shr 5)
-        if (++count == 3) {
-            update(group)
-            group = 0
-            count = 0
-        }
-    }
-    if (count > 0) update(group)
-    repeat(8) { update(0) }
-    check = check xor 1
-    return (0..7).map { output[((check shr (5 * (7 - it))) and 31).toInt()] }.joinToString("")
 }

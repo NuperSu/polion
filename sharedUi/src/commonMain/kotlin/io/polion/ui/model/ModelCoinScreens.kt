@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,6 +87,8 @@ data class ModelCoinDetailState(
     val ticker: String,
     val mark: String,
     val logoColor: Color,
+    /** Coin ID used to find the provider logo. */
+    val coinId: String = "",
     val portfolio: String,
     val metrics: List<ModelMetric>,
     val breakdownExpanded: Boolean,
@@ -103,8 +107,19 @@ data class ModelCoinDetailState(
     val orderRows: List<ModelOrderRow>,
     val enabledRanges: Set<String> = setOf("1H", "1D", "1W", "1M", "3M", "1Y"),
     val transactionEmpty: String = "No transactions",
+    /** Why new alerts cannot be added; shown in the Alerts tab. */
     val alertsUnavailable: String? = null,
+    /** Result of the last alert change that failed. */
+    val alertNotice: String? = null,
     val orderUnavailable: String? = null,
+    /** True while the user must allow Kraken order books before any are requested. */
+    val orderConsentNeeded: Boolean = false,
+    /** Result of the last order book setting change that failed. */
+    val orderNotice: String? = null,
+    /** The last order book request failed; the message is shown above the last loaded rows. */
+    val orderIssue: String? = null,
+    /** The shown book is older than 30 seconds or the last request failed. */
+    val orderOutOfDate: Boolean = false,
     val canAddTransaction: Boolean = true,
     val canAddAlert: Boolean = false,
     val changeTone: ModelChangeTone = ModelChangeTone.POSITIVE,
@@ -112,6 +127,9 @@ data class ModelCoinDetailState(
     val askHeader: String = "Ask",
     val coinName: String = ticker,
     val smoothChart: Boolean = false,
+    /** Prices and times for the interactive chart; without it the plain [chartPoints] line is drawn. */
+    val chart: ChartData? = null,
+    val chartStyle: ChartStyle = ChartStyle.LINE,
 )
 
 data class ModelCoinDetailActions(
@@ -121,8 +139,20 @@ data class ModelCoinDetailActions(
     val onAddTransaction: () -> Unit,
     val onTransaction: (String) -> Unit = {},
     val onAddAlert: () -> Unit = {},
+    val onChartStyle: ((ChartStyle) -> Unit)? = null,
     val onAlertEnabled: (String, Boolean) -> Unit = { _, _ -> },
+    /** Opens the editor for an existing alert. */
+    val onAlertOpen: (String) -> Unit = {},
+    val onOrderConsent: () -> Unit = {},
+    val onOrderRetry: () -> Unit = {},
 )
+
+/** Footer under the alert list: how often prices are checked while Polion is open. */
+internal const val ALERT_CHECK_NOTE =
+    "Checked against CoinGecko's top 250 list about every 15 minutes on Android and every 5 minutes on desktop while Polion " +
+        "is open. Your phone may delay checks to save battery."
+
+internal const val ORDER_BOOK_CONSENT_NOTE = "Order books come from Kraken. Kraken receives the trading pair and your IP address."
 
 @Composable
 private fun DetailMetric(
@@ -167,7 +197,7 @@ fun ColumnScope.ModelCoinDetail(
 ) {
     val c = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        ModelCoinLogo(ModelCoinIdentity(state.ticker, state.coinName, state.logoColor, state.mark))
+        ModelCoinLogo(ModelCoinIdentity(state.ticker, state.coinName, state.logoColor, state.mark, state.coinId.ifEmpty { state.ticker }))
         Text("  ${state.ticker}", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     }
     Text(state.portfolio, color = c.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
@@ -255,7 +285,19 @@ fun ColumnScope.ModelCoinDetail(
                     )
                 }
             }
-            DetailChart(state.chartPoints, state.chartTopLabel, state.chartBottomLabel, state.smoothChart)
+            actions.onChartStyle?.let { onStyle ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { ChartStyleToggle(state.chartStyle, onStyle) }
+            }
+            if (state.chart != null) {
+                ModelInteractiveChart(
+                    state.chart,
+                    state.chartStyle,
+                    Modifier.fillMaxWidth().height(220.dp).testTag("coin-chart"),
+                    smooth = state.smoothChart,
+                )
+            } else {
+                DetailChart(state.chartPoints, state.chartTopLabel, state.chartBottomLabel, state.smoothChart)
+            }
         }
         ModelCoinTab.TRANSACTIONS -> {
             MetricRows(state.transactionMetrics)
@@ -291,7 +333,7 @@ fun ColumnScope.ModelCoinDetail(
                             Modifier
                                 .fillMaxWidth()
                                 .background(c.surface, RoundedCornerShape(14.dp))
-                                .clickable {
+                                .clickable(role = Role.Button) {
                                     actions.onTransaction(transaction.id)
                                 }.testTag("transaction-card-${transaction.id}")
                                 .padding(16.dp),
@@ -315,42 +357,80 @@ fun ColumnScope.ModelCoinDetail(
             transactionFooter()
         }
         ModelCoinTab.ALERTS -> {
-            TextButton(onClick = actions.onAddAlert, enabled = state.canAddAlert) {
+            TextButton(onClick = actions.onAddAlert, enabled = state.canAddAlert, modifier = Modifier.testTag("alert-add")) {
                 Text("＋  Add New Alert", color = if (state.canAddAlert) c.onSurface else c.onSurfaceVariant, fontWeight = FontWeight.Bold)
             }
-            state.alertsUnavailable?.let { Text(it, color = c.onSurfaceVariant) }
+            state.alertsUnavailable?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp) }
+            state.alertNotice?.let { Text(it, color = c.error, fontSize = 12.sp) }
             state.alerts.forEach { rule ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable(role = Role.Button) { actions.onAlertOpen(rule.id) }
+                            .testTag("alert-row-${rule.id}")
+                            .padding(end = 12.dp),
+                    ) {
                         Text(rule.title, fontWeight = FontWeight.SemiBold)
                         Text(rule.description, color = c.onSurfaceVariant, fontSize = 12.sp)
+                        Text(rule.source, color = c.onSurfaceVariant, fontSize = 12.sp)
                     }
+                    // The switch sits beside the row's clickable text, so it carries its own name instead of merging with it.
                     Switch(
                         rule.enabled,
                         { actions.onAlertEnabled(rule.id, it) },
-                        enabled =
-                            state.alertsUnavailable == null,
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = "Enable ${rule.title} alert" }
+                                .testTag("alert-switch-${rule.id}"),
                     )
                 }
-                Text(rule.source, color = c.onSurfaceVariant, fontSize = 12.sp)
             }
+            Text(
+                ALERT_CHECK_NOTE,
+                color = c.onSurfaceVariant,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
         ModelCoinTab.ORDER_BOOK -> {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                Text(state.orderSource, color = c.onSurfaceVariant, fontSize = 12.sp)
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Amount", fontSize = 12.sp)
-                    Text(state.bidHeader, color = c.primary, fontSize = 12.sp)
-                    Text(state.askHeader, color = c.error, fontSize = 12.sp)
-                    Text("Amount", fontSize = 12.sp)
+                state.orderNotice?.let { Text(it, color = c.error, fontSize = 12.sp) }
+                if (state.orderConsentNeeded) {
+                    Text(ORDER_BOOK_CONSENT_NOTE, color = c.onSurfaceVariant, fontSize = 12.sp, lineHeight = 17.sp)
+                    TextButton(onClick = actions.onOrderConsent, modifier = Modifier.testTag("order-consent")) {
+                        Text("Load Kraken order book", color = c.onSurface, fontWeight = FontWeight.Bold)
+                    }
                 }
                 state.orderUnavailable?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp) }
+                if (state.orderSource.isNotEmpty()) Text(state.orderSource, color = c.onSurfaceVariant, fontSize = 12.sp)
+                if (state.orderOutOfDate || state.orderIssue != null) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            if (state.orderOutOfDate) {
+                                Text("Out of date", color = c.error, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            state.orderIssue?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp) }
+                        }
+                        TextButton(onClick = actions.onOrderRetry, modifier = Modifier.testTag("order-retry")) { Text("Retry") }
+                    }
+                }
+                if (state.orderRows.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Amount", fontSize = 12.sp)
+                        Text(state.bidHeader, color = c.primary, fontSize = 12.sp)
+                        Text(state.askHeader, color = c.error, fontSize = 12.sp)
+                        Text("Amount", fontSize = 12.sp)
+                    }
+                }
                 state.orderRows.forEachIndexed { index, row ->
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .background(if (index % 2 == 0) c.surface else Color.Transparent)
-                            .padding(vertical = 5.dp),
+                            .padding(vertical = 5.dp)
+                            .testTag("order-row-$index"),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(row.amountBid, fontSize = 12.sp)

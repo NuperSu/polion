@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -81,7 +82,7 @@ class ModelTransactionDialogTest {
                 amount = "",
                 fee = "",
                 notes = "",
-                canImport = false,
+                canImport = true,
                 canSave = false,
             ),
         )
@@ -111,9 +112,10 @@ class ModelTransactionDialogTest {
                     ),
                 )
             }
-            onNodeWithTag("choose-csv").assertIsNotEnabled()
+            onNodeWithTag("choose-csv").assertIsEnabled().performClick()
             onNodeWithTag("choose-exchange").assertIsNotEnabled()
             onNodeWithTag("choose-manual").performClick()
+            onNodeWithText("Asset: BTC", substring = true).performClick()
             onNodeWithText("ETH").performClick()
             onNodeWithText("Sell").performClick()
             onNodeWithText("Amount (Sell)").performScrollTo().performTextInput("1.25")
@@ -122,7 +124,7 @@ class ModelTransactionDialogTest {
             onNodeWithTag("preview-save-transaction").performClick()
             onNodeWithContentDescription("Close").performClick()
             runOnIdle {
-                assertEquals(listOf("asset:eth", "type:SELL", "field:AMOUNT:1.25", "save", "close"), events)
+                assertEquals(listOf("import", "asset:eth", "type:SELL", "field:AMOUNT:1.25", "save", "close"), events)
             }
         }
     }

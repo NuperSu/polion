@@ -28,10 +28,12 @@ object CoingeckoPrices {
         val prices = market["current_price"]?.takeIf { it !is JsonNull }?.jsonObject ?: return null
         val value = prices[quoteCurrency]?.takeIf { it !is JsonNull }?.jsonPrimitive ?: return null
         if (value.isString || !value.content.matches(DECIMAL)) return null
-        return ExactDecimal.parse(value.content)
+        // A zero quote is not a price; it is treated like a missing one.
+        return ExactDecimal.parse(value.content).takeIf { it.coefficient.sign > 0 }
     }
 
     private val DECIMAL = Regex("(0|[1-9][0-9]*)(\\.[0-9]+)?")
+    private val TIMESTAMP = Regex("[0-9]{1,16}")
 
     /** Parse exact numeric timestamps and prices; reject malformed or ambiguous series as a whole. */
     fun parseChart(payload: String): List<Pair<Long, ExactDecimal>> {
@@ -48,7 +50,7 @@ object CoingeckoPrices {
             require(pair.size == 2)
             val timestamp = pair[0].jsonPrimitive
             val value = pair[1].jsonPrimitive
-            require(!timestamp.isString && !value.isString && timestamp.content.matches(Regex("[0-9]{1,16}")))
+            require(!timestamp.isString && !value.isString && timestamp.content.matches(TIMESTAMP))
             val at = timestamp.content.toLong()
             require(at > previous)
             previous = at
@@ -58,10 +60,10 @@ object CoingeckoPrices {
         }
     }
 
-    private fun parseJsonNumber(text: String): ExactDecimal {
+    internal fun parseJsonNumber(text: String): ExactDecimal {
         require(text.length <= 100)
         val parts = text.lowercase().split('e')
-        require(parts.size <= 2 && parts[0].matches(Regex("(0|[1-9][0-9]*)(\\.[0-9]+)?")))
+        require(parts.size <= 2 && parts[0].matches(DECIMAL))
         val exponent = if (parts.size == 2) parts[1].toInt() else 0
         require(exponent in -100..100)
         val mantissa = parts[0]

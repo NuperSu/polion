@@ -10,17 +10,19 @@ import android.os.Looper
 import android.os.PowerManager
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
-import io.polion.ui.SyncPhase
 import io.polion.ui.SyncOperation
+import io.polion.ui.SyncPhase
 import io.polion.ui.SyncStatus
 import kotlinx.coroutines.flow.update
 
 /** User-started synchronization keeps its own database connection while activities are stopped. */
-class BitcoinRefreshService : Service() {
+open class BitcoinRefreshService : Service() {
     private var running = false
     private var wakeLock: PowerManager.WakeLock? = null
 
     @Volatile private var stopping = false
+
+    protected open val workExecutor: java.util.concurrent.Executor get() = RefreshWorker.syncExecutor
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -29,67 +31,79 @@ class BitcoinRefreshService : Service() {
         flags: Int,
         startId: Int,
     ): Int {
-        if (running) return START_REDELIVER_INTENT
+        val queued = running
         running = true
-        stopping = false
-        wakeLock =
-            getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Polion:sync").apply {
-                acquire(60 * 60 * 1000L)
-            }
-        val operation = when {
-            intent?.getBooleanExtra("verify_order", false) == true -> SyncOperation.ORDER
-            intent?.getStringExtra("wallet_id") != null -> SyncOperation.DISCOVERY
-            else -> SyncOperation.HISTORY
+        if (wakeLock == null) {
+            wakeLock =
+                getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Polion:sync").apply {
+                    acquire(60 * 60 * 1000L)
+                }
         }
+        val walletId = intent?.getStringExtra("wallet_id")
+        val verifyOrder = intent?.getBooleanExtra("verify_order", false) == true
+        val recoverHistory = intent?.getBooleanExtra("recover_history", false) == true
+        val operation =
+            when {
+                verifyOrder -> SyncOperation.ORDER
+                walletId != null -> SyncOperation.DISCOVERY
+                else -> SyncOperation.HISTORY
+            }
         val initialDetail =
             if (operation == SyncOperation.ORDER) {
                 "Verifying Bitcoin order…"
             } else if (operation == SyncOperation.DISCOVERY) {
                 "Discovering wallet addresses…"
-            } else if (intent?.getBooleanExtra("recover_history", false) ==
-                true
-            ) {
+            } else if (recoverHistory) {
                 "Recovering full Bitcoin history…"
             } else {
                 "Fetching public history…"
             }
-        val notification = SyncNotification.create(this, initialDetail)
+        val notification = SyncNotification.create(this, if (queued) "Bitcoin request queued behind current work…" else initialDetail)
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(SyncNotification.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(SyncNotification.ID, notification)
         }
-        RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail, operation)
-        RefreshWorker.executor.execute {
+        if (!queued) RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail, operation)
+        workExecutor.execute {
+            if (stopping) return@execute
+            RefreshWorker.syncStatus.value = SyncStatus(SyncPhase.SYNCING, initialDetail, operation)
             var lastNotification = 0L
             val status =
-                RefreshWorker.performRefresh(
-                    applicationContext,
-                    walletId =
-                        intent?.getStringExtra(
-                            "wallet_id",
-                        ),
-                    verifyOrder = intent?.getBooleanExtra("verify_order", false) == true,
-                    recoverHistory = intent?.getBooleanExtra("recover_history", false) == true,
-                    ensureActive = {
-                        if (stopping) throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
-                    },
-                ) { detail ->
+                runRefresh(walletId, verifyOrder, recoverHistory) { detail ->
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastNotification >= 1000) {
                         SyncNotification.update(this, detail)
                         lastNotification = now
                     }
                 }
-            RefreshWorker.syncStatus.value = status.copy(operation = operation)
-            RefreshWorker.dataRevision.update { it + 1 }
+            if (!stopping) {
+                RefreshWorker.syncStatus.value = status.copy(operation = operation)
+                RefreshWorker.dataRevision.update { it + 1 }
+            }
             Handler(Looper.getMainLooper()).post {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                if (stopSelfResult(startId)) stopForeground(STOP_FOREGROUND_REMOVE)
             }
         }
         return START_REDELIVER_INTENT
     }
+
+    protected open fun runRefresh(
+        walletId: String?,
+        verifyOrder: Boolean,
+        recoverHistory: Boolean,
+        onProgress: (String) -> Unit,
+    ): SyncStatus =
+        RefreshWorker.performRefresh(
+            applicationContext,
+            walletId = walletId,
+            verifyOrder = verifyOrder,
+            recoverHistory = recoverHistory,
+            ensureActive = {
+                if (stopping) throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+            },
+            onProgress = onProgress,
+        )
 
     override fun onTimeout(
         startId: Int,
@@ -97,7 +111,10 @@ class BitcoinRefreshService : Service() {
     ) {
         stopping = true
         RefreshWorker.syncStatus.value =
-            RefreshWorker.syncStatus.value.copy(phase = SyncPhase.ERROR, message = "Android's background time limit was reached. Saved data is unchanged; retry.")
+            RefreshWorker.syncStatus.value.copy(
+                phase = SyncPhase.ERROR,
+                message = "Android's background time limit was reached. Saved data is unchanged; retry.",
+            )
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

@@ -1,17 +1,20 @@
 package io.polion.ui.model
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -19,65 +22,94 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.abs
 
-data class ModelPerformanceGroup(
+/** One labelled share of a whole, such as an asset's share of priced value. */
+data class ModelSlice(
+    val id: String,
     val label: String,
-    val values: List<Float>,
+    val share: Float,
+    val value: String,
+    val color: Color,
 )
 
-data class ModelDonutState(
-    val label: String = "Unavailable",
-    val amount: String = "—",
-    val fraction: Float = 0f,
-    val legend: String = "Unavailable",
+/** The money-weighted return card, already formatted; [status] explains a missing rate. */
+data class ModelReturnState(
+    val periodReturn: String = "—",
+    val annualReturn: String? = null,
+    val tone: ModelChangeTone = ModelChangeTone.NEUTRAL,
+    val rows: List<ModelMetric> = emptyList(),
+    val status: String? = null,
 )
 
 data class ModelGainRow(
+    val id: String,
     val asset: String,
     val owned: String,
     val realized: String,
     val unrealized: String,
+    val unrealizedTone: ModelChangeTone = ModelChangeTone.NEUTRAL,
+)
+
+data class ModelFeeRow(
+    val amount: String,
+    val value: String,
 )
 
 data class ModelInsightsState(
     val balance: String = "—",
-    val historyRange: String = "1Y",
-    val history: List<Float?> = emptyList(),
-    val historyTopLabel: String = "—",
-    val historyBottomLabel: String = "—",
-    val smoothChart: Boolean = false,
-    val performance: List<ModelPerformanceGroup> = emptyList(),
-    val performanceLegend: String = "Unavailable",
-    val portfolio: String = "Unavailable",
-    val decisionsAvailable: Boolean = false,
-    val diversity: ModelDonutState = ModelDonutState(),
+    val portfolio: String = "All portfolios",
+    val range: String = "1M",
+    val ranges: List<String> = emptyList(),
+    val history: ChartData? = null,
+    val chartStyle: ChartStyle = ChartStyle.LINE,
+    val performance: ModelReturnState = ModelReturnState(),
+    val diversity: List<ModelSlice> = emptyList(),
+    val diversityNote: String? = null,
     val gains: List<ModelGainRow> = emptyList(),
-    val exchange: String = "Unavailable",
-    val location: ModelDonutState = ModelDonutState(),
-    val tradeCount: String = "—",
-    val assetCount: String = "—",
-    val fees: String = "—",
-    val feesPeriod: String = "All time",
-    val assetWorth: List<Float?> = emptyList(),
-    val assetWorthTopLabel: String = "—",
-    val assetWorthBottomLabel: String = "—",
-    val assetWorthLegend: String = "Unavailable",
+    val gainsNote: String? = null,
+    val location: List<ModelSlice> = emptyList(),
+    val accountUse: List<ModelMetric> = emptyList(),
+    val trades: String = "—",
+    val tradedAssets: String = "—",
+    val fees: List<ModelFeeRow> = emptyList(),
+    val feesTotal: String? = null,
+    val worthAssets: List<ModelSlice> = emptyList(),
+    val worthSelected: String? = null,
+    val worth: ChartData? = null,
+    val loading: Boolean = false,
 )
 
 sealed interface ModelInsightsAction {
-    data object SelectHistoryRange : ModelInsightsAction
+    data class Range(
+        val label: String,
+    ) : ModelInsightsAction
+
+    data class Style(
+        val style: ChartStyle,
+    ) : ModelInsightsAction
+
+    data class OpenAsset(
+        val id: String,
+    ) : ModelInsightsAction
+
+    data class WorthAsset(
+        val id: String,
+    ) : ModelInsightsAction
 }
 
 @Composable
@@ -86,195 +118,258 @@ fun ModelInsights(
     wide: Boolean,
     onAction: (ModelInsightsAction) -> Unit,
 ) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val purple = MaterialTheme.colorScheme.tertiary
+    val c = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        MarketSection("History") {
+        Text(state.portfolio, color = c.onSurfaceVariant, fontSize = 12.sp)
+        MarketSection("History", "PORTFOLIO VALUE") {
             MarketCard {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Column {
-                        Text("Balance", color = muted, fontSize = 12.sp)
-                        Text(state.balance, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        Text("Balance", color = c.onSurfaceVariant, fontSize = 12.sp)
+                        Text(state.balance, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                     }
-                    Text(
-                        "${state.historyRange}  ⌄",
-                        color = muted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier =
-                            Modifier
-                                .clip(
-                                    CircleShape,
-                                ).border(1.dp, MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                                .padding(horizontal = 13.dp, vertical = 9.dp),
-                    )
+                    ChartStyleToggle(state.chartStyle) { onAction(ModelInsightsAction.Style(it)) }
                 }
-                MarketChart(
-                    state.history,
-                    Modifier.fillMaxWidth().height(180.dp),
-                    MaterialTheme.colorScheme.error,
-                    topLabel = state.historyTopLabel,
-                    bottomLabel = state.historyBottomLabel,
-                    smooth = state.smoothChart,
+                state.history?.let {
+                    ModelInteractiveChart(
+                        it,
+                        state.chartStyle,
+                        Modifier.fillMaxWidth().height(if (wide) 240.dp else 180.dp).testTag("insights-history"),
+                    )
+                } ?: Text("History unavailable", color = c.onSurfaceVariant)
+                RangeRow(state.ranges, state.range) { onAction(ModelInsightsAction.Range(it)) }
+            }
+        }
+        MarketSection("Portfolio Performance", "MONEY-WEIGHTED RETURN · ${state.range}") {
+            MarketCard(Modifier.testTag("insights-performance")) {
+                val tint =
+                    when (state.performance.tone) {
+                        ModelChangeTone.POSITIVE -> c.primary
+                        ModelChangeTone.NEGATIVE -> c.error
+                        ModelChangeTone.NEUTRAL -> c.onSurface
+                    }
+                Text(state.performance.periodReturn, color = tint, fontWeight = FontWeight.Bold, fontSize = 30.sp)
+                state.performance.annualReturn?.let { Text(it, color = tint, fontSize = 14.sp) }
+                state.performance.status?.let { Text(it, color = c.onSurfaceVariant, fontSize = 13.sp) }
+                MetricRows(state.performance.rows)
+                Text(
+                    "Deposits and withdrawals count by when they happened, so the rate reflects your timing. Trades, fees and " +
+                        "rewards are part of the return.",
+                    color = c.onSurfaceVariant,
+                    fontSize = 12.sp,
                 )
             }
         }
-        MarketSection("Portfolio Performance") {
-            MarketCard {
-                val colors = listOf(purple, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.tertiaryContainer)
-                Canvas(Modifier.fillMaxWidth().height(150.dp)) {
-                    val baseline = size.height * .55f
-                    if (state.performance.isNotEmpty()) {
-                        drawLine(Color.Gray, Offset(0f, baseline), Offset(size.width, baseline), 1f)
-                        state.performance.forEachIndexed { group, item ->
-                            item.values.take(3).forEachIndexed { bar, value ->
-                                val x = size.width * (.07f + group * .25f) + bar * 12.dp.toPx()
-                                drawRoundRect(
-                                    colors[bar],
-                                    Offset(
-                                        x,
-                                        if (value >
-                                            0
-                                        ) {
-                                            baseline - value * size.height
-                                        } else {
-                                            baseline
-                                        },
-                                    ),
-                                    Size(9.dp.toPx(), abs(value) * size.height),
-                                    CornerRadius(3.dp.toPx()),
-                                )
-                            }
-                        }
-                    }
-                }
-                if (state.performance.isEmpty()) {
-                    Text(
-                        "Unavailable",
-                        color = muted,
-                        fontSize = 12.sp,
-                    )
-                } else {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                        state.performance.forEach { Text(it.label, color = muted, fontSize = 11.sp) }
-                    }
-                }
-                Text(state.performanceLegend, color = muted, fontSize = 11.sp)
+        MarketSection("Portfolio Diversity", "SHARE OF PRICED VALUE") {
+            MarketCard(Modifier.testTag("insights-diversity")) {
+                SliceDonut(state.diversity, Modifier.align(Alignment.CenterHorizontally).size(if (wide) 240.dp else 200.dp))
+                SliceLegend(state.diversity) { onAction(ModelInsightsAction.OpenAsset(it)) }
+                state.diversityNote?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp) }
             }
         }
-        MarketSection("Decisions") {
-            MarketCard(color = MaterialTheme.colorScheme.secondaryContainer) {
-                Text("Decisions", color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text(state.portfolio, fontSize = 14.sp)
-                if (state.decisionsAvailable) {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("↗  Good\n    decisions", color = MaterialTheme.colorScheme.primary, fontSize = 15.sp)
-                        Text("Bad  ↘\ndecisions", color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
+        MarketSection("Gains Reporting", "FIFO · REALIZED AND UNREALIZED") {
+            MarketCard(Modifier.testTag("insights-gains")) {
+                Row(Modifier.fillMaxWidth()) {
+                    listOf("Asset" to 1f, "Owned" to 1.2f, "Realized" to 1.1f, "Unrealized" to 1.1f).forEachIndexed {
+                        index,
+                        (label, weight),
+                        ->
+                        Text(
+                            label,
+                            color = c.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(weight),
+                            textAlign = if (index == 0) TextAlign.Start else TextAlign.End,
+                        )
                     }
-                } else {
-                    Text("Unavailable", color = muted, modifier = Modifier.padding(vertical = 14.dp))
                 }
-            }
-        }
-        MarketSection("Portfolio Diversity") {
-            MarketCard {
-                InsightDonut(state.diversity, Modifier.align(Alignment.CenterHorizontally).size(if (wide) 280.dp else 220.dp))
-                Text(state.diversity.legend, color = muted, modifier = Modifier.align(Alignment.CenterHorizontally))
-            }
-        }
-        MarketSection("Gains Reporting") {
-            MarketCard {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    listOf("Asset", "Owned", "Realized", "Unrealized").forEach { Text(it, color = muted) }
-                }
-                if (state.gains.isEmpty()) Text("Unavailable", color = muted, fontSize = 12.sp)
+                if (state.gains.isEmpty()) Text("No holdings or disposals", color = c.onSurfaceVariant, fontSize = 12.sp)
                 state.gains.forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(row.asset, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        Text(row.owned, fontSize = 11.sp, modifier = Modifier.weight(1.1f), textAlign = TextAlign.End)
-                        Text(row.realized, fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = Role.Button,
+                            ) { onAction(ModelInsightsAction.OpenAsset(row.id)) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(row.asset, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            row.owned,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1.2f),
+                            textAlign = TextAlign.End,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(row.realized, fontSize = 12.sp, modifier = Modifier.weight(1.1f), textAlign = TextAlign.End)
                         Text(
                             row.unrealized,
-                            color = MaterialTheme.colorScheme.primary,
+                            color =
+                                when (row.unrealizedTone) {
+                                    ModelChangeTone.POSITIVE -> c.primary
+                                    ModelChangeTone.NEGATIVE -> c.error
+                                    ModelChangeTone.NEUTRAL -> c.onSurface
+                                },
                             fontSize = 12.sp,
                             modifier = Modifier.weight(1.1f),
                             textAlign = TextAlign.End,
                         )
                     }
                 }
+                state.gainsNote?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp) }
+            }
+        }
+        MarketSection("Asset Location", "VALUE BY ACCOUNT") {
+            MarketCard(Modifier.testTag("insights-location")) {
+                SliceDonut(state.location, Modifier.align(Alignment.CenterHorizontally).size(if (wide) 220.dp else 180.dp))
+                SliceLegend(state.location) {}
+                Text("Most used accounts · ${state.range}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+                if (state.accountUse.isEmpty()) Text("No activity in this period", color = c.onSurfaceVariant, fontSize = 12.sp)
+                MetricRows(state.accountUse)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MarketCard(Modifier.weight(1f)) {
-                Text("Most Used\nExchanges", fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(24.dp))
-                Text(state.exchange, color = muted)
-                Spacer(Modifier.height(24.dp))
+            MarketCard(Modifier.weight(1f).testTag("insights-trades")) {
+                Text("Trade Statistics", fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                Text(state.trades, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                Text("trades · ${state.tradedAssets} assets · ${state.range}", color = c.onSurfaceVariant, fontSize = 12.sp)
             }
-            MarketCard(Modifier.weight(1f)) {
-                Text("Asset Location", fontWeight = FontWeight.Bold)
-                InsightDonut(state.location, Modifier.fillMaxWidth().height(170.dp))
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MarketCard(Modifier.weight(1f)) {
-                Text("Trade Statistics", fontWeight = FontWeight.Bold)
-                Text(state.tradeCount, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Text("/ ${state.assetCount} assets", color = muted, fontSize = 12.sp)
-            }
-            MarketCard(Modifier.weight(1f)) {
-                Text("Fees", fontWeight = FontWeight.Bold)
-                Text(state.fees, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                Text(state.feesPeriod, color = muted, fontSize = 12.sp)
+            MarketCard(Modifier.weight(1f).testTag("insights-fees")) {
+                Text("Fees", fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                Text(state.feesTotal ?: if (state.fees.isEmpty()) "None" else "—", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                state.fees.forEach { Text("${it.amount} · ${it.value}", color = c.onSurfaceVariant, fontSize = 12.sp) }
+                Text(state.range, color = c.onSurfaceVariant, fontSize = 12.sp)
             }
         }
-        MarketSection("Asset Worth") {
-            MarketCard {
-                MarketChart(
-                    state.assetWorth,
-                    Modifier.fillMaxWidth().height(160.dp),
-                    purple,
-                    topLabel = state.assetWorthTopLabel,
-                    bottomLabel = state.assetWorthBottomLabel,
-                    smooth = state.smoothChart,
+        MarketSection("Asset Worth", "POSITION VALUE · QUANTITY × PRICE") {
+            MarketCard(Modifier.testTag("insights-worth")) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.worthAssets.forEach { asset ->
+                        val chosen = asset.id == state.worthSelected
+                        Text(
+                            asset.label,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (chosen) c.onSurface else c.onSurfaceVariant,
+                            modifier =
+                                Modifier
+                                    .clip(CircleShape)
+                                    .background(if (chosen) c.surfaceVariant else Color.Transparent)
+                                    .selectable(chosen, role = Role.RadioButton) { onAction(ModelInsightsAction.WorthAsset(asset.id)) }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+                state.worth?.let {
+                    ModelInteractiveChart(it, state.chartStyle, Modifier.fillMaxWidth().height(160.dp), tint = c.tertiary)
+                } ?: Text("No position in this period", color = c.onSurfaceVariant)
+                Text(
+                    "The value of the position you held: it rises when you buy as well as when the price rises.",
+                    color = c.onSurfaceVariant,
+                    fontSize = 12.sp,
                 )
-                Text(state.assetWorthLegend, color = muted, modifier = Modifier.align(Alignment.CenterHorizontally))
             }
         }
     }
 }
 
 @Composable
-private fun InsightDonut(
-    state: ModelDonutState,
-    modifier: Modifier,
+private fun RangeRow(
+    ranges: List<String>,
+    selected: String,
+    onRange: (String) -> Unit,
 ) {
-    val purple = MaterialTheme.colorScheme.tertiary
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize().padding(12.dp)) {
-            val diameter = minOf(size.width, size.height) * .78f
-            if (state.fraction >
-                0f
-            ) {
-                drawArc(
-                    purple,
-                    -90f,
-                    359f * state.fraction.coerceIn(0f, 1f),
-                    false,
-                    Offset(
-                        (size.width - diameter) / 2,
-                        (size.height - diameter) / 2,
-                    ),
-                    Size(diameter, diameter),
-                    style = Stroke(diameter * .24f),
-                )
-            }
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(state.label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-            Text(state.amount, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        ranges.forEach { range ->
+            val chosen = range == selected
+            Text(
+                range,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (chosen) c.onSurface else c.onSurfaceVariant,
+                modifier =
+                    Modifier
+                        .clip(CircleShape)
+                        .background(if (chosen) c.surfaceVariant else Color.Transparent)
+                        .selectable(chosen, role = Role.RadioButton) { onRange(range) }
+                        .testTag("insights-range-$range")
+                        .padding(horizontal = 9.dp, vertical = 8.dp),
+            )
         }
     }
+}
+
+@Composable
+private fun MetricRows(rows: List<ModelMetric>) {
+    val c = MaterialTheme.colorScheme
+    rows.forEach { row ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(row.label, color = c.onSurfaceVariant, fontSize = 13.sp)
+            Text(row.value, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        }
+    }
+}
+
+/** A donut with one arc per slice; an empty list draws nothing. */
+@Composable
+private fun SliceDonut(
+    slices: List<ModelSlice>,
+    modifier: Modifier,
+) {
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(12.dp)) {
+            val diameter = minOf(size.width, size.height) * .8f
+            val topLeft = Offset((size.width - diameter) / 2, (size.height - diameter) / 2)
+            val stroke = Stroke(diameter * .22f)
+            drawArc(track, 0f, 360f, false, topLeft, Size(diameter, diameter), style = stroke)
+            var start = -90f
+            slices.forEach { slice ->
+                val sweep = 360f * slice.share.coerceIn(0f, 1f)
+                // A hairline gap separates neighbouring slices.
+                drawArc(slice.color, start, (sweep - 1f).coerceAtLeast(0.5f), false, topLeft, Size(diameter, diameter), style = stroke)
+                start += sweep
+            }
+        }
+        slices.firstOrNull()?.let { top ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(top.label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text(percent(top.share), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SliceLegend(
+    slices: List<ModelSlice>,
+    onSlice: (String) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    slices.forEach { slice ->
+        Row(
+            Modifier.fillMaxWidth().clickable(role = Role.Button) { onSlice(slice.id) }.padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(slice.color))
+            Text(slice.label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text(slice.value, color = c.onSurfaceVariant, fontSize = 13.sp)
+            Text(percent(slice.share), fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
+        }
+    }
+}
+
+private fun percent(share: Float): String {
+    val tenths = (share * 1000).toInt()
+    return if (share > 0 && tenths < 1) "<0.1%" else "${tenths / 10}.${tenths % 10}%"
 }
 
 @Composable

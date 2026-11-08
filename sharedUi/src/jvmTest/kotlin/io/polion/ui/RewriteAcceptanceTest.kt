@@ -10,6 +10,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -67,15 +68,15 @@ class RewriteAcceptanceTest {
                             )
                         }
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Advanced tools").performClick()
+                        openAdvancedTools()
                         onNodeWithTag("destination-HOME").performClick()
                         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                         onNodeWithText("Saved coins").assertIsDisplayed()
                         onNodeWithText("PRICED VALUE").assertDoesNotExist()
                         capture("main")
-                        onAllNodesWithText("☆").onFirst().performClick()
-                        assertEquals(setOf(AssetId("bitcoin:btc")), app.marketFavorites())
+                        onAllNodesWithContentDescription("to favorites", substring = true).onFirst().performClick()
+                        // Favorites are saved on the database dispatcher, not the UI thread.
+                        waitUntil(timeoutMillis = 10_000) { app.marketFavorites() == setOf(AssetId("bitcoin:btc")) }
                         assertEquals(app.marketFavorites(), PortfolioApplication(db) { System.currentTimeMillis() }.marketFavorites())
                         onNodeWithTag("page-content").performScrollToNode(hasText("Global market rankings are unavailable."))
                         onNodeWithText("Global market rankings are unavailable.").performScrollTo().assertIsDisplayed()
@@ -138,6 +139,7 @@ class RewriteAcceptanceTest {
                         onNodeWithTag("workspace-menu").performClick()
                         onAllNodesWithText("Settings").onLast().performClick()
                         onNodeWithTag("automatic-refresh").performScrollTo().performClick()
+                        onNodeWithTag("automatic-refresh-confirm").performClick()
                         onNodeWithTag("wifi-only-refresh").performScrollTo().performClick()
                         waitUntil(timeoutMillis = 10_000) { host.preferences == RefreshPreferences(true, true) }
                         capture("settings")
@@ -160,8 +162,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
@@ -214,8 +215,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("market-bitcoin:btc").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("market-bitcoin:btc").performClick()
@@ -257,8 +257,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("destination-OVERVIEW").performClick()
@@ -331,8 +330,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("↻").performClick()
@@ -361,8 +359,7 @@ class RewriteAcceptanceTest {
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { PolionApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
-                    onNodeWithTag("model-menu").performClick()
-                    onNodeWithText("Advanced tools").performClick()
+                    openAdvancedTools()
                     onNodeWithTag("destination-HOME").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("main-market").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("↻").performClick()
@@ -405,8 +402,6 @@ class RewriteAcceptanceTest {
 
         @Volatile var priceRequests = 0
 
-        @Volatile var automaticPrices = false
-
         @Volatile var recoveryRequests = 0
 
         @Volatile var refreshRequests = 0
@@ -425,10 +420,12 @@ class RewriteAcceptanceTest {
             onResult("Exported")
         }
 
-        override fun openFile(onResult: (ByteArray?) -> Unit) = onResult(null)
+        override fun saveBackup(
+            password: String,
+            onResult: (String) -> Unit,
+        ) = onResult("Not used")
 
         override fun restoreBackup(
-            bytes: ByteArray,
             password: String,
             onResult: (String) -> Unit,
         ) = onResult("Not used")
@@ -460,10 +457,6 @@ class RewriteAcceptanceTest {
         ) {
             priceRequests++
             onResult("Saved Bitcoin price history.")
-        }
-
-        override fun setAutomaticPriceRefresh(enabled: Boolean) {
-            automaticPrices = enabled
         }
 
         override fun refreshAutomaticPrices(onResult: (String) -> Unit) {

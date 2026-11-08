@@ -502,5 +502,6 @@ internal fun Rational?.displayAmount(): String {
     }
     val coefficient = ExactInteger.parse((if (negative) "-" else "") + quotient.toString())
     val rounded = ExactDecimal(coefficient, 3).rescale(2, Rounding.HALF_UP).toString()
-    return if (quotient.last() != '0' || remainder.sign != 0) "~$rounded" else rounded
+    // Shown rounded to two decimals without an approximation mark; exact values remain in the underlying records.
+    return rounded
 }

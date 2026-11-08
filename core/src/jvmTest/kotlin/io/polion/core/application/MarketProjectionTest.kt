@@ -74,10 +74,12 @@ class MarketProjectionTest {
                     .toString(),
             )
             assertEquals("manual", points[2].price?.id)
-            assertEquals("manual", points[3].price?.id)
+            // A newer automatic observation replaces the older manual override.
+            assertEquals("latest", points[3].price?.id)
             now = 400
             assertEquals(1, app.useProviderPrices(coin, usd))
-            assertEquals(listOf("manual", "latest"), app.priceSeries(coin, usd, listOf(300, 400)).map { it.price?.id })
+            // The withdrawal takes effect at 400, so history before it still uses the manual observation.
+            assertEquals(listOf("manual", "latest"), app.priceSeries(coin, usd, listOf(250, 300)).map { it.price?.id })
             assertTrue(app.snapshot().valuations.isEmpty())
             assertTrue(app.snapshot().activities.isEmpty())
         }

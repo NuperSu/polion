@@ -1,5 +1,12 @@
 # Foundation validation
 
+## Release acceptance (M6) — 2026-11-08
+
+- **Local suites:** 411 core JVM, 149 shared UI and 30 desktop tests, zero failures; ktlint clean; R8 release APK (7.7 MB, libsecp256k1 for four ABIs) and the self-contained desktop distribution build.
+- **Android 15 emulator (x86_64):** `ReliabilityInstrumentation` 21 checks, 0 failures. The release APK ran first run, Main with live market data, the live Kraken order book, and an xpub import that derived 83 addresses and synced history.
+- **Desktop:** the packaged distribution started with its own runtime under Xvfb with an isolated data folder and stayed up; rendering fell back to software, as expected there.
+- **Not run:** hosted CI, a device TalkBack audit, the phone (still debug-signed; moving it to the release key needs a backup, uninstall and restore).
+
 ## JDK 25 build — 2026-11-01
 
 The full CI task set passed locally with JDK 25 and Gradle 9.8.1, including JVM and Android host tests, Android lint, both APKs and desktop packaging. The Android Java target is 25. The desktop process started under Xvfb; window creation was not independently verified. No Android device or emulator was connected, and hosted CI has not been run for this change.
@@ -200,3 +207,11 @@ Shared workflows cover phone/desktop submission and retry, edit/reversal, scoped
 The pending chart-selection fix was committed first as `d12456c` after focused presenter tests. Phase 4 core `539c328`, UI `0cd403c` and platforms `1e8eebe` passed 467 automated tests (280 core JVM, 47 Android host, 111 shared UI, 28 desktop, one model), with zero failures/errors/skips. Formatting, Android lint/APK/test APK and desktop packaging passed. Logs: `/tmp/phase4-final-{lint,full,model,platform}.log`.
 
 The Pixel was updated in current Android user 10 without clearing data. Disposable native instrumentation passed 20 checks, zero failures, including the independently recorded public-transaction account workflow and periodic scheduling constraints/cadences/cancellation. MainActivity was confirmed resumed. Native log: `/tmp/phase4-final-native.log`. This run verifies queued scheduling store/reopen and cancellation rather than claiming a new forced-process-death scheduling audit. Source acceptance remains provider-based; no incremental network fetching is enabled. See [Phase 4 evidence](ui-model-phases/phase-4-evidence.md), [public fixture provenance](phase4-public-fixture.md), and [incremental project](incremental-bitcoin-history.md). The 118 seeded captures await user visual review; broader financial/chain/release acceptance remains open.
+
+## Queued wallet discovery service fix — 2026-11-05
+
+Android manual service starts enqueue every captured operation on the serial executor. Each completion calls `stopSelfResult(startId)` so an older request cannot stop later work or remove its foreground notification. The bounded wake lock is acquired once per service instance. Discovery acknowledgement describes a request that can wait behind current work; rejected starts direct the user to Accounts rediscovery and preserve another operation's running status.
+
+Affected Android formatting, `lintDebug`, debug/test APK assembly and release assembly passed (`/tmp/discovery-fix-format2.log`, `/tmp/discovery-fix-build.log`, `/tmp/discovery-fix-release.log`). APK manifests were checked: the probe activity/service are present only in debug and absent from release.
+
+The native suite adds `queuedWalletDiscoveryService`: a debug-only foreground-service fixture holds a history request, queues two wallet discoveries, fails the first request, and checks both wallet IDs run in FIFO order without early service destruction. It uses an isolated executor and no database or transport. The updated 21-check native suite compiled but **was not executed**: `adb devices -l` found no device/emulator, and the local SDK has no emulator runtime/system image. Phone installation is pending an available device. Earlier Phase 4 native results do not cover this fix.

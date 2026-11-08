@@ -61,7 +61,7 @@ class EsploraTest {
                 EsploraTransport { path ->
                     if (path.endsWith("mempool") == !confirmed) "[${tx(confirmed)}]" else "[]"
                 },
-                { "now" },
+                { "2026-11-06T10:00:00Z" },
             ).fetch(request).observations.single()
         val decoder = BitcoinDecoder(mapOf(address to account))
         val pending = decoder.decode(observation(false)).single()
@@ -69,11 +69,13 @@ class EsploraTest {
         assertEquals(pending.id, confirmed.id)
         assertEquals(ActivityStatus.PENDING, pending.status)
         assertEquals(ActivityStatus.CONFIRMED, confirmed.status)
+        // Pending transactions have no block time; they are dated by retrieval, never at the epoch.
+        assertEquals(1793959200000L, pending.occurredAtEpochMillis)
         assertEquals(emptyMap(), LedgerDeltas.calculate(listOf(pending)))
     }
 
     @Test
-    fun paginatesConfirmedHistoryAndFlagsMempoolLimit() {
+    fun paginatesConfirmedHistoryAndTreatsTheMempoolLimitAsComplete() {
         val chain = (0 until 25).joinToString(",") { tx(true).replace(id, it.toString(16).padStart(64, '0')) }
         val pending = (25 until 75).joinToString(",") { tx(false).replace(id, it.toString(16).padStart(64, '0')) }
         val fetcher =
@@ -92,7 +94,8 @@ class EsploraTest {
         assertEquals(75, first.observations.size)
         val second = fetcher.fetch(request.copy(cursor = first.nextCursor))
         assertEquals(null, second.nextCursor)
-        assertEquals(Coverage.PARTIAL, second.coverage)
+        // Confirmed history is complete; the scan records separately that only 50 pending transactions were listed.
+        assertEquals(Coverage.COMPLETE, second.coverage)
     }
 
     @Test
@@ -122,7 +125,6 @@ class EsploraTest {
             listOf(
                 "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4",
                 "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0",
-                "BC1SW50QGDZ25J",
             )
         valid.forEach { assertEquals(it.lowercase(), bitcoinMainnetAddress(it)) }
         listOf(
@@ -130,6 +132,8 @@ class EsploraTest {
             "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kemeawh",
             "bc1pw5dgrnzv",
             "BC1QR508D6QEJXTDG4Y5R3ZARVARYV98GJ9P",
+            // A valid BIP-350 encoding of witness version 16, which no wallet uses; only versions 0 and 1 are accepted.
+            "BC1SW50QGDZ25J",
         ).forEach { assertFails { bitcoinMainnetAddress(it) } }
     }
 

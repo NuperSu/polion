@@ -102,7 +102,6 @@ class ModelProductionCaptureTest {
                         capture("insights")
                         for (heading in listOf(
                             "Portfolio Performance",
-                            "Decisions",
                             "Portfolio Diversity",
                             "Gains Reporting",
                             "Asset Location",
@@ -113,12 +112,10 @@ class ModelProductionCaptureTest {
                             onNodeWithTag("model-content").performScrollToNode(hasText(heading))
                             capture("insights-${heading.lowercase().replace(' ', '-')}")
                         }
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Accounts").performClick()
+                        openConnections()
                         capture("accounts")
                         onNodeWithTag("model-back").performClick()
-                        onNodeWithTag("model-menu").performClick()
-                        onNodeWithText("Settings").performClick()
+                        openSettings()
                         capture("settings")
                     }
                 }

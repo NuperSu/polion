@@ -21,11 +21,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,8 +38,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,24 +53,30 @@ import io.polion.core.application.MarketCoin
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.application.PortfolioSnapshot
 import io.polion.core.market.PriceStatus
+import io.polion.core.model.AssetId
 import io.polion.core.model.AtomicAmount
 import io.polion.core.model.ExactInteger
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Market observations stay separate from quantities and portfolio valuation. */
 @Composable
 internal fun RevisedMain(
     app: PortfolioApplication,
+    host: PlatformActions,
     snapshot: PortfolioSnapshot,
     onAsset: (MarketCoin) -> Unit,
 ) {
-    var favorites by remember(app) { mutableStateOf(app.marketFavorites()) }
+    var favorites by remember(app) { mutableStateOf(emptySet<AssetId>()) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(app) { favorites = withContext(host.dispatcher) { app.marketFavorites() } }
     val assets = snapshot.marketCoins.distinctBy { it.asset }.sortedBy { it.metadata?.symbol ?: it.asset.value }
 
     fun toggle(asset: MarketCoin) {
         val id = asset.asset
         val next = if (id in favorites) favorites - id else favorites + id
-        app.setMarketFavorites(next)
         favorites = next
+        scope.launch { withContext(host.dispatcher) { app.setMarketFavorites(next) } }
     }
     Column(Modifier.fillMaxWidth().testTag("main-market"), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -80,7 +91,12 @@ internal fun RevisedMain(
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     assets.forEach { asset ->
                         Surface(
-                            modifier = Modifier.width(168.dp).clickable { onAsset(asset) }.testTag("market-${asset.asset.value}"),
+                            modifier =
+                                Modifier
+                                    .width(
+                                        168.dp,
+                                    ).clickable(role = Role.Button) { onAsset(asset) }
+                                    .testTag("market-${asset.asset.value}"),
                             color = MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(16.dp),
                         ) {
@@ -109,7 +125,7 @@ internal fun RevisedMain(
                     Column(Modifier.padding(horizontal = 14.dp)) {
                         selected.forEachIndexed { index, asset ->
                             Row(
-                                Modifier.fillMaxWidth().clickable { onAsset(asset) }.padding(vertical = 12.dp),
+                                Modifier.fillMaxWidth().clickable(role = Role.Button) { onAsset(asset) }.padding(vertical = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -145,7 +161,7 @@ private fun MarketHeading(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(eyebrow, color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
-        Text(title, color = Ink, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = Ink, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
     }
 }
 
@@ -175,14 +191,18 @@ private fun FavoriteButton(
     asset: String,
     onClick: () -> Unit,
 ) {
-    TextButton(
-        onClick = onClick,
-        modifier =
-            Modifier.size(40.dp).semantics {
-                contentDescription = if (selected) "Remove $asset from favorites" else "Add $asset to favorites"
-            },
+    TouchTarget(
+        target =
+            Modifier
+                .clickable(role = Role.Button, onClick = onClick)
+                .semantics {
+                    contentDescription = if (selected) "Remove $asset from favorites" else "Add $asset to favorites"
+                    stateDescription = if (selected) "Favorite" else "Not favorite"
+                },
     ) {
-        Text(if (selected) "★" else "☆", color = if (selected) Teal else Muted, fontSize = 22.sp)
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+            Text(if (selected) "★" else "☆", color = if (selected) Teal else Muted, fontSize = 22.sp)
+        }
     }
 }
 
@@ -203,7 +223,8 @@ internal fun RevisedIcon(
     modifier: Modifier,
     tint: Color = Ink,
 ) {
-    Canvas(modifier) {
+    // Icons are decorative: each caller pairs them with a text label or a content description on the parent.
+    Canvas(modifier.clearAndSetSemantics {}) {
         val w = size.width
         val h = size.height
         val stroke = 1.7.dp.toPx()

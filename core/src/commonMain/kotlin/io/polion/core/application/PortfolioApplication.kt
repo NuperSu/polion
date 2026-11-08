@@ -6,7 +6,18 @@ import io.polion.core.accounting.LedgerAccounting
 import io.polion.core.accounting.QuoteValue
 import io.polion.core.accounting.Treatment
 import io.polion.core.accounting.TreatmentRepository
+import io.polion.core.alerts.AlertCondition
+import io.polion.core.alerts.AlertRules
+import io.polion.core.alerts.NotificationKind
+import io.polion.core.alerts.NotificationMessage
+import io.polion.core.alerts.NotificationPreferences
+import io.polion.core.alerts.NotificationText
+import io.polion.core.alerts.PriceAlert
 import io.polion.core.backup.BackupEncryption
+import io.polion.core.backup.ByteArraySink
+import io.polion.core.backup.ByteArraySource
+import io.polion.core.backup.ByteSink
+import io.polion.core.backup.ByteSource
 import io.polion.core.backup.PortableBackup
 import io.polion.core.bitcoin.BITCOIN_ASSET
 import io.polion.core.bitcoin.BITCOIN_CONNECTOR_ID
@@ -20,13 +31,10 @@ import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.bitcoin.bitcoinMainnetAddress
 import io.polion.core.bitcoin.bitcoinWallet
-import io.polion.core.connectors.Capability
 import io.polion.core.connectors.ConnectorRegistry
-import io.polion.core.connectors.Coverage
 import io.polion.core.connectors.HistoryFetcher
 import io.polion.core.connectors.HistoryPage
 import io.polion.core.connectors.HistoryRequest
-import io.polion.core.connectors.IntegrationManifest
 import io.polion.core.connectors.RegisteredConnector
 import io.polion.core.holdings.BalanceCoverage
 import io.polion.core.holdings.BalanceView
@@ -34,19 +42,27 @@ import io.polion.core.holdings.HoldingsRepository
 import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityKind
 import io.polion.core.ledger.ActivityRepository
+import io.polion.core.ledger.ActivityStatus
 import io.polion.core.market.AssetDefinition
 import io.polion.core.market.AssetMetadata
 import io.polion.core.market.CoingeckoHistoricalResult
+import io.polion.core.market.CoingeckoMarkets
 import io.polion.core.market.CoingeckoPriceClient
 import io.polion.core.market.CoingeckoPrices
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
+import io.polion.core.market.KrakenOrderBook
+import io.polion.core.market.KrakenPair
 import io.polion.core.market.KrakenPrices
 import io.polion.core.market.KrakenRateLimitedException
+import io.polion.core.market.MarketFeed
+import io.polion.core.market.MarketFeedRepository
 import io.polion.core.market.MarketRepository
+import io.polion.core.market.OrderBookSnapshot
 import io.polion.core.market.PriceObservation
 import io.polion.core.market.PricePolicy
+import io.polion.core.market.PriceResult
 import io.polion.core.market.PriceStatus
 import io.polion.core.model.AccountId
 import io.polion.core.model.ActivityId
@@ -60,6 +76,7 @@ import io.polion.core.model.Rational
 import io.polion.core.model.SourceId
 import io.polion.core.model.SyncJobId
 import io.polion.core.model.TrackingTargetId
+import io.polion.core.model.isHash64
 import io.polion.core.ownership.Account
 import io.polion.core.ownership.AccountKind
 import io.polion.core.ownership.Owner
@@ -89,9 +106,17 @@ import io.polion.core.sync.SyncJob
 import io.polion.core.sync.SyncOrchestrator
 import io.polion.core.sync.SyncProvider
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import kotlin.math.pow
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -169,6 +194,8 @@ data class AccountingView(
     val missingTreatments: List<ActivityId>,
     val invalidTreatments: List<ActivityId>,
     val orderingUncertain: List<ActivityId>,
+    /** Treatments priced in another quote currency; their cost or proceeds are unknown in the report currency. */
+    val currencyMismatch: List<ActivityId> = emptyList(),
 )
 
 data class SavedObservation(
@@ -204,6 +231,10 @@ data class SourceStatus(
     val lastError: String?,
     val interrupted: Boolean,
     val utxoMismatchCount: Int = 0,
+    /** False when the latest accepted scan could not obtain the provider UTXO comparison. */
+    val utxoComparisonAvailable: Boolean = true,
+    /** Addresses with more unconfirmed transactions than the provider lists; the rest appear once they confirm. */
+    val pendingCapped: Int = 0,
 )
 
 data class BitcoinScanProgress(
@@ -219,6 +250,8 @@ data class BitcoinScanProgress(
 data class BitcoinWalletDiscovery(
     val addresses: Int,
     val usedAddresses: Int,
+    /** Human-readable caveat about script type or branch coverage; null when none applies. */
+    val notice: String? = null,
 )
 
 data class PortfolioSnapshot(
@@ -237,7 +270,74 @@ data class PortfolioSnapshot(
     val sourceConsent: Boolean,
     val activityNetworks: List<String> = emptyList(),
     val marketCoins: List<MarketCoin> = emptyList(),
+    /** The same balances valued in the secondary currency from Settings; null when none is chosen or it equals [currency]. */
+    val secondaryCurrency: AssetId? = null,
+    val secondaryValuations: List<AssetValuation> = emptyList(),
 )
+
+/** Wallet discovery refused an address because another account already tracks it. The message is safe to show. */
+class BitcoinDiscoveryConflict(
+    message: String,
+) : IllegalArgumentException(message)
+
+data class MarketOverview(
+    val currency: AssetId,
+    val consent: Boolean,
+    val markets: io.polion.core.market.MarketFeed<io.polion.core.market.MarketListing>?,
+    val trending: io.polion.core.market.MarketFeed<io.polion.core.market.TrendingListing>?,
+    /** Name of the [CoingeckoProviderFailure] from the last refresh, or null after a success. */
+    val lastFailure: String?,
+    /** Epoch millis until which CoinGecko feed requests pause after a rate limit. */
+    val retryAfterMillis: Long?,
+    val hasApiKey: Boolean,
+    /** CoinGecko coin ID to the asset ID used for favorites and coin pages. */
+    val assetKeys: Map<String, AssetId>,
+)
+
+data class MarketRefreshResult(
+    val updatedFeeds: Int,
+    val failure: CoingeckoProviderFailure?,
+    val retryAfterMillis: Long?,
+)
+
+enum class LandingPage { MAIN, PORTFOLIO, INSIGHTS }
+
+data class GeneralPreferences(
+    val landing: LandingPage = LandingPage.MAIN,
+    val secondaryCurrency: AssetId? = null,
+    val showPortfolioChart: Boolean = true,
+    val zeroBasisRewards: Boolean = false,
+    /** Null means the host's own device name. */
+    val deviceName: String? = null,
+    /** Balances, quantities and other absolute amounts show as asterisks; percentages and charts stay visible. */
+    val hideAmounts: Boolean = false,
+    /** Charts draw candles instead of a line. */
+    val candleCharts: Boolean = false,
+)
+
+/** The default public Esplora endpoint. */
+const val DEFAULT_ENDPOINT = "https://blockstream.info/api"
+
+/** The most unconfirmed transactions Esplora returns for one address. */
+const val MEMPOOL_PAGE = 50L
+
+/** Privacy lock delays offered in Settings: immediately, 1, 5 and 15 minutes, and 1 hour. */
+val LOCK_DELAYS = listOf(0L, 60_000L, 300_000L, 900_000L, 3_600_000L)
+
+/** A 24-hour move at least this large, in percent, is a significant price change. */
+const val SIGNIFICANT_MOVE_PERCENT = 10.0
+
+/** A notification check refreshes a market list older than this. */
+const val NOTIFICATION_MARKET_AGE_MILLIS = 10 * 60_000L
+
+/** Order book levels shown per side. */
+const val ORDER_BOOK_DEPTH = 10
+
+/** Delivered notifications kept in the history. */
+const val NOTIFICATION_HISTORY_SIZE = 500
+
+/** Fiat currencies with automatic Kraken prices. */
+val DISPLAY_CURRENCIES = listOf("USD", "EUR", "GBP")
 
 /** Shared persisted workflows. A source connector is required before coverage can be complete. */
 class PortfolioApplication(
@@ -248,9 +348,14 @@ class PortfolioApplication(
     private val ownership = OwnershipRepository(db)
     private val activities = ActivityRepository(db)
     private val overlays = OverlayRepository(db)
+    private val marketFeeds = MarketFeedRepository(db)
     private val holdings = HoldingsRepository(db)
     private val market = MarketRepository(db)
     private val treatments = TreatmentRepository(db)
+    private val notifications =
+        io.polion.core.alerts
+            .NotificationRepository(db)
+    private val csvImports = CsvImportRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
     private val bitcoinGraph =
         io.polion.core.bitcoin
@@ -291,6 +396,7 @@ class PortfolioApplication(
         val fullBalance = holdings.current(coverage, at)
         val balance = fullBalance.copy(quantities = fullBalance.quantities.filterKeys { it.account in selected })
         val currency = filter.portfolio?.let { id -> AssetId(catalog.portfolios.single { it.id == id }.valuationCurrency) } ?: currency()
+        val secondary = generalPreferences().secondaryCurrency?.takeIf { it != currency }
         val candidates =
             ledger.activities
                 .filter { item ->
@@ -331,6 +437,8 @@ class PortfolioApplication(
                 setting("source_error"),
                 setting("source_in_progress") == "true",
                 bitcoinUtxoReview(limit = 1).total,
+                setting("utxo_comparison_available") != "false",
+                setting("pending_capped")?.toIntOrNull() ?: 0,
             ),
             setting("sample_data") == "true",
             ledger.activities.count {
@@ -353,6 +461,8 @@ class PortfolioApplication(
                 val result = market.lookup(asset, currency, at, at, pricePolicy(current = true))
                 result.observation?.let { MarketCoin(asset, market.metadataAt(asset, at), result.status, it) }
             },
+            secondary,
+            secondary?.let { valuations(balance, it, at, pricePolicy(current = true)) }.orEmpty(),
         )
     }
 
@@ -424,6 +534,9 @@ class PortfolioApplication(
             .toSet()
     }
 
+    /** The valuation currency of [portfolio], or the default display currency for all portfolios. */
+    fun displayCurrency(portfolio: PortfolioId?): AssetId = portfolioCurrency(portfolio)
+
     private fun portfolioCurrency(portfolio: PortfolioId?): AssetId =
         portfolio?.let { id ->
             AssetId(
@@ -458,10 +571,8 @@ class PortfolioApplication(
         times: List<Long>,
     ): List<MarketPricePoint> {
         val knownAt = now()
-        return times.map { at ->
-            val result = market.lookup(asset, quote, at, knownAt, pricePolicy(current = at >= knownAt - 86_400_000L))
-            MarketPricePoint(at, result.status, result.observation)
-        }
+        val results = market.lookupSeries(asset, quote, times, knownAt, { at -> pricePolicy(current = at >= knownAt - 86_400_000L) })
+        return times.zip(results) { at, result -> MarketPricePoint(at, result.status, result.observation) }
     }
 
     fun historySeries(
@@ -472,15 +583,31 @@ class PortfolioApplication(
         val entries = ledger().activities.map { it.activity }
         val quote = portfolioCurrency(portfolio)
         val knownAt = now()
-        return holdings.historicalSeries(entries, times, BalanceCoverage.UNKNOWN).map { balance ->
+        val balances =
+            holdings.historicalSeries(entries, times, BalanceCoverage.UNKNOWN).map { balance ->
+                balance.copy(quantities = balance.quantities.filterKeys { it.account in selected })
+            }
+        // Prices and metadata for every instant are read once per asset instead of once per asset and instant.
+        val instants = balances.map { it.atMillis }
+        val assets = balances.flatMap { balance -> balance.quantities.keys.map { it.asset } }.toSet()
+        val prices =
+            (assets - quote).associateWith { asset ->
+                instants
+                    .zip(market.lookupSeries(asset, quote, instants, knownAt, { at -> pricePolicy(current = at >= knownAt - 86_400_000L) }))
+                    .toMap()
+            }
+        val metadata = assets.associateWith { market.metadataHistory(it) }
+        return balances.map { balance ->
             val at = balance.atMillis
             HistoryPoint(
                 at,
                 valuations(
-                    balance.copy(quantities = balance.quantities.filterKeys { it.account in selected }),
+                    balance,
                     quote,
                     knownAt,
                     pricePolicy(current = at >= knownAt - 86_400_000L),
+                    priceAt = { asset -> prices[asset]?.get(at) },
+                    metadataAt = { asset -> metadata[asset]?.firstOrNull { it.effectiveAtMillis <= at } },
                 ),
             )
         }
@@ -546,6 +673,177 @@ class PortfolioApplication(
                     CategoryAnalytics(key.first, key.second, incoming, outgoing, group.map { it.first.id }.distinct().size)
                 }.sortedWith(compareBy({ it.kind.name }, { it.asset.value }))
         return AnalyticsSnapshot(atMillis, quote, valuations(scoped, quote, knownAt), accounts, categories, BalanceCoverage.UNKNOWN)
+    }
+
+    /** Confirmed activities in (start, end] with a movement in [accounts], oldest first. */
+    private fun activitiesBetween(
+        accounts: Set<AccountId>,
+        startMillis: Long,
+        endMillis: Long,
+    ): List<Activity> =
+        ledger()
+            .activities
+            .map { it.activity }
+            .filter {
+                it.status == io.polion.core.ledger.ActivityStatus.CONFIRMED &&
+                    it.occurredAtEpochMillis > startMillis &&
+                    it.occurredAtEpochMillis <= endMillis &&
+                    it.movements.any { movement -> movement.accountId in accounts }
+            }.sortedBy { it.occurredAtEpochMillis }
+
+    /** The value of [amount] in [quote] at [atMillis] from a fresh saved price, or null without one. */
+    private fun valueAt(
+        amount: AtomicAmount,
+        quote: AssetId,
+        atMillis: Long,
+        knownAt: Long,
+    ): ExactDecimal? {
+        val decimals = market.metadataAt(amount.assetId, atMillis)?.decimals ?: return null
+        if (amount.assetId == quote) return amount.decimal(decimals)
+        val result = market.lookup(amount.assetId, quote, atMillis, knownAt, pricePolicy(current = atMillis >= knownAt - 86_400_000L))
+        return if (result.status == PriceStatus.FRESH) result.value(amount, decimals) else null
+    }
+
+    /**
+     * Money-weighted return of [portfolio] from [startMillis] to [endMillis]. See [MoneyWeightedReturn] for what counts as
+     * a contribution; any missing start, end or flow price makes the rate unavailable rather than approximate.
+     */
+    fun moneyWeightedReturn(
+        portfolio: PortfolioId?,
+        startMillis: Long,
+        endMillis: Long,
+    ): MoneyWeightedReturn {
+        require(endMillis > startMillis)
+        ensureDefaultAssets()
+        val quote = portfolioCurrency(portfolio)
+        val selected = scopedAccounts(ownership.load(), portfolio)
+        val knownAt = now()
+
+        fun total(point: HistoryPoint): ExactDecimal? {
+            val held = point.valuations.filter { it.amount.atomicUnits.sign != 0 }
+            if (held.any { it.value == null || it.priceStatus != PriceStatus.FRESH }) return null
+            return held.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + valuation.value!! }
+        }
+        val (startPoint, endPoint) = historySeries(listOf(startMillis, endMillis), portfolio)
+        val startValue = total(startPoint)
+        val endValue = total(endPoint)
+        // Transfer movements that leave or enter the scope are flows; transfers between scoped accounts cancel out.
+        var contributions = ExactDecimal.parse("0")
+        var withdrawals = ExactDecimal.parse("0")
+        var unpriced = 0
+        val flows = mutableListOf<Pair<Long, ExactDecimal>>()
+        activitiesBetween(selected, startMillis, endMillis).forEach { activity ->
+            activity.movements
+                .filter { it.accountId in selected && it.role == io.polion.core.ledger.MovementRole.TRANSFER }
+                .groupBy { it.amount.assetId }
+                .forEach { (asset, movements) ->
+                    val net = movements.fold(io.polion.core.model.ExactInteger.ZERO) { sum, movement -> sum + movement.amount.atomicUnits }
+                    if (net.sign == 0) return@forEach
+                    val magnitude = AtomicAmount(asset, if (net.sign < 0) -net else net)
+                    val value = valueAt(magnitude, quote, activity.occurredAtEpochMillis, knownAt)
+                    if (value == null) {
+                        unpriced++
+                    } else if (net.sign > 0) {
+                        contributions += value
+                        flows += activity.occurredAtEpochMillis to value
+                    } else {
+                        withdrawals += value
+                        flows += activity.occurredAtEpochMillis to ExactDecimal(-value.coefficient, value.scale)
+                    }
+                }
+        }
+        val priced = startValue != null && endValue != null && unpriced == 0
+        val gain = if (priced) endValue!! - startValue!! - contributions + withdrawals else null
+        val year = 365.25 * 86_400_000.0
+        val span = (endMillis - startMillis) / year
+        val (rate, status) =
+            if (!priced) {
+                null to ReturnStatus.MISSING_PRICES
+            } else {
+                // Investor view: money put in is negative, money taken out and the final value are positive.
+                val dated =
+                    listOf(DatedFlow(0.0, -startValue!!.toString().toDouble())) +
+                        flows.map { (at, value) -> DatedFlow((at - startMillis) / year, -value.toString().toDouble()) } +
+                        DatedFlow(span, endValue!!.toString().toDouble())
+                InternalRate.solve(dated.filter { it.amount != 0.0 })
+            }
+        return MoneyWeightedReturn(
+            startMillis,
+            endMillis,
+            quote,
+            startValue,
+            endValue,
+            contributions.takeIf { unpriced == 0 },
+            withdrawals.takeIf { unpriced == 0 },
+            gain,
+            rate?.let { (1 + it).pow(span) - 1 },
+            rate?.takeIf { span >= 365.0 / 365.25 },
+            status,
+            unpriced,
+            flows.size + unpriced,
+        )
+    }
+
+    /** Trades, fees and account use of [portfolio] from [startMillis] to [endMillis], from confirmed activities. */
+    fun activityInsights(
+        portfolio: PortfolioId?,
+        startMillis: Long,
+        endMillis: Long,
+    ): ActivityInsights {
+        ensureDefaultAssets()
+        val catalog = ownership.load()
+        val selected = scopedAccounts(catalog, portfolio)
+        val quote = portfolioCurrency(portfolio)
+        val knownAt = now()
+        val activities = activitiesBetween(selected, startMillis, endMillis)
+        val trades = activities.filter { it.kind == io.polion.core.ledger.ActivityKind.TRADE }
+        val tradedAssets =
+            trades
+                .flatMap { trade ->
+                    trade.movements.filter { it.accountId in selected && it.role == io.polion.core.ledger.MovementRole.TRADE_LEG }
+                }.map { it.amount.assetId }
+                .toSet()
+        // Each fee is counted once, in its own asset, and valued at the time it was paid.
+        val fees =
+            activities
+                .flatMap { activity ->
+                    activity.movements
+                        .filter {
+                            it.accountId in selected &&
+                                it.role == io.polion.core.ledger.MovementRole.FEE &&
+                                it.amount.atomicUnits.sign < 0
+                        }.map { activity.occurredAtEpochMillis to it }
+                }.groupBy { it.second.amount.assetId }
+                .map { (asset, paid) ->
+                    var value: ExactDecimal? = ExactDecimal.parse("0")
+                    var unpriced = 0
+                    paid.forEach { (at, movement) ->
+                        val amount = AtomicAmount(asset, -movement.amount.atomicUnits)
+                        val worth = valueAt(amount, quote, at, knownAt)
+                        if (worth == null) unpriced++ else value = value?.plus(worth)
+                    }
+                    FeeTotal(
+                        asset,
+                        paid.fold(io.polion.core.model.ExactInteger.ZERO) { sum, (_, movement) -> sum - movement.amount.atomicUnits },
+                        market.metadataAt(asset, knownAt)?.decimals,
+                        value.takeIf { unpriced == 0 },
+                        unpriced,
+                    )
+                }.sortedBy { it.asset.value }
+        val accounts =
+            catalog.accounts
+                .filter { it.id in selected }
+                .map { account ->
+                    AccountUse(
+                        account.id,
+                        account.label,
+                        activities.count { a ->
+                            a.movements.any { it.accountId == account.id }
+                        },
+                    )
+                }.filter { it.activities > 0 }
+                .sortedByDescending { it.activities }
+        return ActivityInsights(trades.size, tradedAssets.size, fees, accounts)
     }
 
     fun saveTreatments(
@@ -622,6 +920,26 @@ class PortfolioApplication(
         }
     }
 
+    /** Reward acquisitions become known zero-cost lots in the report currency; other treatments are unchanged. */
+    private fun withZeroBasisRewards(
+        activity: Activity,
+        saved: List<io.polion.core.accounting.Treatment>,
+        quote: AssetId,
+    ): List<io.polion.core.accounting.Treatment> {
+        val rewards =
+            activity.movements
+                .filter { it.role == io.polion.core.ledger.MovementRole.REWARD }
+                .map { it.id }
+                .toSet()
+        return saved.map { treatment ->
+            if (treatment is io.polion.core.accounting.Treatment.Acquire && treatment.movement in rewards) {
+                treatment.copy(cost = QuoteValue(quote, Rational.ZERO), opening = false)
+            } else {
+                treatment
+            }
+        }
+    }
+
     fun accountingReport(portfolio: PortfolioId? = null): AccountingView {
         ensureDefaultAssets()
         val catalog = ownership.load()
@@ -629,7 +947,9 @@ class PortfolioApplication(
         val missing = mutableListOf<ActivityId>()
         val invalid = mutableListOf<ActivityId>()
         val orderingUncertain = mutableListOf<ActivityId>()
+        val currencyMismatch = mutableListOf<ActivityId>()
         val quote = portfolioCurrency(portfolio)
+        val zeroBasisRewards = generalPreferences().zeroBasisRewards
         val priceAt = now()
         val confirmedLedger = ledger().activities.filter { it.activity.status == io.polion.core.ledger.ActivityStatus.CONFIRMED }
         // Replay each owner's full inventory before selecting accounts, preserving transferred lot age and basis.
@@ -657,23 +977,72 @@ class PortfolioApplication(
                 fun affectsSelection(activity: Activity) = ownerAssets(activity).any { it in selectedAssets }
 
                 val incompleteAssets = mutableSetOf<AssetId>()
+                // An accepted transfer link between two of this owner's accounts moves lots instead of disposing and
+                // re-acquiring them, when the outgoing side is a disposal and the incoming side an acquisition.
+                val byId = confirmed.associateBy { it.activity.id }
+                val linked =
+                    ledger().transferLinks.filter { link ->
+                        val out = byId[link.outgoingActivity]?.activity?.movements?.firstOrNull { it.id == link.outgoingEvent }
+                        val into = byId[link.incomingActivity]?.activity?.movements?.firstOrNull { it.id == link.incomingEvent }
+                        out != null &&
+                            into != null &&
+                            out.accountId in ownerAccounts &&
+                            into.accountId in ownerAccounts &&
+                            out.accountId != into.accountId &&
+                            treatments.load(link.outgoingActivity).any { it is Treatment.Dispose && it.movement == link.outgoingEvent } &&
+                            treatments.load(link.incomingActivity).any { it is Treatment.Acquire && it.movement == link.incomingEvent }
+                    }
+                val linkedOut = linked.associateBy { it.outgoingActivity to it.outgoingEvent }
+                val linkedIn = linked.map { it.incomingActivity to it.incomingEvent }.toSet()
                 confirmed.forEach { entry ->
                     val activity = entry.activity
                     try {
-                        val saved = treatments.load(activity.id)
+                        val saved =
+                            treatments
+                                .load(
+                                    activity.id,
+                                ).let { if (zeroBasisRewards) withZeroBasisRewards(activity, it, quote) else it }
                         if (saved.isEmpty()) {
                             if (affectsSelection(activity)) missing.add(activity.id)
                             incompleteAssets.addAll(ownerAssets(activity))
                         } else {
                             val computed =
-                                LedgerAccounting.actions(activity, saved).filter { action ->
-                                    when (action) {
-                                        is io.polion.core.accounting.AccountingAction.Acquisition -> action.account in ownerAccounts
-                                        is io.polion.core.accounting.AccountingAction.Disposal -> action.account in ownerAccounts
-                                        is io.polion.core.accounting.AccountingAction.Transfer ->
-                                            action.from in ownerAccounts || action.to in ownerAccounts
+                                LedgerAccounting
+                                    .actions(activity, saved)
+                                    .flatMapIndexed { index, action ->
+                                        val treatment = saved[index]
+                                        val link = (treatment as? Treatment.Dispose)?.let { linkedOut[activity.id to it.movement] }
+                                        when {
+                                            link != null -> {
+                                                val out = activity.movements.first { it.id == link.outgoingEvent }
+                                                val into =
+                                                    byId.getValue(link.incomingActivity).activity.movements.first {
+                                                        it.id ==
+                                                            link.incomingEvent
+                                                    }
+                                                listOf(
+                                                    io.polion.core.accounting.AccountingAction.Transfer(
+                                                        activity.id,
+                                                        activity.occurredAtEpochMillis,
+                                                        action.order,
+                                                        out.accountId,
+                                                        into.accountId,
+                                                        into.amount.assetId,
+                                                        into.amount.atomicUnits,
+                                                    ),
+                                                )
+                                            }
+                                            treatment is Treatment.Acquire && (activity.id to treatment.movement) in linkedIn -> emptyList()
+                                            else -> listOf(action)
+                                        }
+                                    }.filter { action ->
+                                        when (action) {
+                                            is io.polion.core.accounting.AccountingAction.Acquisition -> action.account in ownerAccounts
+                                            is io.polion.core.accounting.AccountingAction.Disposal -> action.account in ownerAccounts
+                                            is io.polion.core.accounting.AccountingAction.Transfer ->
+                                                action.from in ownerAccounts || action.to in ownerAccounts
+                                        }
                                     }
-                                }
                             require(
                                 computed.all { action ->
                                     when (action) {
@@ -683,16 +1052,40 @@ class PortfolioApplication(
                                     }
                                 },
                             ) { "Internal transfer requires distinct accounts with the same owner" }
-                            val quotes =
-                                computed.mapNotNull { action ->
+                            // A treatment recorded in another quote currency keeps its lot and quantity, but its cost or
+                            // proceeds are unknown in this report's currency. Its basis and gain therefore stay unknown.
+                            val normalized =
+                                computed.map { action ->
                                     when (action) {
-                                        is io.polion.core.accounting.AccountingAction.Acquisition -> action.totalCost
-                                        is io.polion.core.accounting.AccountingAction.Disposal -> action.proceeds
-                                        is io.polion.core.accounting.AccountingAction.Transfer -> null
+                                        is io.polion.core.accounting.AccountingAction.Acquisition ->
+                                            if (action.totalCost != null && action.totalCost.asset != quote) {
+                                                currencyMismatch.add(action.activityId)
+                                                action.copy(totalCost = null)
+                                            } else {
+                                                action
+                                            }
+                                        is io.polion.core.accounting.AccountingAction.Disposal ->
+                                            if (action.proceeds != null && action.proceeds.asset != quote) {
+                                                currencyMismatch.add(action.activityId)
+                                                action.copy(proceeds = null)
+                                            } else {
+                                                action
+                                            }
+                                        is io.polion.core.accounting.AccountingAction.Transfer -> action
                                     }
                                 }
-                            require(quotes.all { it.asset == quote && it.amount >= Rational.ZERO })
-                            actions.addAll(computed)
+                            require(
+                                normalized.all { action ->
+                                    val value =
+                                        when (action) {
+                                            is io.polion.core.accounting.AccountingAction.Acquisition -> action.totalCost
+                                            is io.polion.core.accounting.AccountingAction.Disposal -> action.proceeds
+                                            is io.polion.core.accounting.AccountingAction.Transfer -> null
+                                        }
+                                    value == null || value.amount >= Rational.ZERO
+                                },
+                            )
+                            actions.addAll(normalized)
                         }
                     } catch (_: IllegalArgumentException) {
                         if (affectsSelection(activity)) invalid.add(activity.id)
@@ -800,12 +1193,37 @@ class PortfolioApplication(
             missing.distinct(),
             invalid.distinct(),
             orderingUncertain.distinct(),
+            currencyMismatch.distinct(),
         )
     }
 
     fun transferLinks(): List<TransferLink> = ledger().transferLinks
 
     fun transferLinkConflicts(): List<TransferLinkConflict> = ledger().transferLinkConflicts
+
+    /**
+     * A short description for review lists: the activity's UTC date and each movement as account, signed amount and
+     * symbol, for example "2026-01-20 · Exchange −0.1 BTC". Null for an unknown activity.
+     */
+    fun activitySummary(id: ActivityId): String? {
+        val activity = ledger().activities.firstOrNull { it.activity.id == id }?.activity ?: return null
+        val labels = ownership.load().accounts.associate { it.id to it.label }
+        val date =
+            kotlin.time.Instant
+                .fromEpochMilliseconds(activity.occurredAtEpochMillis)
+                .toString()
+                .take(10)
+        val movements =
+            activity.movements.joinToString(", ") { movement ->
+                val metadata = market.metadataAt(movement.amount.assetId, activity.occurredAtEpochMillis)
+                val units = movement.amount.atomicUnits
+                val amount =
+                    metadata?.let { ExactDecimal(units, it.decimals).toString().trimEnd('0').trimEnd('.') } ?: units.toString()
+                val signed = if (units.sign < 0) "−" + amount.removePrefix("-") else "+$amount"
+                "${labels[movement.accountId] ?: movement.accountId.value} $signed ${metadata?.symbol ?: movement.amount.assetId.value}"
+            }
+        return "$date · $movements"
+    }
 
     fun reconciliationCandidates(windowMillis: Long): List<ReconciliationCandidate> {
         val reviewedPairs = overlays.decisions().map { it.first to it.second }.toSet()
@@ -829,6 +1247,83 @@ class PortfolioApplication(
             listOf(SyncProvider(ProviderId(source.value), fetcher, setOf(BITCOIN_MAINNET), setOf(source))),
             SyncClock { now() },
         )
+
+    /** Networks with an enabled tracked address or wallet. */
+    fun trackedNetworks(): Set<io.polion.core.model.NetworkId> =
+        ownership
+            .load()
+            .targets
+            .filter { it.enabled }
+            .map { it.identity.networkId }
+            .toSet()
+
+    /**
+     * Refreshes every source through [registry]: each registered connector runs once, and a tracked network without a
+     * history connector is reported instead of skipped silently. Connectors run in registration order; a failure stops
+     * the refresh and propagates, so callers report it as they do for one source.
+     */
+    fun refreshSources(
+        registry: SourceRegistry,
+        options: SourceRefreshOptions = SourceRefreshOptions(),
+    ): List<SourceRefreshOutcome> {
+        val missing = trackedNetworks().filter { registry.forNetwork(it) == null }
+        return registry.connectors.map { it.refresh(this, options) } +
+            missing.map { SourceRefreshOutcome("none", emptyList(), listOf("No connector is available for ${it.value}.")) }
+    }
+
+    /**
+     * The generic history path for a connector: fetches pages for [accounts] on [network] through the sync orchestrator
+     * (leases, retries, cursors and raw provenance), then saves what [decoder] makes of each new observation. Decoded
+     * activities may only move tracked accounts. Holdings and accounting read them like any other source.
+     */
+    fun ingestHistory(
+        connector: String,
+        history: HistoryFetcher,
+        decoder: io.polion.core.connectors.RawRecordDecoder,
+        network: io.polion.core.model.NetworkId,
+        accounts: List<AccountId>,
+    ): List<JobState> {
+        require(connector.isNotBlank() && connector != BITCOIN_CONNECTOR_ID) { "Bitcoin uses its own scan" }
+        val known =
+            ownership
+                .load()
+                .accounts
+                .map { it.id }
+                .toSet()
+        require(accounts.all { it in known }) { "Unknown account" }
+        val fetched = mutableListOf<io.polion.core.storage.RawObservation>()
+        val source = SourceId(connector)
+        val orchestrator =
+            SyncOrchestrator(
+                db,
+                store,
+                listOf(
+                    SyncProvider(
+                        ProviderId(connector),
+                        fetcher { request ->
+                            history.fetch(request).also { fetched += it.observations }
+                        },
+                        setOf(network),
+                        setOf(source),
+                    ),
+                ),
+                SyncClock { now() },
+            )
+        // Each refresh is a new job; completed jobs keep their status as a record of earlier refreshes.
+        val generation = (setting("connector_refresh:$connector")?.toLongOrNull() ?: 0L) + 1
+        putSetting("connector_refresh:$connector", generation.toString())
+        val jobs = accounts.map { SyncJobId("$connector-$generation-${sha256(it.value).take(16)}") }
+        accounts.zip(jobs).forEach { (account, job) -> orchestrator.enqueue(SyncJob(job, source, network, account)) }
+        while (orchestrator.runOne()) Unit
+        val activitiesToSave = fetched.distinctBy { it.id to it.checksum }.flatMap(decoder::decode)
+        require(activitiesToSave.all { activity -> activity.movements.all { it.accountId in known } && !activity.manual }) {
+            "A connector may only record source activity in tracked accounts"
+        }
+        // A decoded activity identical to the saved one adds no revision.
+        db.transaction { activitiesToSave.filter { activities.currentById(it.id) != it }.forEach(activities::saveInTransaction) }
+        invalidate()
+        return jobs.map { orchestrator.status(it)?.state ?: JobState.FAILED }
+    }
 
     /**
      * Fetches tracked mainnet addresses after consent and applies only a complete, consistent scan.
@@ -917,7 +1412,7 @@ class PortfolioApplication(
             )
         }
         val startTip = transport.get("/blocks/tip/hash").trim()
-        require(startTip.matches(Regex("[0-9a-f]{64}"))) { "Invalid chain tip" }
+        require(startTip.isHash64()) { "Invalid chain tip" }
         val anchor = Json.parseToJsonElement(transport.get("/block/$startTip")).jsonObject
         require(anchor.getValue("id").jsonPrimitive.content == startTip) { "Invalid chain anchor" }
         val anchorHeight = anchor.getValue("height").jsonPrimitive.long
@@ -948,13 +1443,16 @@ class PortfolioApplication(
             )
         val acceptedAnchors = bitcoinGraph.anchors(addresses)
         val previousCheckpoint = acceptedAnchors.maxByOrNull { it.height }
+        // A non-canonical checkpoint means the accepted history may have changed, so the skip below must not run.
+        var checkpointCanonical = true
         if (!recoverHistory && previousCheckpoint != null) {
             require(previousCheckpoint.height <= anchorHeight) {
                 throw BitcoinProviderException(BitcoinProviderFailure.LAGGING_CHAIN)
             }
             val canonical = transport.get("/block-height/${previousCheckpoint.height}").trim()
-            require(canonical.matches(Regex("[0-9a-f]{64}"))) { "Invalid checkpoint response" }
+            require(canonical.isHash64()) { "Invalid checkpoint response" }
             if (canonical != previousCheckpoint.hash) {
+                checkpointCanonical = false
                 val continuity =
                     try {
                         io.polion.core.bitcoin
@@ -971,6 +1469,20 @@ class PortfolioApplication(
         }
         if (recoverHistory) bitcoinStage.clear()
         val pending = bitcoinStage.session()
+        if (pending == null &&
+            !recoverHistory &&
+            checkpointCanonical &&
+            previousCheckpoint != null &&
+            acceptedScanUnchanged(fingerprint, addresses.keys, verifyBlockPositions) { address -> summary(address) }
+        ) {
+            db.transaction {
+                putSetting("source_last_refresh_skipped", "true")
+                putSetting("source_last_success", now().toString())
+                db.execute("DELETE FROM application_settings WHERE key='source_error'")
+            }
+            invalidate()
+            return addresses.keys.map { JobState.COMPLETED }
+        }
         val resumable = pending != null && pending.fingerprint == fingerprint && pending.anchorHeight <= anchorHeight
         if (!resumable) {
             bitcoinStage.createSession(
@@ -1016,14 +1528,7 @@ class PortfolioApplication(
                 ConnectorRegistry(
                     listOf(
                         RegisteredConnector(
-                            IntegrationManifest(
-                                BITCOIN_CONNECTOR_ID,
-                                setOf(BITCOIN_MAINNET),
-                                setOf("address"),
-                                setOf(Capability.HISTORY, Capability.DECODING),
-                                requiresAuthentication = false,
-                                coverage = Coverage.PARTIAL,
-                            ),
+                            BITCOIN_MANIFEST,
                             EsploraHistoryFetcher(mapOf(scan.accountId to scan.address), recordingTransport) {
                                 Instant.fromEpochMilliseconds(now()).toString()
                             },
@@ -1082,9 +1587,17 @@ class PortfolioApplication(
                     scan.mempoolDigest != null && scan.mempoolDigest == sha256(transport.get("/address/${scan.address}/txs/mempool"))
                 },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+            // Esplora lists at most 50 unconfirmed transactions per address; seeing exactly that many of a larger pool is
+            // complete for what the provider can show, and the page was already recorded as partial coverage.
             require(
-                scanned.all { scan -> summary(scan.address) == bitcoinStage.seenCounts(scan.address) },
+                scanned.all { scan ->
+                    val (chain, pending) = summary(scan.address)
+                    val (seenChain, seenPending) = bitcoinStage.seenCounts(scan.address)
+                    chain == seenChain && (pending == seenPending || pending > MEMPOOL_PAGE && seenPending == MEMPOOL_PAGE)
+                },
             ) { throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED) }
+            val acceptedCounts = scanned.associate { it.address to bitcoinStage.seenCounts(it.address) }
+            val pendingCapped = scanned.count { scan -> summary(scan.address).second > MEMPOOL_PAGE }
             require(transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash) {
                 throw BitcoinProviderException(BitcoinProviderFailure.REORGANIZED)
             }
@@ -1113,10 +1626,20 @@ class PortfolioApplication(
             ) {
                 throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
             }
-            val mismatchCount =
-                io.polion.core.bitcoin
-                    .BitcoinStagedUtxoComparison(db)
-                    .fetchAndCompare(transport)
+            // The comparison is advisory. When the provider permanently rejects the UTXO request (for example a capped
+            // address), history is still applied and the snapshot is recorded as not compared, so no clean "matching"
+            // result is claimed. Transient failures (offline, timeout, rate limit) still interrupt and keep the session.
+            val mismatchCount: Long? =
+                try {
+                    io.polion.core.bitcoin
+                        .BitcoinStagedUtxoComparison(db)
+                        .fetchAndCompare(transport)
+                } catch (failure: BitcoinProviderException) {
+                    if (failure.reason != BitcoinProviderFailure.UNAVAILABLE) throw failure
+                    null
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
             runCatching { onProgress(BitcoinScanProgress(scanned.size, scanned.size, pagesFetched, transactionsFetched, "apply")) }
             require(
                 transport.get("/block-height/${session.anchorHeight}").trim() == session.anchorHash &&
@@ -1149,6 +1672,7 @@ class PortfolioApplication(
                         io.polion.core.bitcoin
                             .BitcoinBlockAnchor(anchorHeight, startTip),
                     observedAt = Instant.fromEpochMilliseconds(now()).toString(),
+                    compared = mismatchCount != null,
                     recoveryBaseline = recoverHistory,
                 )
                 bitcoinStage.applyCompleteInTransaction(
@@ -1157,8 +1681,12 @@ class PortfolioApplication(
                     requireBlockPositions = verifyBlockPositions,
                     graphState = stagedGraph::state,
                 )
-                putSetting("utxo_mismatch_count", mismatchCount.toString())
+                putSetting("utxo_comparison_available", (mismatchCount != null).toString())
+                putSetting("pending_capped", pendingCapped.toString())
+                mismatchCount?.let { putSetting("utxo_mismatch_count", it.toString()) }
                 bitcoinStage.clearInTransaction()
+                putSetting("bitcoin_accepted_scan", acceptedScanJson(fingerprint, acceptedCounts, verifyBlockPositions))
+                putSetting("source_last_refresh_skipped", "false")
                 putSetting("source_last_success", now().toString())
                 db.execute("DELETE FROM application_settings WHERE key='source_error'")
             }
@@ -1257,6 +1785,80 @@ class PortfolioApplication(
 
     fun sourceFailureMessage(): String? = setting("source_error")
 
+    /** Epoch millis of the last successful wallet refresh, or null when none has completed. */
+    fun sourceLastSuccessMillis(): Long? = setting("source_last_success")?.toLongOrNull()
+
+    /** True when the last wallet refresh found no change and left the accepted ledger as it was. */
+    fun lastRefreshSkipped(): Boolean = setting("source_last_refresh_skipped") == "true"
+
+    /**
+     * Clears the last-success marker and the accepted-scan snapshot together. Any change to accepted wallet state calls
+     * this, so the skip path never trusts a snapshot that no longer describes the ledger.
+     */
+    private fun forgetSourceSuccess() {
+        db.execute("DELETE FROM application_settings WHERE key IN ('source_last_success','bitcoin_accepted_scan')")
+    }
+
+    private data class AcceptedScan(
+        val fingerprint: String,
+        /** Per address: (confirmed transaction count, mempool transaction count) seen by the last applied scan. */
+        val counts: Map<String, Pair<Long, Long>>,
+        /** Whether the last applied scan verified transaction block positions. */
+        val blockPositionsVerified: Boolean,
+    )
+
+    private fun acceptedScan(): AcceptedScan? {
+        val text = setting("bitcoin_accepted_scan") ?: return null
+        return runCatching {
+            val root = Json.parseToJsonElement(text).jsonObject
+            AcceptedScan(
+                root.getValue("fingerprint").jsonPrimitive.content,
+                root.getValue("addresses").jsonObject.mapValues { (_, pair) ->
+                    val counts = pair.jsonArray
+                    counts[0].jsonPrimitive.long to counts[1].jsonPrimitive.long
+                },
+                root.getValue("blockPositionsVerified").jsonPrimitive.boolean,
+            )
+        }.getOrNull()
+    }
+
+    private fun acceptedScanJson(
+        fingerprint: String,
+        counts: Map<String, Pair<Long, Long>>,
+        blockPositionsVerified: Boolean,
+    ): String =
+        buildJsonObject {
+            put("fingerprint", fingerprint)
+            put("blockPositionsVerified", blockPositionsVerified)
+            putJsonObject("addresses") {
+                counts.forEach { (address, pair) ->
+                    putJsonArray(address) {
+                        add(pair.first)
+                        add(pair.second)
+                    }
+                }
+            }
+        }.toString()
+
+    /**
+     * True when the last applied scan covers the same provider and addresses, recorded no mempool activity, and the
+     * provider still reports the same chain and mempool counts for every address. While the accepted anchor is
+     * canonical, nothing at or below it has changed, and any new confirmed or pending transaction changes a count.
+     * A refresh that asks for block-position verification is never skipped by a scan that did not verify them.
+     */
+    private fun acceptedScanUnchanged(
+        fingerprint: String,
+        addresses: Set<String>,
+        verifyBlockPositions: Boolean,
+        liveCounts: (String) -> Pair<Long, Long>,
+    ): Boolean {
+        val accepted = acceptedScan() ?: return false
+        if (accepted.fingerprint != fingerprint || accepted.counts.keys != addresses) return false
+        if (verifyBlockPositions && !accepted.blockPositionsVerified) return false
+        if (accepted.counts.values.any { it.second != 0L }) return false
+        return addresses.all { address -> liveCounts(address) == accepted.counts.getValue(address) }
+    }
+
     fun priceSourceConsent(): Boolean = setting("price_source_consent") == "true"
 
     fun automaticPriceConsent(): Boolean = setting("automatic_price_consent") == "true"
@@ -1273,6 +1875,12 @@ class PortfolioApplication(
 
     fun automaticPriceStatus(): String? = setting("automatic_price_status")
 
+    /**
+     * Epoch millis of the last finished automatic price refresh, successful or not, or null when none has finished.
+     * Schedules wait an interval from this time, so a failing provider is not asked again on every app start.
+     */
+    fun automaticPriceLastRunMillis(): Long? = setting("automatic_price_last_run")?.toLongOrNull()
+
     fun recordAutomaticPriceSchedulingFailure() =
         db.transaction {
             if (automaticPriceConsent()) putSetting("automatic_price_status", "Automatic price refresh could not be scheduled")
@@ -1283,6 +1891,7 @@ class PortfolioApplication(
         rateLimited: Boolean = false,
     ) = db.transaction {
         if (automaticPriceConsent()) {
+            putSetting("automatic_price_last_run", now().toString())
             putSetting(
                 "automatic_price_status",
                 if (success) {
@@ -1303,11 +1912,24 @@ class PortfolioApplication(
         }
     }
 
-    fun setAutomaticPriceConsent(accepted: Boolean) =
+    fun setAutomaticPriceConsent(accepted: Boolean) = db.transaction { putAutomaticPriceConsent(accepted) }
+
+    private fun putAutomaticPriceConsent(accepted: Boolean) {
+        putSetting("automatic_price_generation", priceRequestNonce())
+        putSetting("automatic_price_consent", accepted.toString())
+        if (accepted) putSetting("automatic_price_scope", "all")
+    }
+
+    /**
+     * The single automatic-refresh switch. Enabling it grants automatic Kraken price and CoinGecko market consent with the
+     * schedule preference; disabling it withdraws the Kraken consent. Both change in one transaction, so prices and wallet history cannot disagree.
+     */
+    fun setAutomaticRefresh(enabled: Boolean) =
         db.transaction {
-            putSetting("automatic_price_generation", priceRequestNonce())
-            putSetting("automatic_price_consent", accepted.toString())
-            if (accepted) putSetting("automatic_price_scope", "all")
+            putSetting("refresh_automatic", enabled.toString())
+            putAutomaticPriceConsent(enabled)
+            // Auto-sync also refreshes market lists; turning it off keeps manual market refresh available.
+            if (enabled) setMarketDataConsent(true)
         }
 
     fun setAutomaticPortfolioPriceConsent(accepted: Boolean) =
@@ -1317,16 +1939,16 @@ class PortfolioApplication(
             putSetting("automatic_price_scope", if (accepted) "all" else "default")
         }
 
-    /** Default and saved portfolio currencies supported by the automatic Bitcoin provider. */
+    /** Default, secondary and saved portfolio currencies supported by the automatic Bitcoin provider. */
     fun automaticPriceCurrencies(): List<AssetId> =
         (
-            listOf(currency()) +
+            listOf(currency()) + listOfNotNull(generalPreferences().secondaryCurrency) +
                 if (automaticPortfolioPriceConsent()) {
                     db.query("SELECT DISTINCT currency FROM portfolios").map { AssetId(requireNotNull(it.single())) }
                 } else {
                     emptyList()
                 }
-        ).filter { it.value in setOf("USD", "EUR", "GBP") }
+        ).filter { it.value in DISPLAY_CURRENCIES }
             .distinct()
 
     fun refreshAutomaticPriceSet(
@@ -1556,7 +2178,7 @@ class PortfolioApplication(
             .query("SELECT key, value FROM application_settings WHERE key LIKE 'provider_endpoint:%'")
             .associate { it[0]!!.removePrefix("provider_endpoint:") to it[1]!! }
 
-    fun sourceEndpoint(): String = setting("source_endpoint") ?: "https://blockstream.info/api"
+    fun sourceEndpoint(): String = setting("source_endpoint") ?: DEFAULT_ENDPOINT
 
     fun configureBitcoinSource(
         endpoint: String,
@@ -1636,6 +2258,452 @@ class PortfolioApplication(
         )
     }
 
+    /** Cached CoinGecko feeds for the display currency, with the request state Main needs to explain gaps. */
+    fun marketOverview(): MarketOverview {
+        val currency = currency()
+        val code = currency.value.lowercase()
+        val markets = marketFeeds.markets(code)
+        val trending = marketFeeds.trending(code)
+        val ids = (markets?.items.orEmpty().map { it.coinId } + trending?.items.orEmpty().map { it.coinId }).toSet()
+        return MarketOverview(
+            currency,
+            marketDataConsent(),
+            markets,
+            trending,
+            marketFeeds.deviceSetting("market_feed_error"),
+            marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > now() },
+            coingeckoApiKey() != null,
+            market.providerMappings(ProviderId(CoingeckoPrices.PROVIDER_ID)).let { mapped ->
+                ids.associateWith { id -> if (id == "bitcoin") BITCOIN_ASSET else mapped[id] ?: AssetId("coingecko:$id") }
+            },
+        )
+    }
+
+    /** How long the app may stay in the background before the privacy lock applies; null means the host default. */
+    fun lockDelayMillis(): Long? = marketFeeds.deviceSetting("lock_delay")?.toLongOrNull()?.takeIf { it in LOCK_DELAYS }
+
+    /** A device setting: it is not part of backups, like the lock itself. */
+    fun setLockDelay(millis: Long) {
+        require(millis in LOCK_DELAYS) { "Unsupported lock delay" }
+        marketFeeds.putDeviceSetting("lock_delay", millis.toString())
+    }
+
+    /** A cached CoinGecko logo, or null when it was never fetched or is over 30 days old. */
+    fun cachedLogo(url: String): ByteArray? = marketFeeds.logo(url, now())
+
+    /** Logos are cached only for CoinGecko image URLs and only after market data consent. */
+    fun saveLogo(
+        url: String,
+        bytes: ByteArray,
+    ) {
+        require(marketDataConsent() && CoingeckoMarkets.logoUrl(url) == url)
+        marketFeeds.saveLogo(url, bytes, now())
+    }
+
+    /** Bitcoin and any provider-mapped coin use the portfolio asset ID, so favorites and coin pages match holdings. */
+    fun marketAssetKey(coinId: String): AssetId =
+        if (coinId == "bitcoin") {
+            BITCOIN_ASSET
+        } else {
+            market.resolveProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId) ?: AssetId("coingecko:$coinId")
+        }
+
+    fun marketDataConsent(): Boolean = setting("market_data_consent") == "true"
+
+    fun setMarketDataConsent(accepted: Boolean) = putSetting("market_data_consent", accepted.toString())
+
+    /** The optional CoinGecko Demo key raises request limits. It stays on this device and is not part of backups. */
+    fun coingeckoApiKey(): String? = marketFeeds.deviceSetting("coingecko_api_key")
+
+    fun setCoingeckoApiKey(key: String?) {
+        val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{10,100}"))) { "That does not look like a CoinGecko API key" }
+        db.transaction {
+            marketFeeds.putDeviceSetting("coingecko_api_key", trimmed)
+            // A new key may lift a rate limit reached without one.
+            marketFeeds.putDeviceSetting("coingecko_retry_after", null)
+        }
+    }
+
+    /**
+     * Refreshes the top-250 market list and the trending list for the display currency, skipping a feed younger than
+     * [maxAgeMillis] (trending at most every 10 minutes). Each successful feed is saved on its own, so a failure keeps the
+     * other feed and every earlier copy. A rate limit pauses all CoinGecko feed requests for a minute.
+     */
+    fun refreshMarketFeeds(
+        transport: (url: String, apiKey: String?) -> String,
+        maxAgeMillis: Long = 60_000L,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ): MarketRefreshResult {
+        require(marketDataConsent()) { "Market data consent required" }
+        val started = now()
+        marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > started }?.let {
+            return MarketRefreshResult(0, CoingeckoProviderFailure.RATE_LIMITED, it)
+        }
+        val code = currency().value.lowercase()
+        val key = coingeckoApiKey()
+        var updated = 0
+
+        fun due(
+            feed: String,
+            age: Long,
+        ) = marketFeeds.observedAt(feed, code)?.let { started - it >= age } ?: true
+        try {
+            if (due("markets", maxAgeMillis)) {
+                val payload = transport(CoingeckoMarkets.marketsUrl(baseUrl, code), key)
+                val listings =
+                    runCatching { CoingeckoMarkets.parseMarkets(payload) }.getOrNull()?.takeIf { it.isNotEmpty() }
+                        ?: throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+                marketFeeds.saveMarkets(MarketFeed(code, now(), listings))
+                updated++
+            }
+            if (due("trending", maxOf(maxAgeMillis, 600_000L))) {
+                val btc =
+                    marketFeeds
+                        .markets(code)
+                        ?.items
+                        ?.firstOrNull { it.coinId == "bitcoin" }
+                        ?.price
+                val payload = transport(CoingeckoMarkets.trendingUrl(baseUrl), key)
+                val listings =
+                    runCatching { CoingeckoMarkets.parseTrending(payload, code, btc) }.getOrNull()
+                        ?: throw CoingeckoProviderException(CoingeckoProviderFailure.INVALID_RESPONSE)
+                marketFeeds.saveTrending(MarketFeed(code, now(), listings))
+                updated++
+            }
+            marketFeeds.putDeviceSetting("market_feed_error", null)
+            return MarketRefreshResult(updated, null, null)
+        } catch (failure: CoingeckoProviderException) {
+            val retry = if (failure.failure == CoingeckoProviderFailure.RATE_LIMITED) now() + 60_000L else null
+            db.transaction {
+                retry?.let { marketFeeds.putDeviceSetting("coingecko_retry_after", it.toString()) }
+                marketFeeds.putDeviceSetting("market_feed_error", failure.failure.name)
+            }
+            return MarketRefreshResult(updated, failure.failure, retry)
+        }
+    }
+
+    /** The CoinGecko coin ID for a portfolio or market asset, or null when it has none. */
+    fun marketCoinId(asset: AssetId): String? =
+        when {
+            asset == BITCOIN_ASSET -> "bitcoin"
+            asset.value.startsWith("coingecko:") -> asset.value.removePrefix("coingecko:")
+            else ->
+                market
+                    .providerMappings(ProviderId(CoingeckoPrices.PROVIDER_ID))
+                    .entries
+                    .firstOrNull { it.value == asset }
+                    ?.key
+        }
+
+    fun notificationPreferences(): NotificationPreferences =
+        NotificationPreferences(
+            dailyUpdate = setting("notify_daily") == "true",
+            priceMoves = setting("notify_moves") == "true",
+            highsAndLows = setting("notify_extremes") == "true",
+        )
+
+    fun setNotificationPreferences(value: NotificationPreferences) =
+        db.transaction {
+            putSetting("notify_daily", value.dailyUpdate.toString())
+            putSetting("notify_moves", value.priceMoves.toString())
+            putSetting("notify_extremes", value.highsAndLows.toString())
+        }
+
+    /** True when any alert or notification setting is on, so hosts schedule checks and request notification permission. */
+    fun notificationsActive(): Boolean =
+        notificationPreferences().let { it.dailyUpdate || it.priceMoves || it.highsAndLows } || notifications.alerts().any { it.enabled }
+
+    fun priceAlerts(coinId: String? = null): List<PriceAlert> = notifications.alerts().filter { coinId == null || it.coinId == coinId }
+
+    /**
+     * Saves a new alert, or replaces the condition of [id]. The coin must be in the cached top-250 list for the display
+     * currency, whose price sets the starting state (see [AlertRules.start]).
+     */
+    fun savePriceAlert(
+        coinId: String,
+        condition: AlertCondition,
+        threshold: ExactDecimal,
+        id: String? = null,
+    ): PriceAlert {
+        require(threshold.coefficient.sign > 0) { "Enter a positive number" }
+        require(condition != AlertCondition.MOVE || threshold <= ExactDecimal.parse("1000")) { "Use a move of at most 1000%" }
+        val code = currency().value.lowercase()
+        val feed = marketFeeds.markets(code)
+        val listing = requireNotNull(feed?.items?.firstOrNull { it.coinId == coinId }) { "Alerts need this coin's market price" }
+        val fresh = feed!!.observedAtMillis.takeIf { now() - it <= AlertRules.MAX_PRICE_AGE_MILLIS }
+        val existing =
+            id?.let { key ->
+                notifications.alerts().firstOrNull { it.id == key }
+                    ?: throw IllegalArgumentException("Unknown alert")
+            }
+        val draft =
+            PriceAlert(
+                id = existing?.id ?: "alert-${now()}-${kotlin.random.Random.nextLong().toULong().toString(16)}",
+                coinId = coinId,
+                symbol = listing.symbol,
+                currency = code,
+                condition = condition,
+                threshold = threshold,
+                enabled = existing?.enabled ?: true,
+                armed = true,
+                reference = null,
+                referenceAtMillis = null,
+                lastObservedMillis = null,
+                lastFiredMillis = null,
+                createdAtMillis = existing?.createdAtMillis ?: now(),
+            )
+        val started = AlertRules.start(draft, fresh?.let { listing.price }, fresh)
+        notifications.save(started)
+        return started
+    }
+
+    fun setPriceAlertEnabled(
+        id: String,
+        enabled: Boolean,
+    ) = db.transaction {
+        val alert = requireNotNull(notifications.alerts().firstOrNull { it.id == id }) { "Unknown alert" }
+        notifications.save(alert.copy(enabled = enabled))
+    }
+
+    fun deletePriceAlert(id: String) = notifications.delete(id)
+
+    fun notificationHistory(limit: Int = 50): List<NotificationMessage> = notifications.history(limit)
+
+    /**
+     * Evaluates alerts and notification settings against the cached market list, and returns the notifications to show
+     * now. Each is recorded before it is returned, in the same transaction as the alert states, so no event is delivered
+     * twice, even across restarts or when two processes evaluate at once. [localDay] (for example "2026-11-08") and
+     * [localHour] come from the device clock: the daily update is sent once per local day, from 9:00.
+     */
+    fun evaluateNotifications(
+        localDay: String,
+        localHour: Int,
+    ): List<NotificationMessage> {
+        val nowMillis = now()
+        val code = currency().value.lowercase()
+        val feed = marketFeeds.markets(code)?.takeIf { nowMillis - it.observedAtMillis <= AlertRules.MAX_PRICE_AGE_MILLIS }
+        val listings = feed?.items.orEmpty().associateBy { it.coinId }
+        val preferences = notificationPreferences()
+        val daily =
+            if (preferences.dailyUpdate && localHour >= 9 && !notifications.delivered("daily:$localDay")) dailyUpdate(localDay) else null
+        val followed =
+            if (preferences.priceMoves || preferences.highsAndLows) {
+                (marketFavorites() + snapshot().valuations.filter { it.amount.atomicUnits.sign > 0 }.map { it.asset })
+                    .mapNotNull(::marketCoinId)
+                    .toSet()
+            } else {
+                emptySet()
+            }
+        return db.transaction {
+            val delivered = mutableListOf<NotificationMessage>()
+
+            fun deliver(message: NotificationMessage) {
+                if (notifications.record(message)) delivered += message
+            }
+            if (feed != null) {
+                notifications.alerts().filter { it.currency == code }.forEach { alert ->
+                    val listing = listings[alert.coinId] ?: return@forEach
+                    val step = AlertRules.step(alert, listing.price, feed.observedAtMillis, nowMillis)
+                    if (step.alert != alert) notifications.save(step.alert)
+                    if (step.fired) {
+                        val title =
+                            when (alert.condition) {
+                                AlertCondition.ABOVE -> "${alert.symbol} is above ${NotificationText.price(alert.threshold, code)}"
+                                AlertCondition.BELOW -> "${alert.symbol} is below ${NotificationText.price(alert.threshold, code)}"
+                                AlertCondition.MOVE ->
+                                    "${alert.symbol} moved " +
+                                        NotificationText.percent(AlertRules.percentChange(alert.reference!!, listing.price))
+                            }
+                        deliver(
+                            NotificationMessage(
+                                "alert:${alert.id}:${feed.observedAtMillis}",
+                                NotificationKind.PRICE_ALERT,
+                                title,
+                                "${listing.name} is ${NotificationText.price(listing.price, code)} on CoinGecko.",
+                                nowMillis,
+                                alert.id,
+                                alert.coinId,
+                            ),
+                        )
+                    }
+                }
+                followed.mapNotNull { listings[it] }.forEach { listing ->
+                    val change = listing.change24h
+                    if (preferences.priceMoves && change != null && kotlin.math.abs(change) >= SIGNIFICANT_MOVE_PERCENT) {
+                        val direction = if (change > 0) "up" else "down"
+                        deliver(
+                            NotificationMessage(
+                                "move:${listing.coinId}:$localDay:$direction",
+                                NotificationKind.PRICE_MOVE,
+                                "${listing.symbol} is $direction ${NotificationText.percent(change).trimStart('+', '-')} in 24 hours",
+                                "${listing.name} is ${NotificationText.price(listing.price, code)} on CoinGecko.",
+                                nowMillis,
+                                coinId = listing.coinId,
+                            ),
+                        )
+                    }
+                    if (preferences.highsAndLows) {
+                        val recent = { at: Long? -> at != null && feed.observedAtMillis - at in 0..86_400_000L }
+                        if (recent(listing.allTimeHighAtMillis)) {
+                            deliver(
+                                NotificationMessage(
+                                    "ath:${listing.coinId}:${listing.allTimeHighAtMillis!! / 86_400_000L}",
+                                    NotificationKind.ALL_TIME_HIGH,
+                                    "${listing.symbol} reached an all-time high",
+                                    "${listing.name} reached ${NotificationText.price(listing.allTimeHigh!!, code)} on CoinGecko.",
+                                    nowMillis,
+                                    coinId = listing.coinId,
+                                ),
+                            )
+                        }
+                        if (recent(listing.allTimeLowAtMillis)) {
+                            deliver(
+                                NotificationMessage(
+                                    "atl:${listing.coinId}:${listing.allTimeLowAtMillis!! / 86_400_000L}",
+                                    NotificationKind.ALL_TIME_LOW,
+                                    "${listing.symbol} reached an all-time low",
+                                    "${listing.name} fell to ${NotificationText.price(listing.allTimeLow!!, code)} on CoinGecko.",
+                                    nowMillis,
+                                    coinId = listing.coinId,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            daily?.let(::deliver)
+            if (delivered.isNotEmpty()) notifications.trim(NOTIFICATION_HISTORY_SIZE)
+            delivered
+        }
+    }
+
+    /**
+     * One scheduled or on-demand notification check: refreshes the market list when it is older than
+     * [marketMaxAgeMillis] (a failed refresh keeps the cached list), then evaluates. Does nothing while no alert or
+     * notification setting is on.
+     */
+    fun runNotificationCheck(
+        marketTransport: (url: String, apiKey: String?) -> String,
+        localDay: String,
+        localHour: Int,
+        marketMaxAgeMillis: Long = NOTIFICATION_MARKET_AGE_MILLIS,
+    ): List<NotificationMessage> {
+        if (!notificationsActive()) return emptyList()
+        if (marketDataConsent()) runCatching { refreshMarketFeeds(marketTransport, marketMaxAgeMillis) }
+        return evaluateNotifications(localDay, localHour)
+    }
+
+    /** Order book requests send the pair and the device's IP address to Kraken; a separate consent from prices. */
+    fun orderBookConsent(): Boolean = setting("order_book_consent") == "true"
+
+    fun setOrderBookConsent(accepted: Boolean) = putSetting("order_book_consent", accepted.toString())
+
+    /**
+     * The Kraken market for [coinId] in the display currency. Bitcoin is Kraken's XBT; other coins use the Kraken markets
+     * CoinGecko lists for that coin ID, cached on this device for a week, so a coin is never matched by ticker alone.
+     * Null when Kraken has no market in the display currency.
+     */
+    fun krakenPair(
+        coinId: String,
+        coingecko: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ): KrakenPair? {
+        val currency = currency().value
+        if (coinId == "bitcoin") return KrakenPair("XBT", currency)
+        val key = "kraken_pairs:$coinId"
+        val cached =
+            marketFeeds.deviceSetting(key)?.split(';')?.takeIf { it.size == 2 && now() - (it[0].toLongOrNull() ?: 0L) < 7 * 86_400_000L }
+        val pairs =
+            if (cached != null) {
+                cached[1].split(',').filter { it.contains('/') }.map { KrakenPair(it.substringBefore('/'), it.substringAfter('/')) }
+            } else {
+                require(marketDataConsent()) { "Market data consent required" }
+                marketFeeds.deviceSetting("coingecko_retry_after")?.toLongOrNull()?.takeIf { it > now() }?.let {
+                    throw CoingeckoProviderException(CoingeckoProviderFailure.RATE_LIMITED)
+                }
+                KrakenOrderBook.parseKrakenPairs(coingecko(KrakenOrderBook.tickersUrl(baseUrl, coinId), coingeckoApiKey()), coinId).also {
+                    marketFeeds.putDeviceSetting(key, "${now()};" + it.joinToString(",") { pair -> pair.display })
+                }
+            }
+        return KrakenOrderBook.pairFor(pairs, currency)
+    }
+
+    /** A fresh Kraken order book snapshot for [pair]; [kraken] performs the request. Needs order book consent. */
+    fun orderBook(
+        pair: KrakenPair,
+        kraken: (url: String) -> String,
+        depth: Int = ORDER_BOOK_DEPTH,
+    ): OrderBookSnapshot {
+        require(orderBookConsent()) { "Order book consent required" }
+        val payload = kraken(KrakenOrderBook.depthUrl(pair, depth))
+        return KrakenOrderBook.parseDepth(payload, pair, now(), depth)
+    }
+
+    /** The day's portfolio summary; amounts are left out while amounts are hidden, as notifications show on the lock screen. */
+    private fun dailyUpdate(localDay: String): NotificationMessage? {
+        val end = now()
+        val result = moneyWeightedReturn(null, end - 86_400_000L, end)
+        val value = result.endValue ?: return null
+        val change = result.periodReturn?.let { "${NotificationText.percent(it * 100)} in 24 hours" }
+        val body =
+            if (generalPreferences().hideAmounts) {
+                change?.let { "Your portfolio is $it." } ?: "Your portfolio's 24-hour change is not available."
+            } else {
+                "Your portfolio is worth ${NotificationText.price(value, result.currency.value)}" + (change?.let { ", $it." } ?: ".")
+            }
+        return NotificationMessage("daily:$localDay", NotificationKind.DAILY_UPDATE, "Daily portfolio update", body, end)
+    }
+
+    /** Display and accounting preferences from Settings; stored in `application_settings`, so backups include them. */
+    fun generalPreferences(): GeneralPreferences =
+        GeneralPreferences(
+            landing = LandingPage.entries.firstOrNull { it.name == setting("landing_page") } ?: LandingPage.MAIN,
+            secondaryCurrency = setting("secondary_currency")?.takeIf { it in DISPLAY_CURRENCIES }?.let(::AssetId),
+            showPortfolioChart = setting("show_portfolio_chart") != "false",
+            zeroBasisRewards = setting("zero_basis_rewards") == "true",
+            deviceName = setting("device_name"),
+            hideAmounts = setting("hide_amounts") == "true",
+            candleCharts = setting("chart_style") == "candles",
+        )
+
+    fun setLandingPage(page: LandingPage) = putSetting("landing_page", page.name)
+
+    /** Null removes the secondary currency. Automatic price refresh also fetches the chosen currency. */
+    fun setSecondaryCurrency(currency: AssetId?) =
+        db.transaction {
+            if (currency == null) {
+                db.execute("DELETE FROM application_settings WHERE key='secondary_currency'")
+            } else {
+                require(currency.value in DISPLAY_CURRENCIES) { "Unsupported currency" }
+                putSetting("secondary_currency", currency.value)
+            }
+            putSetting("automatic_price_generation", priceRequestNonce())
+        }
+
+    fun setShowPortfolioChart(show: Boolean) = putSetting("show_portfolio_chart", show.toString())
+
+    fun setHideAmounts(hide: Boolean) = putSetting("hide_amounts", hide.toString())
+
+    fun setCandleCharts(candles: Boolean) = putSetting("chart_style", if (candles) "candles" else "line")
+
+    /**
+     * Acquisitions recorded as rewards (mining, staking, forks, airdrops) count with zero cost basis instead of their
+     * recorded value. The recorded value is kept, so turning this off restores it; reports replay with the current choice.
+     */
+    fun setZeroBasisRewards(enabled: Boolean) = putSetting("zero_basis_rewards", enabled.toString())
+
+    /** Null or blank restores the host's default device name. */
+    fun setDeviceName(name: String?) {
+        val trimmed = name?.trim().orEmpty()
+        if (trimmed.isEmpty()) {
+            db.execute("DELETE FROM application_settings WHERE key='device_name'")
+        } else {
+            require(trimmed.length <= 40 && trimmed.none { it.isISOControl() }) { "Use up to 40 characters on one line" }
+            putSetting("device_name", trimmed)
+        }
+    }
+
     fun dashboardWidgets(): List<DashboardWidgetPreference> {
         val saved = setting("dashboard_widgets") ?: return DashboardWidget.entries.map { DashboardWidgetPreference(it, true) }
         val entries =
@@ -1682,21 +2750,25 @@ class PortfolioApplication(
         balance: BalanceView,
         currency: AssetId,
         knownAt: Long,
-        policy: PricePolicy = pricePolicy(),
+        // Same rule everywhere: a balance within 24 hours of now uses the short current-price window.
+        policy: PricePolicy = pricePolicy(current = balance.atMillis >= knownAt - 86_400_000L),
+        // Series callers pass prices and metadata resolved in bulk; the results are the same as the per-asset queries.
+        priceAt: ((AssetId) -> PriceResult?)? = null,
+        metadataAt: ((AssetId) -> AssetMetadata?)? = null,
     ): List<AssetValuation> =
         balance.quantities.entries
             .groupBy { it.key.asset }
             .map { (asset, rows) ->
                 val units = rows.fold(io.polion.core.model.ExactInteger.ZERO) { sum, row -> sum + row.value }
                 val amount = AtomicAmount(asset, units)
-                val metadata = market.metadataAt(asset, balance.atMillis)
+                val metadata = if (metadataAt != null) metadataAt(asset) else market.metadataAt(asset, balance.atMillis)
                 val result =
                     if (asset ==
                         currency
                     ) {
                         null
                     } else {
-                        market.lookup(asset, currency, balance.atMillis, knownAt, policy)
+                        priceAt?.invoke(asset) ?: market.lookup(asset, currency, balance.atMillis, knownAt, policy)
                     }
                 val value =
                     if (asset ==
@@ -1821,7 +2893,7 @@ class PortfolioApplication(
                     db.execute("DELETE FROM application_settings WHERE key=?", listOf(key))
                 }
             }
-            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+            forgetSourceSuccess()
         }
         invalidate()
     }
@@ -1844,7 +2916,7 @@ class PortfolioApplication(
             "Address assigned to multiple accounts"
         }
         ownership.replace(catalog.copy(accounts = catalog.accounts + account, targets = catalog.targets + normalized))
-        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        forgetSourceSuccess()
     }
 
     private fun normalizeTarget(value: TrackingTarget): TrackingTarget =
@@ -1857,7 +2929,19 @@ class PortfolioApplication(
             value
         }
 
-    /** Saves a consented public wallet and optional ownership records as one local change. */
+    /** Wallet expressions that derive the same first address watch the same coins, whatever text they were saved with. */
+    private fun sameWalletSource(
+        first: String,
+        second: String,
+    ): Boolean =
+        first == second || runCatching { bitcoinWallet(first).address(0, 0) == bitcoinWallet(second).address(0, 0) }.getOrDefault(false)
+
+    /**
+     * Saves a consented public wallet and optional ownership records as one local change, and returns the wallet ID that
+     * discovery must use. Importing a wallet that is already tracked resumes it: the tracked wallet and its account are
+     * kept, and discovery and history run again. Empty duplicates left by failed imports of the same wallet are removed,
+     * together with an account created for them that holds nothing else.
+     */
     fun saveBitcoinWallet(
         target: TrackingTarget,
         newAccount: Account? = null,
@@ -1865,66 +2949,102 @@ class PortfolioApplication(
         consentAccepted: Boolean = false,
         providerEndpoint: String? = null,
         portfolio: PortfolioId? = null,
-    ) {
+    ): TrackingTargetId {
         require(target.identity.networkId == BITCOIN_MAINNET && target.identity.kind == "wallet") { "Expected a Bitcoin public wallet" }
         require(target.label.isNotBlank()) { "Enter a wallet name" }
         val normalized = normalizeTarget(target)
-        db.transaction {
-            require(sourceConsent() || consentAccepted) { "Source consent required" }
-            if (providerEndpoint != null) {
-                require(
-                    providerEndpoint.trimEnd('/') == sourceEndpoint() || consentAccepted,
-                ) { "Consent is required for the selected provider" }
-                setSourceEndpoint(providerEndpoint)
-            }
-            val catalog = ownership.loadInTransaction()
-            require(catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
-            require(
-                catalog.targets.none { it.identity == normalized.identity && it.role == TargetRole.WALLET },
-            ) { "Wallet already tracked" }
-            require(newOwner == null || newAccount != null && newAccount.ownerId == newOwner.id) { "Owner requires a matching new account" }
-            if (newOwner != null) {
-                require(newOwner.label.isNotBlank()) { "Enter an owner name" }
-                require(catalog.owners.none { it.id == newOwner.id }) { "Owner already exists" }
-            }
-            if (newAccount != null) {
-                require(newAccount.id == normalized.accountId) { "Wallet account does not match" }
-                require(newAccount.label.isNotBlank()) { "Enter an account name" }
-                require(catalog.accounts.none { it.id == newAccount.id }) { "Account already exists" }
-            }
-            val account = requireNotNull(newAccount ?: catalog.accounts.firstOrNull { it.id == normalized.accountId }) { "Unknown account" }
-            require(account.kind != AccountKind.GROUP && "polion:archived" !in account.tags) { "Select an active account" }
-            val byId = catalog.accounts.associateBy { it.id }
-            var parent = account.parentId
-            while (parent != null) {
-                val ancestor = requireNotNull(byId[parent]) { "Unknown parent account" }
-                require("polion:archived" !in ancestor.tags) { "Select an active account group" }
-                parent = ancestor.parentId
-            }
-            val portfolios =
-                catalog.portfolios.map { selected ->
-                    if (selected.id != portfolio) {
-                        selected
-                    } else {
-                        require(
-                            selected.ownerIds.isEmpty() || account.ownerId in selected.ownerIds,
-                        ) { "Select an owner included in this portfolio" }
-                        if (selected.accountIds.isEmpty()) selected else selected.copy(accountIds = selected.accountIds + account.id)
-                    }
+        val walletId =
+            db.transaction {
+                require(sourceConsent() || consentAccepted) { "Source consent required" }
+                if (providerEndpoint != null) {
+                    require(
+                        providerEndpoint.trimEnd('/') == sourceEndpoint() || consentAccepted,
+                    ) { "Consent is required for the selected provider" }
+                    setSourceEndpoint(providerEndpoint)
                 }
-            require(portfolio == null || catalog.portfolios.any { it.id == portfolio }) { "Unknown portfolio" }
-            ownership.replaceInTransaction(
-                catalog.copy(
-                    portfolios = portfolios,
-                    owners = catalog.owners + listOfNotNull(newOwner),
-                    accounts = catalog.accounts + listOfNotNull(newAccount),
-                    targets = catalog.targets + normalized,
-                ),
-            )
-            if (consentAccepted) putSetting("source_consent", "true")
-            db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
-        }
+                val catalog = ownership.loadInTransaction()
+                val equivalent =
+                    catalog.targets.filter {
+                        it.role == TargetRole.WALLET &&
+                            it.identity.networkId == BITCOIN_MAINNET &&
+                            it.identity.kind == "wallet" &&
+                            sameWalletSource(it.identity.canonicalKey, normalized.identity.canonicalKey)
+                    }
+
+                fun hasAddresses(wallet: TrackingTarget) = catalog.targets.any { it.walletId == wallet.id }
+                val reused = equivalent.firstOrNull(::hasAddresses) ?: equivalent.firstOrNull()
+                val duplicates = equivalent.filter { it != reused && !hasAddresses(it) }.map { it.id }.toSet()
+                val remainingTargets = catalog.targets.filterNot { it.id in duplicates }
+                // An account created only for a removed duplicate is removed when nothing else uses it.
+                val emptyAccounts =
+                    catalog.targets
+                        .filter { it.id in duplicates }
+                        .map { it.accountId }
+                        .filter { accountId ->
+                            accountId != reused?.accountId &&
+                                remainingTargets.none { it.accountId == accountId } &&
+                                catalog.accounts.none { it.parentId == accountId } &&
+                                catalog.portfolios.none { accountId in it.accountIds } &&
+                                db.query("SELECT 1 FROM ledger_movements WHERE account_id=? LIMIT 1", listOf(accountId.value)).isEmpty()
+                        }.toSet()
+                require(reused != null || catalog.targets.none { it.id == normalized.id }) { "Target already exists" }
+                require(reused == null || newAccount != null || target.accountId == reused.accountId) {
+                    val label = catalog.accounts.firstOrNull { it.id == reused?.accountId }?.label ?: "another account"
+                    "This wallet is already tracked in account \"$label\""
+                }
+                val wallet = reused ?: normalized
+                val createdAccount = if (reused == null) newAccount else null
+                val createdOwner = if (reused == null) newOwner else null
+                require(createdOwner == null || createdAccount != null && createdAccount.ownerId == createdOwner.id) {
+                    "Owner requires a matching new account"
+                }
+                if (createdOwner != null) {
+                    require(createdOwner.label.isNotBlank()) { "Enter an owner name" }
+                    require(catalog.owners.none { it.id == createdOwner.id }) { "Owner already exists" }
+                }
+                if (createdAccount != null) {
+                    require(createdAccount.id == wallet.accountId) { "Wallet account does not match" }
+                    require(createdAccount.label.isNotBlank()) { "Enter an account name" }
+                    require(catalog.accounts.none { it.id == createdAccount.id }) { "Account already exists" }
+                }
+                val account =
+                    requireNotNull(
+                        createdAccount ?: catalog.accounts.firstOrNull { it.id == wallet.accountId },
+                    ) { "Unknown account" }
+                require(account.kind != AccountKind.GROUP && "polion:archived" !in account.tags) { "Select an active account" }
+                val byId = catalog.accounts.associateBy { it.id }
+                var parent = account.parentId
+                while (parent != null) {
+                    val ancestor = requireNotNull(byId[parent]) { "Unknown parent account" }
+                    require("polion:archived" !in ancestor.tags) { "Select an active account group" }
+                    parent = ancestor.parentId
+                }
+                val portfolios =
+                    catalog.portfolios.map { selected ->
+                        if (selected.id != portfolio) {
+                            selected
+                        } else {
+                            require(
+                                selected.ownerIds.isEmpty() || account.ownerId in selected.ownerIds,
+                            ) { "Select an owner included in this portfolio" }
+                            if (selected.accountIds.isEmpty()) selected else selected.copy(accountIds = selected.accountIds + account.id)
+                        }
+                    }
+                require(portfolio == null || catalog.portfolios.any { it.id == portfolio }) { "Unknown portfolio" }
+                ownership.replaceInTransaction(
+                    catalog.copy(
+                        portfolios = portfolios,
+                        owners = catalog.owners + listOfNotNull(createdOwner),
+                        accounts = catalog.accounts.filterNot { it.id in emptyAccounts } + listOfNotNull(createdAccount),
+                        targets = if (reused == null) remainingTargets + normalized else remainingTargets,
+                    ),
+                )
+                if (consentAccepted) putSetting("source_consent", "true")
+                forgetSourceSuccess()
+                wallet.id
+            }
         invalidate()
+        return walletId
     }
 
     fun saveTarget(value: TrackingTarget) {
@@ -1956,7 +3076,55 @@ class PortfolioApplication(
                     } + normalized,
             )
         }
-        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
+        forgetSourceSuccess()
+    }
+
+    /**
+     * Standalone copies of a wallet address that the wallet's owner tracks in another account. Discovery moves them into
+     * the wallet, because the wallet now covers that address; another owner's copy stays a conflict.
+     */
+    private fun adoptableAddresses(
+        snapshot: OwnershipSnapshot,
+        address: String,
+        accountId: AccountId,
+    ): List<TrackingTarget> {
+        val owners = snapshot.accounts.associate { it.id to it.ownerId }
+        val owner = owners[accountId] ?: return emptyList()
+        return snapshot.targets.filter {
+            it.role == TargetRole.LEAF &&
+                it.identity.networkId == BITCOIN_MAINNET &&
+                it.identity.kind == "address" &&
+                it.identity.canonicalKey == address &&
+                it.walletId == null &&
+                it.accountId != accountId &&
+                owners[it.accountId] == owner
+        }
+    }
+
+    /**
+     * An address that another account (or another wallet) already tracks cannot join this wallet, unless it is a
+     * standalone copy the same owner keeps (see [adoptableAddresses]). The message names that account.
+     */
+    private fun discoveryConflict(
+        snapshot: OwnershipSnapshot,
+        address: String,
+        accountId: AccountId,
+        walletId: TrackingTargetId,
+        childId: TrackingTargetId,
+    ): BitcoinDiscoveryConflict? {
+        val conflict =
+            snapshot.targets.firstOrNull {
+                it.id != childId &&
+                    it.role == TargetRole.LEAF &&
+                    it.identity.networkId == BITCOIN_MAINNET &&
+                    it.identity.kind == "address" &&
+                    it.identity.canonicalKey == address &&
+                    !(it.accountId == accountId && (it.walletId == null || it.walletId == walletId))
+            } ?: return null
+        val label = snapshot.accounts.firstOrNull { it.id == conflict.accountId }?.label ?: "another account"
+        return BitcoinDiscoveryConflict(
+            "This address is already tracked in account \"$label\". Remove it there, then retry wallet discovery.",
+        )
     }
 
     /** Discovers public addresses; requests disclose each derived address to the selected provider. */
@@ -1965,6 +3133,7 @@ class PortfolioApplication(
         transport: EsploraTransport,
         gapLimit: Int = 20,
         maxAddressesPerBranch: Int = 1000,
+        providerEndpoint: String? = null,
     ): BitcoinWalletDiscovery {
         require(sourceConsent()) { "Source consent required" }
         require(gapLimit in 1..100 && maxAddressesPerBranch in gapLimit..10000)
@@ -2016,18 +3185,10 @@ class PortfolioApplication(
                 require(existing == null || existing.walletId == walletId && existing.identity.canonicalKey == address) {
                     "Wallet child identity conflict"
                 }
-                require(
-                    catalog.targets
-                        .filter {
-                            it.role == TargetRole.LEAF &&
-                                it.identity.networkId == BITCOIN_MAINNET &&
-                                it.identity.kind == "address" &&
-                                it.identity.canonicalKey == address &&
-                                it.id != id
-                        }.all {
-                            it.accountId == target.accountId && (it.walletId == null || it.walletId == walletId)
-                        },
-                ) { "Address assigned to another account or wallet" }
+                val adoptable = adoptableAddresses(catalog, address, target.accountId).toSet()
+                discoveryConflict(catalog.copy(targets = catalog.targets - adoptable), address, target.accountId, walletId, id)?.let {
+                    throw it
+                }
                 children.add(
                     TrackingTarget(
                         id,
@@ -2047,10 +3208,105 @@ class PortfolioApplication(
             }
         }
         val childIds = children.map { it.id }.toSet()
-        ownership.replace(catalog.copy(targets = catalog.targets.filterNot { it.id in childIds } + children))
-        db.execute("DELETE FROM application_settings WHERE key='source_last_success'")
-        return BitcoinWalletDiscovery(children.size, used)
+        var moved = emptyList<TrackingTarget>()
+        val scopeNotice =
+            when {
+                used == 0 ->
+                    "No used addresses in ${children.size} checked. Check the expression: a bare xpub is read as native SegWit (BIP84) only."
+                wallet.ranged && wallet.branchCount == 1 -> "The descriptor covers one branch; change addresses are not scanned."
+                else -> null
+            }
+        // Merge into the catalog as it is at commit time, so edits saved during the network scan survive.
+        db.transaction {
+            require(sourceConsent()) { "Source consent required" }
+            providerEndpoint?.let { endpoint ->
+                if (sourceEndpoint() != endpoint) throw BitcoinProviderException(BitcoinProviderFailure.HISTORY_CHANGED)
+            }
+            val fresh = ownership.loadInTransaction()
+            require(fresh.targets.firstOrNull { it.id == walletId } == target) { "Wallet changed during discovery; retry" }
+            moved = children.flatMap { adoptableAddresses(fresh, it.identity.canonicalKey, target.accountId) }
+            val remaining = fresh.copy(targets = fresh.targets - moved.toSet())
+            children.forEach { child ->
+                discoveryConflict(remaining, child.identity.canonicalKey, target.accountId, walletId, child.id)?.let { throw it }
+            }
+            ownership.replaceInTransaction(remaining.copy(targets = remaining.targets.filterNot { it.id in childIds } + children))
+            forgetSourceSuccess()
+        }
+        invalidate()
+        val movedNotice =
+            moved.takeIf { it.isNotEmpty() }?.let { addresses ->
+                val labels =
+                    addresses
+                        .mapNotNull { leaf -> catalog.accounts.firstOrNull { it.id == leaf.accountId }?.label }
+                        .distinct()
+                        .joinToString { "\"$it\"" }
+                "Moved ${addresses.size} address${if (addresses.size == 1) "" else "es"} from $labels into this wallet."
+            }
+        return BitcoinWalletDiscovery(children.size, used, listOfNotNull(scopeNotice, movedNotice).joinToString(" ").ifEmpty { null })
     }
+
+    /**
+     * Wallets that need address discovery before a history refresh: enabled wallets with no addresses yet (for example
+     * after an interrupted import) and wallets whose last applied scan saw a used address inside the trailing gap, so
+     * later addresses may now be in use. History refresh only scans addresses that discovery has added.
+     */
+    fun bitcoinWalletsNeedingDiscovery(gapLimit: Int = 20): List<TrackingTargetId> {
+        val catalog = ownership.load()
+        val archived =
+            catalog.accounts
+                .filter { "polion:archived" in it.tags }
+                .map { it.id }
+                .toSet()
+        val counts = acceptedScan()?.counts.orEmpty()
+        return catalog.targets
+            .filter {
+                it.enabled &&
+                    it.role == TargetRole.WALLET &&
+                    it.identity.networkId == BITCOIN_MAINNET &&
+                    it.identity.kind == "wallet" &&
+                    it.accountId !in archived
+            }.filter { wallet ->
+                val children = catalog.targets.filter { it.walletId == wallet.id }
+                if (children.isEmpty()) return@filter true
+                val prefix = "bitcoin-wallet-child-" + sha256(wallet.id.value) + ":"
+                children
+                    .mapNotNull { child ->
+                        val position =
+                            child.id.value
+                                .removePrefix(prefix)
+                                .split(':')
+                        val branch = position.getOrNull(0)?.toIntOrNull()
+                        val index = position.getOrNull(1)?.toIntOrNull()
+                        if (branch == null || index == null) null else Triple(branch, index, child.identity.canonicalKey)
+                    }.groupBy { it.first }
+                    .values
+                    .any { branch ->
+                        val last = branch.maxOf { it.second }
+                        branch.any { (_, index, address) ->
+                            val seen = counts[address]
+                            index > last - gapLimit && seen != null && (seen.first > 0 || seen.second > 0)
+                        }
+                    }
+            }.map { it.id }
+    }
+
+    /**
+     * Discovers [bitcoinWalletsNeedingDiscovery] before a history refresh. A wallet that cannot be discovered because of an
+     * address conflict or the discovery limit is skipped with its message, so other wallets still refresh; provider
+     * failures propagate and stop the refresh.
+     */
+    fun discoverPendingBitcoinWallets(
+        transport: EsploraTransport,
+        providerEndpoint: String = sourceEndpoint(),
+        gapLimit: Int = 20,
+    ): List<String> =
+        bitcoinWalletsNeedingDiscovery(gapLimit).mapNotNull { walletId ->
+            try {
+                discoverBitcoinWallet(walletId, transport, gapLimit, providerEndpoint = providerEndpoint).notice
+            } catch (failure: IllegalArgumentException) {
+                failure.message ?: "A wallet could not be discovered; retry from its connection."
+            }
+        }
 
     fun savePortfolio(value: Portfolio) =
         updateOwnership {
@@ -2060,7 +3316,9 @@ class PortfolioApplication(
             )
         }
 
-    private fun updateOwnership(change: (OwnershipSnapshot) -> OwnershipSnapshot) = ownership.replace(change(ownership.load()))
+    /** Read-modify-write in one transaction, so concurrent edits cannot be lost between load and replace. */
+    private fun updateOwnership(change: (OwnershipSnapshot) -> OwnershipSnapshot) =
+        db.transaction { ownership.replaceInTransaction(change(ownership.loadInTransaction())) }
 
     /** Commit all linked legs, treatments and notes together, retaining append-only manual revisions. */
     fun saveTransaction(
@@ -2068,9 +3326,26 @@ class PortfolioApplication(
         editing: Boolean = false,
     ) {
         ensureDefaultAssets()
+        val prepared = prepareTransaction(draft, editing)
+        db.transaction { writeTransaction(draft, prepared) }
+        invalidate()
+    }
+
+    /**
+     * Validates [draft] against the current accounts and asset precision. A new entry needs an unused ID; [restoring]
+     * also accepts an ID whose latest revision is a reversed manual entry, which an import brings back.
+     */
+    private fun prepareTransaction(
+        draft: TransactionDraft,
+        editing: Boolean,
+        restoring: Boolean = false,
+    ): PreparedTransaction {
         val previous = activities.history(draft.id).lastOrNull()
-        require(if (editing) previous?.manual == true else previous == null) { "Entry identity already exists or cannot be edited" }
-        require(previous == null || previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
+        val restorable = restoring && previous?.manual == true && previous.status == io.polion.core.ledger.ActivityStatus.REVERSED
+        require(restorable || if (editing) previous?.manual == true else previous == null) {
+            "Entry identity already exists or cannot be edited"
+        }
+        require(restorable || previous == null || previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
             "Only active manual entries can be edited"
         }
         require(
@@ -2098,28 +3373,239 @@ class PortfolioApplication(
         }
         val assets = listOfNotNull(draft.asset, draft.quote, draft.feeAsset).distinct()
         val precision = assets.associateWith { requireNotNull(market.metadataAt(it, draft.atMillis)) { "Unknown asset" }.decimals }
-        val prepared = TransactionDrafts.prepare(draft, precision)
-        db.transaction {
-            activities.saveInTransaction(prepared.activity)
-            treatments.saveInTransaction(draft.id, prepared.treatments)
-            overlays.saveOverlayInTransaction(
-                ActivityOverlay(
-                    draft.id,
-                    label =
-                        overlays
-                            .overlay(
-                                draft.id,
-                            )?.second
-                            ?.label,
-                    note = draft.notes,
-                ),
-            )
-            db.execute(
-                "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
-                listOf("transaction_draft:${draft.id.value}", draft.encode()),
-            )
+        return TransactionDrafts.prepare(draft, precision)
+    }
+
+    /** Writes a prepared entry; callers hold the database transaction. */
+    private fun writeTransaction(
+        draft: TransactionDraft,
+        prepared: PreparedTransaction,
+    ) {
+        activities.saveInTransaction(prepared.activity)
+        treatments.saveInTransaction(draft.id, prepared.treatments)
+        overlays.saveOverlayInTransaction(ActivityOverlay(draft.id, label = overlays.overlay(draft.id)?.second?.label, note = draft.notes))
+        db.execute(
+            "INSERT OR REPLACE INTO application_settings VALUES (?, ?)",
+            listOf("transaction_draft:${draft.id.value}", draft.encode()),
+        )
+    }
+
+    /**
+     * Reads a CSV file and checks every row without saving anything. Each row becomes a manual entry in
+     * [CsvImportOptions.account] with an ID derived from the account and the row (or its reference), so a row imported
+     * before is recognised in any later file. Identical rows in one file are kept as separate entries.
+     */
+    fun previewCsvImport(
+        fileName: String,
+        text: String,
+        options: CsvImportOptions,
+        mapping: CsvMapping? = null,
+    ): CsvPreview {
+        ensureDefaultAssets()
+        val table = CsvImport.read(text)
+        require(table.isNotEmpty()) { "The file is empty" }
+        val header = table.first()
+        val columns = mapping ?: CsvImport.detect(header)
+        require(columns.missing.isEmpty()) { "Choose columns for: " + columns.missing.joinToString { it.header } }
+        require(columns.columns.values.all { it in header.indices }) { "A chosen column is not in the file" }
+        val accounts = scopedAccounts(ownership.load(), null)
+        require(options.account in accounts) { "Select an active account" }
+        val known = market.assetIds().associateWith { market.metadataAt(it, Long.MAX_VALUE) }
+        val unresolved = mutableSetOf<String>()
+
+        fun asset(text: String): AssetId? {
+            val key = text.trim()
+            options.assets[key]?.let { return it }
+            val matches =
+                known.filter { (id, metadata) -> id.value.equals(key, true) || metadata?.symbol?.equals(key, true) == true }.keys
+            return matches.singleOrNull().also { if (it == null) unresolved += key }
         }
+        val occurrences = mutableMapOf<String, Int>()
+        val rows =
+            table.drop(1).mapIndexed { index, cells ->
+                val line = index + 2
+
+                fun cell(field: CsvField) =
+                    columns.columns[field]
+                        ?.let { cells.getOrNull(it) }
+                        ?.trim()
+                        .orEmpty()
+                try {
+                    val (type, incoming) = requireNotNull(CsvImport.type(cell(CsvField.TYPE))) { "Unknown type \"${cell(CsvField.TYPE)}\"" }
+                    val assetText = cell(CsvField.ASSET)
+                    val assetId = requireNotNull(asset(assetText)) { "Choose which asset \"$assetText\" is" }
+                    val quote =
+                        cell(CsvField.CURRENCY).takeIf { it.isNotEmpty() }?.let {
+                            requireNotNull(asset(it)) { "Choose which asset \"$it\" is" }
+                        } ?: options.currency
+                    val fee = cell(CsvField.FEE).takeIf { it.isNotEmpty() }?.let(CsvImport::number)?.takeIf { it.coefficient.sign > 0 }
+                    val feeAsset =
+                        fee?.let {
+                            cell(CsvField.FEE_CURRENCY).takeIf { it.isNotEmpty() }?.let { text ->
+                                requireNotNull(asset(text)) { "Choose which asset \"$text\" is" }
+                            } ?: if (options.feeDefault == CsvFeeDefault.CURRENCY) quote else assetId
+                        }
+                    val draft =
+                        TransactionDraft(
+                            ActivityId("pending"),
+                            type,
+                            assetId,
+                            options.account,
+                            CsvImport.number(cell(CsvField.QUANTITY)),
+                            CsvImport.date(cell(CsvField.DATE), options.localToMillis),
+                            quote,
+                            cell(CsvField.PRICE).takeIf { it.isNotEmpty() }?.let(CsvImport::number),
+                            incomingExternal = incoming,
+                            feeAsset = feeAsset,
+                            feeQuantity = fee,
+                            notes = cell(CsvField.NOTES).take(4000),
+                        )
+                    val reference = cell(CsvField.REFERENCE)
+                    val identity =
+                        if (reference.isNotEmpty()) {
+                            "ref|$reference"
+                        } else {
+                            val content = draft.copy(notes = "").encode()
+                            val n = occurrences.getOrElse(content) { 0 } + 1
+                            occurrences[content] = n
+                            "row|$content|$n"
+                        }
+                    val id = ActivityId("csv-" + sha256("${options.account.value}|$identity").take(32))
+                    val identified = draft.copy(id = id)
+                    val previous = activities.history(id).lastOrNull()
+                    when {
+                        previous == null -> {
+                            prepareTransaction(identified, editing = false)
+                            CsvRowResult(line, CsvRowStatus.NEW, identified)
+                        }
+                        previous.status == io.polion.core.ledger.ActivityStatus.REVERSED -> {
+                            prepareTransaction(identified, editing = false, restoring = true)
+                            CsvRowResult(line, CsvRowStatus.RESTORE, identified)
+                        }
+                        else -> CsvRowResult(line, CsvRowStatus.ALREADY_IMPORTED, identified, "Imported before")
+                    }
+                } catch (failure: IllegalArgumentException) {
+                    CsvRowResult(line, CsvRowStatus.INVALID, null, failure.message ?: "This row is not valid")
+                }
+            }
+        val duplicateIds =
+            rows
+                .mapNotNull { it.draft?.id }
+                .groupingBy { it }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
+        val checked =
+            rows.map {
+                if (it.draft?.id in duplicateIds && it.status != CsvRowStatus.INVALID) {
+                    it.copy(status = CsvRowStatus.INVALID, draft = null, message = "Another row has the same reference")
+                } else {
+                    it
+                }
+            }
+        val hash = CsvImportRepository.hash(text)
+        return CsvPreview(
+            fileName,
+            hash,
+            header,
+            columns,
+            checked,
+            unresolved,
+            csvImports.receipts().filter { it.fileHash == hash && it.reversedAtMillis == null },
+        )
+    }
+
+    /**
+     * Saves every NEW and RESTORE row of [preview] in one transaction with its receipt; if any row fails, nothing is
+     * saved. Rows are checked again inside the transaction, so a row saved meanwhile is skipped rather than duplicated.
+     */
+    fun importCsv(preview: CsvPreview): CsvImportReceipt {
+        require(preview.importable > 0) { "There are no new rows to import" }
+        val account = preview.rows.firstNotNullOf { it.draft?.account }
+        // Validation reads accounts and precision outside the write transaction; the ID check is repeated inside it.
+        val prepared =
+            preview.rows
+                .filter { it.status == CsvRowStatus.NEW || it.status == CsvRowStatus.RESTORE }
+                .filter { row ->
+                    activities
+                        .history(row.draft!!.id)
+                        .lastOrNull()
+                        ?.status
+                        .let { it == null || it == ActivityStatus.REVERSED }
+                }.associate { it.draft!!.id to prepareTransaction(it.draft!!, editing = false, restoring = true) }
+        val receipt =
+            db.transaction {
+                val outcomes =
+                    preview.rows.map { row ->
+                        val draft = row.draft
+                        if (draft == null || row.status !in setOf(CsvRowStatus.NEW, CsvRowStatus.RESTORE)) {
+                            CsvReceiptRow(row.line, row.status, draft?.id, row.message)
+                        } else {
+                            val previous = activities.history(draft.id).lastOrNull()
+                            if (draft.id !in prepared || previous != null && previous.status != ActivityStatus.REVERSED) {
+                                CsvReceiptRow(row.line, CsvRowStatus.ALREADY_IMPORTED, draft.id, "Imported before")
+                            } else {
+                                writeTransaction(draft, prepared.getValue(draft.id))
+                                CsvReceiptRow(row.line, if (previous == null) CsvRowStatus.NEW else CsvRowStatus.RESTORE, draft.id, null)
+                            }
+                        }
+                    }
+                val saved =
+                    CsvImportReceipt(
+                        "import-${now()}-${kotlin.random.Random.nextLong().toULong().toString(16)}",
+                        preview.fileName.take(200),
+                        preview.fileHash,
+                        now(),
+                        account,
+                        outcomes.size,
+                        outcomes.count { it.status == CsvRowStatus.NEW || it.status == CsvRowStatus.RESTORE },
+                        outcomes.count { it.status == CsvRowStatus.ALREADY_IMPORTED },
+                        outcomes.count { it.status == CsvRowStatus.INVALID },
+                        null,
+                    )
+                csvImports.save(saved, outcomes)
+                saved
+            }
         invalidate()
+        return receipt
+    }
+
+    /** Assets a CSV row can name, with their current symbol and name, for choosing what unresolved text means. */
+    fun importAssets(): List<Pair<AssetId, AssetMetadata>> {
+        ensureDefaultAssets()
+        return market.assetIds().mapNotNull { id -> market.metadataAt(id, Long.MAX_VALUE)?.let { id to it } }
+    }
+
+    fun csvImportReceipts(): List<CsvImportReceipt> = csvImports.receipts()
+
+    fun csvImportRows(id: String): List<CsvReceiptRow> = csvImports.rows(id)
+
+    /**
+     * Undoes an import: every entry it saved that is still active becomes reversed, in one transaction. Entries edited
+     * since are reversed too. Importing the same rows again brings them back. Returns how many entries were reversed.
+     */
+    fun reverseCsvImport(id: String): Int {
+        val reversed =
+            db.transaction {
+                val receipt = requireNotNull(csvImports.receipts().firstOrNull { it.id == id }) { "Unknown import" }
+                require(receipt.reversedAtMillis == null) { "This import was already undone" }
+                var count = 0
+                csvImports
+                    .rows(id)
+                    .filter { it.status == CsvRowStatus.NEW || it.status == CsvRowStatus.RESTORE }
+                    .mapNotNull { it.activity }
+                    .forEach { activity ->
+                        val previous = activities.history(activity).lastOrNull()
+                        if (previous != null && previous.manual && previous.status == io.polion.core.ledger.ActivityStatus.CONFIRMED) {
+                            activities.saveInTransaction(previous.copy(status = io.polion.core.ledger.ActivityStatus.REVERSED))
+                            count++
+                        }
+                    }
+                csvImports.markReversed(id, now())
+                count
+            }
+        invalidate()
+        return reversed
     }
 
     /** Effective evidence intersecting the requested scope; callers paginate after computing summary metrics. */
@@ -2248,6 +3734,39 @@ class PortfolioApplication(
         AssetId(
             db.query("SELECT value FROM application_settings WHERE key='currency'").singleOrNull()?.single() ?: "USD",
         )
+
+    /**
+     * Retires the example records. The ledger is append-only, so example transactions are reversed rather than deleted;
+     * example prices are withdrawn so they cannot override real quotes; the example account is archived and the example
+     * portfolio removed; an owner still named "Example owner" becomes "Personal". Each step can be repeated, and the
+     * example flag is cleared last, so an interrupted removal can be retried.
+     */
+    fun removeExampleData() {
+        require(setting("sample_data") == "true") { "No example data to remove" }
+        val at = now().toString()
+        db.transaction {
+            db.query("SELECT id FROM market_prices WHERE manual=1 AND id LIKE 'demo-price-%'").forEach { row ->
+                db.execute("INSERT OR IGNORE INTO market_override_withdrawals VALUES (?, ?, ?)", listOf(row.single(), at, at))
+            }
+        }
+        activities
+            .current()
+            .filter { it.manual && it.id.value.startsWith("demo-") && it.status != io.polion.core.ledger.ActivityStatus.REVERSED }
+            .forEach { activities.save(it.copy(status = io.polion.core.ledger.ActivityStatus.REVERSED)) }
+        val example = AccountId("demo-wallet")
+        if (ownership.load().accounts.any { it.id == example && "polion:archived" !in it.tags }) archiveAccount(example)
+        updateOwnership { catalog ->
+            catalog.copy(
+                portfolios = catalog.portfolios.filterNot { it.id.value == "demo-portfolio" },
+                owners =
+                    catalog.owners.map {
+                        if (it.id.value == "demo-owner" && it.label == "Example owner") it.copy(label = "Personal") else it
+                    },
+            )
+        }
+        db.execute("DELETE FROM application_settings WHERE key='sample_data'")
+        invalidate()
+    }
 
     /** Seeds example records only when the portfolio is empty and the user explicitly requests them. */
     fun seedDemo() {
@@ -2464,20 +3983,35 @@ class PortfolioApplication(
         return lines.joinToString("\r\n", postfix = "\r\n")
     }
 
-    fun exportBackup(password: CharArray): ByteArray =
-        BackupEncryption.encrypt(PortableBackup.discover(db).export(db).encodeToByteArray(), password)
+    /** Streams an encrypted backup of every durable table into [output]. */
+    fun exportBackup(
+        password: CharArray,
+        output: ByteSink,
+    ) {
+        val encrypted = BackupEncryption.encrypt(output, password)
+        PortableBackup.discover(db).export(db, encrypted)
+        encrypted.close()
+    }
 
+    /** In-memory form of [exportBackup], for small data and tests. */
+    fun exportBackup(password: CharArray): ByteArray = ByteArraySink().also { exportBackup(password, it) }.toByteArray()
+
+    /** Decrypts [input] and restores it into the empty [staging] database; the live database is untouched. */
+    fun restoreToStaging(
+        staging: SqliteDatabase,
+        input: ByteSource,
+        password: CharArray,
+    ) {
+        PortfolioApplication(staging, now)
+        PortableBackup.discover(db).restoreToStaging(staging, BackupEncryption.decrypt(input, password))
+    }
+
+    /** In-memory form of [restoreToStaging], for small data and tests. */
     fun restoreToStaging(
         staging: SqliteDatabase,
         archive: ByteArray,
         password: CharArray,
-    ) {
-        PortfolioApplication(staging, now)
-        PortableBackup
-            .discover(
-                db,
-            ).restoreToStaging(staging, BackupEncryption.decrypt(archive, password).decodeToString(throwOnInvalidSequence = true))
-    }
+    ) = restoreToStaging(staging, ByteArraySource(archive), password)
 
     /** Erases application rows and purges deleted content from active SQLite files. */
     fun wipe() {

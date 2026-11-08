@@ -2,6 +2,7 @@ package io.polion.core.bitcoin
 
 import io.polion.core.model.AccountId
 import io.polion.core.model.ExactInteger
+import io.polion.core.model.isHash64
 import io.polion.core.storage.SqliteDatabase
 import io.polion.core.storage.sha256
 import kotlin.time.ExperimentalTime
@@ -99,7 +100,7 @@ class BitcoinGraphRepository(
         require(providerSourceId.isNotBlank() && observedAt.endsWith("Z"))
         Instant.parse(observedAt)
         require(rawChecksums.keys == graph.transactions.keys) { "Every graph transaction requires its raw checksum" }
-        require(rawChecksums.values.all { it.matches(Regex("[0-9a-f]{64}")) }) { "Invalid raw checksum" }
+        require(rawChecksums.values.all { it.isHash64() }) { "Invalid raw checksum" }
         val previousId =
             db
                 .query(

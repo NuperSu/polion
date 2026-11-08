@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -41,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -142,13 +145,12 @@ internal fun WorkflowDialog(
     var automaticPriceConsent by remember { mutableStateOf(false) }
     var automaticPortfolioPrices by remember { mutableStateOf(false) }
     var automaticPriceStatus by remember { mutableStateOf<String?>(null) }
-    var priceApiKey by remember { mutableStateOf("") }
     var priceDays by rememberSaveable { mutableIntStateOf(90) }
     var fetchingPrice by remember { mutableStateOf(false) }
     var priceMessage by remember { mutableStateOf<String?>(null) }
-    var background by remember { mutableStateOf(host.backgroundRefreshEnabled()) }
     var candidates by remember { mutableStateOf<List<ReconciliationCandidate>>(emptyList()) }
     var transferLinks by remember { mutableStateOf<List<TransferLink>>(emptyList()) }
+    var summaries by remember { mutableStateOf<Map<io.polion.core.model.ActivityId, String>>(emptyMap()) }
     var transferConflicts by remember { mutableStateOf<List<TransferLinkConflict>>(emptyList()) }
     var transfersLoaded by remember { mutableStateOf(false) }
     var selectedAccounts by remember { mutableStateOf(emptySet<AccountId>()) }
@@ -173,6 +175,12 @@ internal fun WorkflowDialog(
                 candidates = app.reconciliationCandidates(86_400_000)
                 transferLinks = app.transferLinks()
                 transferConflicts = app.transferLinkConflicts()
+                summaries =
+                    (
+                        candidates.take(50).flatMap { listOf(it.first, it.second) } +
+                            transferLinks.flatMap { listOf(it.outgoingActivity, it.incomingActivity) } +
+                            transferConflicts.flatMap { listOf(it.first, it.second) }
+                    ).distinct().mapNotNull { id -> app.activitySummary(id)?.let { id to it } }.toMap()
             }
             transfersLoaded = true
         }
@@ -237,12 +245,14 @@ internal fun WorkflowDialog(
                 if (type == "portfolio") {
                     Text("Select accounts. Leave empty to include every account.", fontSize = 12.sp)
                     data.ownership.accounts.filter { "polion:archived" !in it.tags }.forEach { a ->
-                        Row {
-                            Checkbox(a.id in selectedAccounts, { checked ->
+                        Row(
+                            Modifier.toggleable(value = a.id in selectedAccounts, role = Role.Checkbox) { checked ->
                                 selectedAccounts =
                                     if (checked) selectedAccounts + a.id else selectedAccounts - a.id
-                            })
-                            ; Text(a.label, Modifier.padding(top = 12.dp))
+                            },
+                        ) {
+                            Checkbox(checked = a.id in selectedAccounts, onCheckedChange = null)
+                            Text(a.label, Modifier.padding(top = 12.dp))
                         }
                     }
                 }
@@ -519,29 +529,31 @@ internal fun WorkflowDialog(
                 HorizontalDivider()
                 Text("Automatic Bitcoin prices", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Kraken receives Bitcoin pairs for your USD, EUR and GBP portfolio currencies and your IP address; wallet addresses are not sent. Closed hourly and daily prices refresh automatically while scheduling is available. No API key is needed.",
+                    "Kraken receives Bitcoin pairs for your USD, EUR and GBP portfolio currencies and your IP address; wallet addresses " +
+                        "are not sent. This switch also turns on automatic wallet history refresh. " +
+                        "Closed hourly and daily prices refresh while scheduling is available. No API key is needed.",
                     fontSize = 13.sp,
                 )
-                Row {
-                    Checkbox(automaticPriceConsent, { accepted ->
-                        automaticPriceConsent = accepted
-                        if (accepted) automaticPortfolioPrices = true
-                        scope.launch {
-                            withContext(host.dispatcher) { app.setAutomaticPriceConsent(accepted) }
-                            host.setAutomaticPriceRefresh(accepted)
-                        }
-                    }, modifier = Modifier.testTag("automatic-price-consent"))
-                    Text("Allow automatic Kraken prices", modifier = Modifier.padding(top = 12.dp))
+                Row(
+                    Modifier
+                        .toggleable(value = automaticPriceConsent, role = Role.Checkbox) { accepted ->
+                            automaticPriceConsent = accepted
+                            if (accepted) automaticPortfolioPrices = true
+                            execute("Refresh settings saved") { applyAutomaticRefresh(app, host, accepted) }
+                        }.testTag("automatic-price-consent"),
+                ) {
+                    Checkbox(checked = automaticPriceConsent, onCheckedChange = null)
+                    Text("Allow automatic Kraken prices and wallet refresh", modifier = Modifier.padding(top = 12.dp))
                 }
                 if (automaticPriceConsent) {
-                    Row {
-                        Checkbox(automaticPortfolioPrices, { accepted ->
-                            automaticPortfolioPrices = accepted
-                            scope.launch {
-                                withContext(host.dispatcher) { app.setAutomaticPortfolioPriceConsent(accepted) }
-                                host.setAutomaticPriceRefresh(true)
-                            }
-                        }, modifier = Modifier.testTag("automatic-portfolio-price-consent"))
+                    Row(
+                        Modifier
+                            .toggleable(value = automaticPortfolioPrices, role = Role.Checkbox) { accepted ->
+                                automaticPortfolioPrices = accepted
+                                execute("Price currencies saved") { app.setAutomaticPortfolioPriceConsent(accepted) }
+                            }.testTag("automatic-portfolio-price-consent"),
+                    ) {
+                        Checkbox(checked = automaticPortfolioPrices, onCheckedChange = null)
                         Text("Include other portfolio currencies", modifier = Modifier.padding(top = 12.dp))
                     }
                     Text(
@@ -570,26 +582,28 @@ internal fun WorkflowDialog(
                     "CoinGecko receives the coin, currency and time range, plus your IP address. Wallet addresses are not sent. Saved quotes are available offline and do not establish acquisition cost. The 90-day range includes hourly points; the 365-day range uses daily points.",
                     fontSize = 13.sp,
                 )
-                Row {
-                    Checkbox(
-                        priceConsent,
-                        { accepted ->
+                Row(
+                    Modifier
+                        .toggleable(value = priceConsent, enabled = !fetchingPrice, role = Role.Checkbox) { accepted ->
                             priceConsent = accepted
                             scope.launch { withContext(host.dispatcher) { app.setPriceSourceConsent(accepted) } }
-                        },
-                        enabled = !fetchingPrice,
-                        modifier = Modifier.testTag("price-source-consent"),
-                    )
+                        }.testTag("price-source-consent"),
+                ) {
+                    Checkbox(checked = priceConsent, onCheckedChange = null, enabled = !fetchingPrice)
                     Text("Allow CoinGecko price requests", modifier = Modifier.padding(top = 12.dp))
                 }
-                SecretField("CoinGecko Demo API key (session only)", priceApiKey) { priceApiKey = it }
+                Text("An optional CoinGecko API key from Settings › API Keys raises the request limit.", fontSize = 13.sp)
                 Choice("Price history range", listOf(90 to "90 days · hourly", 365 to "365 days · daily"), priceDays) { priceDays = it }
                 Button(
                     onClick = {
                         fetchingPrice = true
                         scope.launch {
-                            withContext(host.dispatcher) { app.setPriceSourceConsent(priceConsent) }
-                            host.fetchPriceHistory(AssetId("bitcoin:btc"), data.currency, priceDays, priceApiKey) { message ->
+                            val apiKey =
+                                withContext(host.dispatcher) {
+                                    app.setPriceSourceConsent(priceConsent)
+                                    app.coingeckoApiKey().orEmpty()
+                                }
+                            host.fetchPriceHistory(AssetId("bitcoin:btc"), data.currency, priceDays, apiKey) { message ->
                                 fetchingPrice = false
                                 priceMessage = message
                                 notify(message)
@@ -608,23 +622,25 @@ internal fun WorkflowDialog(
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text("Your endpoint is saved. Source settings can be changed after this scan finishes.", fontSize = 12.sp)
                 }
+                // The details view explains the last failure instead of only opening the settings.
+                if (syncStatus.phase == SyncPhase.ERROR) {
+                    Text(syncStatus.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sync-error"))
+                }
                 Text(
-                    "Querying an indexer shares watched public addresses and your IP address with that provider. Choose an HTTPS Esplora endpoint you trust. No cloud account is required.",
+                    "Querying an indexer shares watched public addresses and your IP address with that provider. The default " +
+                        "blockstream.info falls back to mempool.space while it is unavailable; your own endpoint has no fallback. " +
+                        "Choose an HTTPS Esplora endpoint you trust. No cloud account is required.",
                     fontSize = 13.sp,
                 )
                 Field("Esplora API endpoint", address) { address = it }
-                Row {
-                    Checkbox(consent, { consent = it }, modifier = Modifier.testTag("bitcoin-source-consent"))
+                Row(Modifier.toggleable(value = consent, role = Role.Checkbox) { consent = it }.testTag("bitcoin-source-consent")) {
+                    Checkbox(checked = consent, onCheckedChange = null)
                     Text("I allow public address queries to this endpoint", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
                 }
-                Row {
-                    Switch(background, { background = it })
-                    Text(
-                        "Automatic refresh (history ~30 min, prices hourly)",
-                        Modifier.weight(1f).padding(start = 12.dp, top = 8.dp),
-                        fontSize = 13.sp,
-                    )
-                }
+                Text(
+                    "Automatic refresh of prices and wallet history is set in Settings.",
+                    fontSize = 13.sp,
+                )
                 Text(
                     "Android may defer background work. Desktop refresh runs while Polion is open. Network errors preserve saved data. Pending activity is provisional, and source history is not independently verified.",
                     fontSize = 12.sp,
@@ -640,13 +656,16 @@ internal fun WorkflowDialog(
                         return
                     }
                     scope.launch {
+                        endpointProblem(host, data.sourceEndpoint, address, consent)?.let {
+                            error = it
+                            return@launch
+                        }
                         runCatching {
                             withContext(host.dispatcher) {
                                 app.setSourceEndpoint(address)
                                 app.setSourceConsent(consent)
-                                host.setBackgroundRefresh(
-                                    background,
-                                )
+                                // Reschedule from the saved switch; this dialog does not change it.
+                                host.updateRefreshPreferences(host.refreshPreferences())
                             }
                         }.fold({
                             sourceSaved(address, consent)
@@ -689,13 +708,13 @@ internal fun WorkflowDialog(
                         "Coverage remains provider-based and unverified.",
                     fontSize = 12.sp,
                 )
-                Row {
-                    Checkbox(
-                        acceptedRecovery,
-                        { acceptedRecovery = it },
-                        enabled = syncStatus.phase != SyncPhase.SYNCING,
-                        modifier = Modifier.testTag("bitcoin-recovery-consent"),
-                    )
+                val recoveryEnabled = syncStatus.phase != SyncPhase.SYNCING
+                Row(
+                    Modifier
+                        .toggleable(value = acceptedRecovery, enabled = recoveryEnabled, role = Role.Checkbox) { acceptedRecovery = it }
+                        .testTag("bitcoin-recovery-consent"),
+                ) {
+                    Checkbox(checked = acceptedRecovery, onCheckedChange = null, enabled = recoveryEnabled)
                     Text("I want to rescan full Bitcoin history", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
                 }
                 OutlinedButton(
@@ -726,8 +745,8 @@ internal fun WorkflowDialog(
                 if (type ==
                     "restore"
                 ) {
-                    Row {
-                        Checkbox(acceptedBackup, { acceptedBackup = it })
+                    Row(Modifier.toggleable(value = acceptedBackup, role = Role.Checkbox) { acceptedBackup = it }) {
+                        Checkbox(checked = acceptedBackup, onCheckedChange = null)
                         Text(
                             "Replace the current local portfolio after validating the backup",
                             Modifier.weight(1f).padding(top = 8.dp),
@@ -753,26 +772,11 @@ internal fun WorkflowDialog(
                                 error = "Confirm that this backup will replace the local portfolio."
                                 return@Button
                             }
-                            host.openFile { bytes ->
-                                if (bytes !=
-                                    null
-                                ) {
-                                    host.restoreBackup(bytes, password) { notify(it) }
-                                } else {
-                                    notify("No backup selected")
-                                }
-                            }
+                            host.restoreBackup(password) { notify(it) }
                             close()
                         }
                         else -> {
-                            execute("Backup ready") {
-                                val secret = password.toCharArray()
-                                try {
-                                    host.saveFile("polion-backup.polion", app.exportBackup(secret)) { notify(it) }
-                                } finally {
-                                    secret.fill('\u0000')
-                                }
-                            }
+                            host.saveBackup(password) { notify(it) }
                             close()
                         }
                     }
@@ -795,7 +799,7 @@ internal fun WorkflowDialog(
                     onClick = {
                         execute("Local portfolio data erased") {
                             app.wipe()
-                            host.setBackgroundRefresh(false)
+                            applyAutomaticRefresh(app, host, false)
                         }
                         close()
                     },
@@ -853,7 +857,9 @@ internal fun WorkflowDialog(
             }
             "reconcile" -> {
                 Text(
-                    "Links record an informational relationship between movements. They preserve source records and quantities, do not establish shared ownership, and do not assign an accounting treatment.",
+                    "Link a withdrawal from one of your accounts with the matching deposit into another, for example an exchange " +
+                        "withdrawal and the wallet that received it. Linked coins keep their original cost and age instead of " +
+                        "counting as a sale and a new purchase. Both records stay as they are, and a link can be removed.",
                     fontSize = 13.sp,
                 )
                 Text("Accepted relationships", fontWeight = FontWeight.SemiBold)
@@ -861,8 +867,8 @@ internal fun WorkflowDialog(
                 if (transfersLoaded && transferLinks.isEmpty()) Text("No accepted transfer relationships.")
                 transferLinks.forEach { link ->
                     HorizontalDivider()
-                    Text("Outgoing: ${link.outgoingActivity.value} · ${link.outgoingEvent.value}", fontSize = 11.sp)
-                    Text("Incoming: ${link.incomingActivity.value} · ${link.incomingEvent.value}", fontSize = 11.sp)
+                    Text("Out: ${summaries[link.outgoingActivity] ?: link.outgoingActivity.value}", fontSize = 12.sp)
+                    Text("In: ${summaries[link.incomingActivity] ?: link.incomingActivity.value}", fontSize = 12.sp)
                     TextButton(onClick = {
                         execute("Transfer link removed; decision marked rejected") {
                             app.setDecision(link.outgoingActivity, link.incomingActivity, LinkState.REJECTED)
@@ -878,7 +884,10 @@ internal fun WorkflowDialog(
                 if (transfersLoaded && transferConflicts.isEmpty()) Text("No transfer link conflicts.")
                 transferConflicts.forEach { conflict ->
                     HorizontalDivider()
-                    Text("${conflict.first.value} ↔ ${conflict.second.value}", fontSize = 11.sp)
+                    Text(
+                        "${summaries[conflict.first] ?: conflict.first.value} ↔ ${summaries[conflict.second] ?: conflict.second.value}",
+                        fontSize = 12.sp,
+                    )
                     Text("Unresolved: ${conflict.reason}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     TextButton(onClick = {
                         execute("Transfer decision rejected") {
@@ -895,10 +904,10 @@ internal fun WorkflowDialog(
                 if (transfersLoaded && candidates.isEmpty()) Text("No transfer candidates in the current history.")
                 candidates.take(50).forEach { candidate ->
                     HorizontalDivider()
-                    Text(candidate.first.value, fontSize = 11.sp)
-                    Text("↔ ${candidate.second.value}", fontSize = 11.sp)
+                    Text(summaries[candidate.first] ?: candidate.first.value, fontSize = 12.sp)
+                    Text("↔ ${summaries[candidate.second] ?: candidate.second.value}", fontSize = 12.sp)
                     Text(
-                        "Score ${candidate.score}${if (candidate.ambiguous) " · ambiguous; inspect source details" else ""}",
+                        "Match ${candidate.score}%${if (candidate.ambiguous) " · several possible matches; check the amounts and dates" else ""}",
                         fontSize = 12.sp,
                     )
                     Row {
@@ -941,9 +950,9 @@ private fun RuleEditor(
     var error by remember(existing) { mutableStateOf<String?>(null) }
     if (existing == null) Field("Rule ID", id) { id = it } else Text("Rule ID: ${existing.id}")
     Field("Priority", priority) { priority = it }
-    Row {
+    Row(Modifier.toggleable(value = enabled, role = Role.Switch) { enabled = it }.testTag("rule-enabled")) {
         Text("Enabled")
-        Switch(enabled, { enabled = it }, modifier = Modifier.testTag("rule-enabled"))
+        Switch(checked = enabled, onCheckedChange = null)
     }
     Choice(
         "Match original classification",
@@ -1111,6 +1120,7 @@ internal fun ActivityDialog(
 
 @Composable
 internal fun LockScreen(host: PlatformActions) {
+    var forgot by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -1131,8 +1141,52 @@ internal fun LockScreen(host: PlatformActions) {
                     if (result.success) password = ""
                 }
             }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Unlocking…" else "Unlock") }
+            if (remember { host.biometricUnlock() } == BiometricUnlock.ON) {
+                OutlinedButton(onClick = {
+                    busy = true
+                    error = null
+                    host.unlockWithBiometrics { result ->
+                        busy = false
+                        if (!result.success) error = result.message
+                    }
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth().testTag("lock-biometric")) { Text("Unlock with fingerprint") }
+            }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = { forgot = true }, enabled = !busy, modifier = Modifier.testTag("lock-forgot")) {
+                Text("Forgot password?")
+            }
         }
+    }
+    if (forgot) {
+        var typed by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { if (!busy) forgot = false },
+            title = { Text("Erase this device's Polion data?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "The password cannot be recovered. You can erase this device's Polion data and remove the lock, " +
+                            "then restore an encrypted backup if you have one. Funds on the blockchain are unaffected.",
+                    )
+                    OutlinedTextField(typed, { typed = it }, label = { Text("Type ERASE to confirm") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = typed == "ERASE" && !busy,
+                    onClick = {
+                        busy = true
+                        host.eraseAndRemoveLock { message ->
+                            busy = false
+                            forgot = false
+                            error = message.takeUnless { it.startsWith("Local data erased") }
+                        }
+                    },
+                    modifier = Modifier.testTag("lock-erase-confirm"),
+                ) { Text("Erase and remove lock") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { forgot = false }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -1190,7 +1244,7 @@ private fun FormDialog(
     }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
 }
 
-@Composable private fun <T> Choice(
+@Composable internal fun <T> Choice(
     label: String,
     choices: List<Pair<T, String>>,
     selected: T,
