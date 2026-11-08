@@ -23,7 +23,12 @@ class CoingeckoCatalog(
     val platforms: List<EvmPlatform>,
     /** Platform ID → lower-case contract → coin ID. */
     private val contracts: Map<String, Map<String, String>>,
+    /** Native coin ID → symbol and name. */
+    private val natives: Map<String, Pair<String, String>> = emptyMap(),
 ) {
+    /** The upper-case symbol and the name of a chain's native coin, when CoinGecko knows the chain. */
+    fun nativeLabel(chainId: Long): Pair<String, String>? = nativeCoin(chainId)?.let { natives[it] }
+
     private val byChain = platforms.associateBy { it.chainId }
 
     fun platform(chainId: Long): EvmPlatform? = byChain[chainId]
@@ -40,6 +45,7 @@ class CoingeckoCatalog(
         buildString {
             platforms.forEach { append("P\t${it.platformId}\t${it.chainId}\t${it.nativeCoinId.orEmpty()}\t${it.name}\n") }
             contracts.forEach { (platform, map) -> map.forEach { (contract, coin) -> append("C\t$platform\t$contract\t$coin\n") } }
+            natives.forEach { (coin, label) -> append("N\t$coin\t${label.first}\t${label.second}\n") }
         }
 
     companion object {
@@ -89,17 +95,45 @@ class CoingeckoCatalog(
             return seen.mapValues { (_, map) -> map.filterValues { it != null }.mapValues { it.value!! } }
         }
 
+        /** Symbols and names of the chains' native coins, from the same `/coins/list` payload. */
+        fun parseNatives(
+            payload: String,
+            platforms: List<EvmPlatform>,
+        ): Map<String, Pair<String, String>> {
+            val ids = platforms.mapNotNull { it.nativeCoinId }.toSet()
+            return Json
+                .parseToJsonElement(payload)
+                .jsonArray
+                .mapNotNull { element ->
+                    runCatching {
+                        val coin = element.jsonObject
+                        val id = coin.text("id")!!
+                        if (id !in ids) return@runCatching null
+                        val symbol =
+                            coin
+                                .text("symbol")!!
+                                .uppercase()
+                                .take(20)
+                                .filter { it.isLetterOrDigit() }
+                        val name = coin.text("name")!!.take(100).filter { it != '\t' && it != '\n' }
+                        if (symbol.isEmpty()) null else id to (symbol to name)
+                    }.getOrNull()
+                }.toMap()
+        }
+
         fun decode(text: String): CoingeckoCatalog {
             val platforms = mutableListOf<EvmPlatform>()
             val contracts = mutableMapOf<String, MutableMap<String, String>>()
+            val natives = mutableMapOf<String, Pair<String, String>>()
             text.lineSequence().filter { it.isNotEmpty() }.forEach { line ->
                 val parts = line.split('\t')
                 when (parts[0]) {
                     "P" -> platforms += EvmPlatform(parts[1], parts[2].toLong(), parts[4], parts[3].ifEmpty { null })
                     "C" -> contracts.getOrPut(parts[1]) { mutableMapOf() }[parts[2]] = parts[3]
+                    "N" -> natives[parts[1]] = parts[2] to parts[3]
                 }
             }
-            return CoingeckoCatalog(platforms, contracts)
+            return CoingeckoCatalog(platforms, contracts, natives)
         }
 
         private fun JsonObject.text(key: String): String? =

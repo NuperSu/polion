@@ -45,6 +45,7 @@ import io.polion.core.ledger.ActivityRepository
 import io.polion.core.ledger.ActivityStatus
 import io.polion.core.market.AssetDefinition
 import io.polion.core.market.AssetMetadata
+import io.polion.core.market.CoingeckoCatalog
 import io.polion.core.market.CoingeckoHistoricalResult
 import io.polion.core.market.CoingeckoMarkets
 import io.polion.core.market.CoingeckoPriceClient
@@ -358,6 +359,9 @@ class PortfolioApplication(
         io.polion.core.alerts
             .NotificationRepository(db)
     private val csvImports = CsvImportRepository(db)
+    private val evmChains =
+        io.polion.core.evm
+            .EvmChainRepository(db)
     private val assetLinks =
         io.polion.core.market
             .AssetLinkRepository(db)
@@ -529,24 +533,16 @@ class PortfolioApplication(
         val cached = marketFeeds.catalog()
         if (cached == null || now() - cached.first > 7 * 86_400_000L) {
             val key = coingeckoApiKey()
-            val platforms =
-                io.polion.core.market.CoingeckoCatalog.parsePlatforms(
-                    transport(
-                        baseUrl + io.polion.core.market.CoingeckoCatalog.PLATFORMS_PATH,
-                        key,
-                    ),
-                )
+            val platforms = CoingeckoCatalog.parsePlatforms(transport(baseUrl + CoingeckoCatalog.PLATFORMS_PATH, key))
             require(platforms.isNotEmpty()) { "CoinGecko returned no chains" }
-            val contracts =
-                io.polion.core.market.CoingeckoCatalog.parseContracts(
-                    transport(baseUrl + io.polion.core.market.CoingeckoCatalog.COINS_PATH, key),
+            val coins = transport(baseUrl + CoingeckoCatalog.COINS_PATH, key)
+            val catalog =
+                CoingeckoCatalog(
                     platforms,
+                    CoingeckoCatalog.parseContracts(coins, platforms),
+                    CoingeckoCatalog.parseNatives(coins, platforms),
                 )
-            marketFeeds.saveCatalog(
-                io.polion.core.market
-                    .CoingeckoCatalog(platforms, contracts),
-                now(),
-            )
+            marketFeeds.saveCatalog(catalog, now())
         }
         linkEvmAssets()
     }
@@ -1493,6 +1489,179 @@ class PortfolioApplication(
         db.transaction { activitiesToSave.filter { activities.currentById(it.id) != it }.forEach(activities::saveInTransaction) }
         invalidate()
         return jobs.map { orchestrator.status(it)?.state ?: JobState.FAILED }
+    }
+
+    /** The Blockscout API key; a device setting, not part of backups. */
+    fun blockscoutApiKey(): String? = marketFeeds.deviceSetting("blockscout_api_key")
+
+    fun setBlockscoutApiKey(key: String?) {
+        val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{10,100}"))) { "That does not look like a Blockscout API key" }
+        marketFeeds.putDeviceSetting("blockscout_api_key", trimmed)
+    }
+
+    /** EVM addresses are sent to Blockscout only after this consent. */
+    fun evmConsent(): Boolean = setting("evm_consent") == "true"
+
+    fun setEvmConsent(accepted: Boolean) = putSetting("evm_consent", accepted.toString())
+
+    /** Enabled EVM address targets with their accounts. */
+    fun evmTargets(): List<Pair<AccountId, String>> =
+        ownership
+            .load()
+            .targets
+            .filter { it.enabled && it.identity.networkId == io.polion.core.evm.EVM_FAMILY && it.identity.kind == "address" }
+            .map { it.accountId to it.identity.canonicalKey }
+
+    fun evmChainStates(address: String? = null): List<io.polion.core.evm.EvmChainState> = evmChains.states(address)
+
+    fun addEvmChains(
+        address: String,
+        chains: Collection<Long>,
+    ) = evmChains.addChains(
+        io.polion.core.evm
+            .evmAddress(address),
+        chains,
+    )
+
+    fun recordEvmChainError(
+        address: String,
+        chainId: Long,
+        message: String,
+    ) = evmChains.recordError(address, chainId, message)
+
+    /**
+     * Applies the complete history of [address] on one chain in one transaction: registers the assets it uses (native
+     * coins named from CoinGecko's catalog), records each transaction group as a raw provider record, saves changed
+     * activities, and supersedes activities the provider no longer reports (for example after a reorganisation).
+     */
+    fun applyEvmChainHistory(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        groups: List<io.polion.core.evm.EvmTransactionGroup>,
+        head: String,
+    ): Int {
+        require(evmConsent()) { "EVM consent required" }
+        require(evmTargets().any { it.first == account && it.second == address }) { "Unknown EVM address" }
+        val retrieved = now()
+        val catalog = marketFeeds.catalog()?.second
+        var saved = 0
+        db.transaction {
+            val known = market.assetIds().toSet()
+            groups.flatMap(io.polion.core.evm.EvmDecoder::assets).distinctBy { it.definition.id }.forEach { info ->
+                if (info.definition.id !in known) {
+                    val metadata =
+                        if (info.definition.identity.kind == io.polion.core.market.AssetKind.NATIVE) {
+                            catalog?.nativeLabel(chainId)?.let { (symbol, name) -> info.metadata.copy(symbol = symbol, name = name) }
+                                ?: info.metadata.copy(symbol = "COIN", name = "Native coin (chain $chainId)")
+                        } else {
+                            info.metadata
+                        }
+                    market.registerAssetInTransaction(info.definition, metadata)
+                }
+            }
+            val ids = mutableSetOf<ActivityId>()
+            groups.forEach { group ->
+                val payload = group.canonical()
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            "eip155:$chainId:${group.hash}",
+                            "eip155:$chainId",
+                            group.hash,
+                            "eip155:$chainId",
+                            "blockscout",
+                            Instant.fromEpochMilliseconds(retrieved).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val activity =
+                    io.polion.core.evm.EvmDecoder
+                        .decode(group, address, account, source) ?: return@forEach
+                ids += activity.id
+                if (activities.currentById(activity.id) != activity) {
+                    activities.saveInTransaction(activity)
+                    saved++
+                }
+            }
+            val prefix = "eip155:$chainId:"
+            activities
+                .current()
+                .filter { it.id.value.startsWith(prefix) && it.id.value.endsWith(":$address") && it.id !in ids }
+                .filter {
+                    it.status == io.polion.core.ledger.ActivityStatus.CONFIRMED ||
+                        it.status == io.polion.core.ledger.ActivityStatus.PENDING
+                }.forEach { activities.saveInTransaction(it.copy(status = io.polion.core.ledger.ActivityStatus.SUPERSEDED)) }
+            evmChains.recordSuccess(address, chainId, head, retrieved)
+        }
+        invalidate()
+        linkEvmAssets()
+        return saved
+    }
+
+    /**
+     * Compares this address's ledger balances on one chain with the provider's: the native balance and every token
+     * balance it lists. Returns and records the differences, or null when everything matches.
+     */
+    fun checkEvmBalances(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        native: io.polion.core.model.ExactInteger,
+        tokens: List<io.polion.core.evm.EvmTokenBalance>,
+    ): String? {
+        heldAssets()
+        val ledger =
+            holdings
+                .current(BalanceCoverage.UNKNOWN, now())
+                .quantities
+                .filterKeys {
+                    it.account == account &&
+                        io.polion.core.evm.EvmAssets
+                            .chainOf(it.asset) == chainId
+                }.mapKeys { it.key.asset }
+        val provider =
+            mapOf(
+                io.polion.core.evm.EvmAssets
+                    .native(chainId) to native,
+            ) +
+                tokens.associate { token ->
+                    val asset =
+                        if (token.standard == io.polion.core.evm.EvmTokenStandard.ERC20) {
+                            io.polion.core.evm.EvmAssets
+                                .token(chainId, token.contract)
+                        } else {
+                            io.polion.core.evm.EvmAssets.nft(
+                                chainId,
+                                token.contract,
+                                token.tokenId ?: io.polion.core.model.ExactInteger.ZERO,
+                            )
+                        }
+                    asset to token.value
+                }
+        val differences =
+            (ledger.keys + provider.keys)
+                .sortedBy { it.value }
+                .mapNotNull { asset ->
+                    val mine = ledger[asset] ?: io.polion.core.model.ExactInteger.ZERO
+                    val theirs = provider[asset] ?: io.polion.core.model.ExactInteger.ZERO
+                    // The provider's token list omits zero balances and NFTs it cannot index; only listed tokens and the native coin count.
+                    if (mine == theirs ||
+                        asset !in provider &&
+                        !asset.value.endsWith("/native")
+                    ) {
+                        null
+                    } else {
+                        "${asset.value}: ledger $mine, provider $theirs"
+                    }
+                }.joinToString("; ")
+                .ifEmpty { null }
+        evmChains.recordBalanceDifference(address, chainId, differences)
+        return differences
     }
 
     /**
@@ -3102,6 +3271,16 @@ class PortfolioApplication(
     private fun normalizeTarget(value: TrackingTarget): TrackingTarget =
         if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "address") {
             value.copy(identity = value.identity.copy(canonicalKey = bitcoinMainnetAddress(value.identity.canonicalKey)))
+        } else if (value.identity.networkId == io.polion.core.evm.EVM_FAMILY) {
+            require(value.identity.kind == "address" && value.role == TargetRole.LEAF) { "Track an EVM address as one address" }
+            value.copy(
+                identity =
+                    value.identity.copy(
+                        canonicalKey =
+                            io.polion.core.evm
+                                .evmAddress(value.identity.canonicalKey),
+                    ),
+            )
         } else if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "wallet") {
             require(value.role == TargetRole.WALLET && value.walletId == null) { "Invalid wallet target" }
             value.copy(identity = value.identity.copy(canonicalKey = bitcoinWallet(value.identity.canonicalKey).canonical))
