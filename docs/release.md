@@ -11,7 +11,8 @@ Polion 1.0.0 is a local-first, watch-only portfolio tracker for Android (8.0 and
 
 - **Bitcoin mainnet only**, watch-only. Accepted inputs: single addresses, mainnet `xpub` keys (native SegWit receive and change branches) and the descriptors `addr`, `pkh`, `wpkh` and `sh(wpkh)` with unhardened derivation. Legacy and nested-SegWit extended-key versions (`ypub`, `zpub`), Taproot descriptors and multipath syntax are not accepted; see [wallets](bitcoin-wallets.md). Key handling uses ACINQ's bitcoin-kmp with libsecp256k1.
 - **History provider:** an Esplora-compatible API. The default is blockstream.info, which fails over to mempool.space while it is unavailable. A custom endpoint is used alone and must answer as Bitcoin mainnet. Providers are trusted: Polion checks the consistency of what they return (block continuity, reorganisations, UTXO comparison), but cannot prove that a provider returned every transaction.
-- **Other sources:** CSV import of transactions in Polion's template, with explicit account, currency, fee and asset choices ([CSV import](csv-import.md)). Exchange connections and other networks are not available. New source families plug into the connector registry (`SourceConnector`), but none besides Bitcoin ships.
+- **EVM addresses** on Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mainnet, Gnosis, Celo and Ronin, through Alchemy with the user's free key. Coverage gaps are shown per chain; see [EVM](evm.md).
+- **Other sources:** CSV import of transactions in Polion's template, with explicit account, currency, fee and asset choices ([CSV import](csv-import.md)). Exchange connections and other networks are not available. New source families plug into the connector registry (`SourceConnector`); Bitcoin and EVM are registered.
 
 ## Prices and market data
 
