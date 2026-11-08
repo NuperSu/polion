@@ -977,6 +977,23 @@ class PortfolioApplication(
                 fun affectsSelection(activity: Activity) = ownerAssets(activity).any { it in selectedAssets }
 
                 val incompleteAssets = mutableSetOf<AssetId>()
+                // An accepted transfer link between two of this owner's accounts moves lots instead of disposing and
+                // re-acquiring them, when the outgoing side is a disposal and the incoming side an acquisition.
+                val byId = confirmed.associateBy { it.activity.id }
+                val linked =
+                    ledger().transferLinks.filter { link ->
+                        val out = byId[link.outgoingActivity]?.activity?.movements?.firstOrNull { it.id == link.outgoingEvent }
+                        val into = byId[link.incomingActivity]?.activity?.movements?.firstOrNull { it.id == link.incomingEvent }
+                        out != null &&
+                            into != null &&
+                            out.accountId in ownerAccounts &&
+                            into.accountId in ownerAccounts &&
+                            out.accountId != into.accountId &&
+                            treatments.load(link.outgoingActivity).any { it is Treatment.Dispose && it.movement == link.outgoingEvent } &&
+                            treatments.load(link.incomingActivity).any { it is Treatment.Acquire && it.movement == link.incomingEvent }
+                    }
+                val linkedOut = linked.associateBy { it.outgoingActivity to it.outgoingEvent }
+                val linkedIn = linked.map { it.incomingActivity to it.incomingEvent }.toSet()
                 confirmed.forEach { entry ->
                     val activity = entry.activity
                     try {
@@ -990,14 +1007,42 @@ class PortfolioApplication(
                             incompleteAssets.addAll(ownerAssets(activity))
                         } else {
                             val computed =
-                                LedgerAccounting.actions(activity, saved).filter { action ->
-                                    when (action) {
-                                        is io.polion.core.accounting.AccountingAction.Acquisition -> action.account in ownerAccounts
-                                        is io.polion.core.accounting.AccountingAction.Disposal -> action.account in ownerAccounts
-                                        is io.polion.core.accounting.AccountingAction.Transfer ->
-                                            action.from in ownerAccounts || action.to in ownerAccounts
+                                LedgerAccounting
+                                    .actions(activity, saved)
+                                    .flatMapIndexed { index, action ->
+                                        val treatment = saved[index]
+                                        val link = (treatment as? Treatment.Dispose)?.let { linkedOut[activity.id to it.movement] }
+                                        when {
+                                            link != null -> {
+                                                val out = activity.movements.first { it.id == link.outgoingEvent }
+                                                val into =
+                                                    byId.getValue(link.incomingActivity).activity.movements.first {
+                                                        it.id ==
+                                                            link.incomingEvent
+                                                    }
+                                                listOf(
+                                                    io.polion.core.accounting.AccountingAction.Transfer(
+                                                        activity.id,
+                                                        activity.occurredAtEpochMillis,
+                                                        action.order,
+                                                        out.accountId,
+                                                        into.accountId,
+                                                        into.amount.assetId,
+                                                        into.amount.atomicUnits,
+                                                    ),
+                                                )
+                                            }
+                                            treatment is Treatment.Acquire && (activity.id to treatment.movement) in linkedIn -> emptyList()
+                                            else -> listOf(action)
+                                        }
+                                    }.filter { action ->
+                                        when (action) {
+                                            is io.polion.core.accounting.AccountingAction.Acquisition -> action.account in ownerAccounts
+                                            is io.polion.core.accounting.AccountingAction.Disposal -> action.account in ownerAccounts
+                                            is io.polion.core.accounting.AccountingAction.Transfer ->
+                                                action.from in ownerAccounts || action.to in ownerAccounts
+                                        }
                                     }
-                                }
                             require(
                                 computed.all { action ->
                                     when (action) {
@@ -1155,6 +1200,30 @@ class PortfolioApplication(
     fun transferLinks(): List<TransferLink> = ledger().transferLinks
 
     fun transferLinkConflicts(): List<TransferLinkConflict> = ledger().transferLinkConflicts
+
+    /**
+     * A short description for review lists: the activity's UTC date and each movement as account, signed amount and
+     * symbol, for example "2026-01-20 · Exchange −0.1 BTC". Null for an unknown activity.
+     */
+    fun activitySummary(id: ActivityId): String? {
+        val activity = ledger().activities.firstOrNull { it.activity.id == id }?.activity ?: return null
+        val labels = ownership.load().accounts.associate { it.id to it.label }
+        val date =
+            kotlin.time.Instant
+                .fromEpochMilliseconds(activity.occurredAtEpochMillis)
+                .toString()
+                .take(10)
+        val movements =
+            activity.movements.joinToString(", ") { movement ->
+                val metadata = market.metadataAt(movement.amount.assetId, activity.occurredAtEpochMillis)
+                val units = movement.amount.atomicUnits
+                val amount =
+                    metadata?.let { ExactDecimal(units, it.decimals).toString().trimEnd('0').trimEnd('.') } ?: units.toString()
+                val signed = if (units.sign < 0) "−" + amount.removePrefix("-") else "+$amount"
+                "${labels[movement.accountId] ?: movement.accountId.value} $signed ${metadata?.symbol ?: movement.amount.assetId.value}"
+            }
+        return "$date · $movements"
+    }
 
     fun reconciliationCandidates(windowMillis: Long): List<ReconciliationCandidate> {
         val reviewedPairs = overlays.decisions().map { it.first to it.second }.toSet()

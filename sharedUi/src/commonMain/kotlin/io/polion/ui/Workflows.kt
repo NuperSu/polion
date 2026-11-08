@@ -148,6 +148,7 @@ internal fun WorkflowDialog(
     var priceMessage by remember { mutableStateOf<String?>(null) }
     var candidates by remember { mutableStateOf<List<ReconciliationCandidate>>(emptyList()) }
     var transferLinks by remember { mutableStateOf<List<TransferLink>>(emptyList()) }
+    var summaries by remember { mutableStateOf<Map<io.polion.core.model.ActivityId, String>>(emptyMap()) }
     var transferConflicts by remember { mutableStateOf<List<TransferLinkConflict>>(emptyList()) }
     var transfersLoaded by remember { mutableStateOf(false) }
     var selectedAccounts by remember { mutableStateOf(emptySet<AccountId>()) }
@@ -172,6 +173,12 @@ internal fun WorkflowDialog(
                 candidates = app.reconciliationCandidates(86_400_000)
                 transferLinks = app.transferLinks()
                 transferConflicts = app.transferLinkConflicts()
+                summaries =
+                    (
+                        candidates.take(50).flatMap { listOf(it.first, it.second) } +
+                            transferLinks.flatMap { listOf(it.outgoingActivity, it.incomingActivity) } +
+                            transferConflicts.flatMap { listOf(it.first, it.second) }
+                    ).distinct().mapNotNull { id -> app.activitySummary(id)?.let { id to it } }.toMap()
             }
             transfersLoaded = true
         }
@@ -842,7 +849,9 @@ internal fun WorkflowDialog(
             }
             "reconcile" -> {
                 Text(
-                    "Links record an informational relationship between movements. They preserve source records and quantities, do not establish shared ownership, and do not assign an accounting treatment.",
+                    "Link a withdrawal from one of your accounts with the matching deposit into another, for example an exchange " +
+                        "withdrawal and the wallet that received it. Linked coins keep their original cost and age instead of " +
+                        "counting as a sale and a new purchase. Both records stay as they are, and a link can be removed.",
                     fontSize = 13.sp,
                 )
                 Text("Accepted relationships", fontWeight = FontWeight.SemiBold)
@@ -850,8 +859,8 @@ internal fun WorkflowDialog(
                 if (transfersLoaded && transferLinks.isEmpty()) Text("No accepted transfer relationships.")
                 transferLinks.forEach { link ->
                     HorizontalDivider()
-                    Text("Outgoing: ${link.outgoingActivity.value} · ${link.outgoingEvent.value}", fontSize = 11.sp)
-                    Text("Incoming: ${link.incomingActivity.value} · ${link.incomingEvent.value}", fontSize = 11.sp)
+                    Text("Out: ${summaries[link.outgoingActivity] ?: link.outgoingActivity.value}", fontSize = 12.sp)
+                    Text("In: ${summaries[link.incomingActivity] ?: link.incomingActivity.value}", fontSize = 12.sp)
                     TextButton(onClick = {
                         execute("Transfer link removed; decision marked rejected") {
                             app.setDecision(link.outgoingActivity, link.incomingActivity, LinkState.REJECTED)
@@ -867,7 +876,10 @@ internal fun WorkflowDialog(
                 if (transfersLoaded && transferConflicts.isEmpty()) Text("No transfer link conflicts.")
                 transferConflicts.forEach { conflict ->
                     HorizontalDivider()
-                    Text("${conflict.first.value} ↔ ${conflict.second.value}", fontSize = 11.sp)
+                    Text(
+                        "${summaries[conflict.first] ?: conflict.first.value} ↔ ${summaries[conflict.second] ?: conflict.second.value}",
+                        fontSize = 12.sp,
+                    )
                     Text("Unresolved: ${conflict.reason}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     TextButton(onClick = {
                         execute("Transfer decision rejected") {
@@ -884,10 +896,10 @@ internal fun WorkflowDialog(
                 if (transfersLoaded && candidates.isEmpty()) Text("No transfer candidates in the current history.")
                 candidates.take(50).forEach { candidate ->
                     HorizontalDivider()
-                    Text(candidate.first.value, fontSize = 11.sp)
-                    Text("↔ ${candidate.second.value}", fontSize = 11.sp)
+                    Text(summaries[candidate.first] ?: candidate.first.value, fontSize = 12.sp)
+                    Text("↔ ${summaries[candidate.second] ?: candidate.second.value}", fontSize = 12.sp)
                     Text(
-                        "Score ${candidate.score}${if (candidate.ambiguous) " · ambiguous; inspect source details" else ""}",
+                        "Match ${candidate.score}%${if (candidate.ambiguous) " · several possible matches; check the amounts and dates" else ""}",
                         fontSize = 12.sp,
                     )
                     Row {

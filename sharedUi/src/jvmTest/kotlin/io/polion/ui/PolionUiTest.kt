@@ -960,10 +960,11 @@ class PolionUiTest {
                         WorkflowDialog("reconcile", data, app, host, { closed = true }, { _, operation -> operation() }, {}, { _, _ -> })
                     }
                     waitUntil(timeoutMillis = 10_000) {
-                        onAllNodesWithText("Outgoing: accepted-out · accepted-out-event").fetchSemanticsNodes().isNotEmpty()
+                        onAllNodesWithText("Out: ", substring = true).fetchSemanticsNodes().isNotEmpty()
                     }
-                    onNodeWithText("Outgoing: accepted-out · accepted-out-event").performScrollTo().assertIsDisplayed()
-                    onNodeWithText("Incoming: accepted-in · accepted-in-event").performScrollTo().assertIsDisplayed()
+                    // Rows describe each side by date, account and amount rather than internal IDs.
+                    onNodeWithText("Out: ", substring = true).performScrollTo().assertIsDisplayed()
+                    onNodeWithText("In: ", substring = true).performScrollTo().assertIsDisplayed()
                     onNodeWithText("Unresolved: activity inactive").performScrollTo().assertIsDisplayed()
                     onNodeWithTag("remove-transfer-accepted-out-accepted-in").performScrollTo().performClick()
                     onNodeWithText("No accepted transfer relationships.").performScrollTo().assertIsDisplayed()
