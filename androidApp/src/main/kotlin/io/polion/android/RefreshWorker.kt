@@ -71,17 +71,24 @@ class RefreshWorker(
                         val endpoint = app.sourceEndpoint()
                         val transport =
                             wrap(
-                                BlockstreamTransport(
-                                    endpoint,
-                                    onProgress = { detail ->
-                                        syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
-                                        onProgress(detail)
-                                    },
-                                    ensureActive = {
-                                        ensureActive()
-                                        if (!app.sourceConsent() || app.sourceEndpoint() != endpoint) {
-                                            throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
-                                        }
+                                io.polion.core.bitcoin.FailoverEsploraTransport(
+                                    io.polion.core.bitcoin.esploraEndpoints(endpoint).map { url ->
+                                        io.polion.core.bitcoin.EsploraEndpoint(
+                                            url,
+                                            BlockstreamTransport(
+                                                url,
+                                                onProgress = { detail ->
+                                                    syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
+                                                    onProgress(detail)
+                                                },
+                                                ensureActive = {
+                                                    ensureActive()
+                                                    if (!app.sourceConsent() || app.sourceEndpoint() != endpoint) {
+                                                        throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+                                                    }
+                                                },
+                                            ),
+                                        )
                                     },
                                 ),
                             )

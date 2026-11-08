@@ -1,5 +1,15 @@
 package io.polion.core.bitcoin
 
+/** mempool.space's public Esplora API, used only when the default endpoint is unavailable. */
+const val BACKUP_ENDPOINT = "https://mempool.space/api"
+
+/**
+ * Endpoints for a configured provider, in order of use. The default public endpoint fails over to [BACKUP_ENDPOINT]; a
+ * custom (often self-hosted) endpoint never does, so its addresses are not sent to a public provider.
+ */
+fun esploraEndpoints(configured: String): List<String> =
+    if (configured == io.polion.core.application.DEFAULT_ENDPOINT) listOf(configured, BACKUP_ENDPOINT) else listOf(configured)
+
 /** One Esplora-compatible endpoint; [id] is the provenance label recorded for responses it serves. */
 data class EsploraEndpoint(
     val id: String,

@@ -413,13 +413,20 @@ internal class DesktopHost(
         application: PortfolioApplication,
         endpoint: String = application.sourceEndpoint(),
     ): EsploraTransport =
-        BlockstreamTransport(
-            endpoint,
-            onProgress = { syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = it) },
-            ensureActive = {
-                if (closing.get() || !application.sourceConsent() || application.sourceEndpoint() != endpoint) {
-                    throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
-                }
+        io.polion.core.bitcoin.FailoverEsploraTransport(
+            io.polion.core.bitcoin.esploraEndpoints(endpoint).map { url ->
+                io.polion.core.bitcoin.EsploraEndpoint(
+                    url,
+                    BlockstreamTransport(
+                        url,
+                        onProgress = { syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = it) },
+                        ensureActive = {
+                            if (closing.get() || !application.sourceConsent() || application.sourceEndpoint() != endpoint) {
+                                throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
+                            }
+                        },
+                    ),
+                )
             },
         )
 

@@ -612,7 +612,9 @@ internal fun WorkflowDialog(
                     Text(syncStatus.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sync-error"))
                 }
                 Text(
-                    "Querying an indexer shares watched public addresses and your IP address with that provider. Choose an HTTPS Esplora endpoint you trust. No cloud account is required.",
+                    "Querying an indexer shares watched public addresses and your IP address with that provider. The default " +
+                        "blockstream.info falls back to mempool.space while it is unavailable; your own endpoint has no fallback. " +
+                        "Choose an HTTPS Esplora endpoint you trust. No cloud account is required.",
                     fontSize = 13.sp,
                 )
                 Field("Esplora API endpoint", address) { address = it }

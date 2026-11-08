@@ -53,10 +53,11 @@ internal val helpTopics =
             "Privacy",
             listOf(
                 "Polion has no account and no server; your data stays on this device.",
-                "The wallet provider (blockstream.info unless you set your own) learns the addresses you track and your " +
-                    "IP address. Kraken receives Bitcoin price requests and your IP address. CoinGecko receives your display " +
-                    "currency and IP address when market lists or price history load, and its image server sends coin " +
-                    "logos. Wallet addresses go only to the wallet provider.",
+                "The wallet provider learns the addresses you track and your IP address. By default that is " +
+                    "blockstream.info, with mempool.space used only while blockstream.info is unavailable; a provider you " +
+                    "set yourself is never replaced by another. Kraken receives Bitcoin price requests and your IP " +
+                    "address. CoinGecko receives your display currency and IP address when market lists or price history " +
+                    "load, and its image server sends coin logos. Wallet addresses go only to the wallet providers.",
             ),
         ),
         HelpTopic(
