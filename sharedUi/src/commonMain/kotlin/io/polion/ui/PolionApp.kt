@@ -281,14 +281,14 @@ private fun Product(
     var generalPreferences by remember(app) { mutableStateOf(GeneralPreferences()) }
     var biometric by remember(host) { mutableStateOf(host.biometricUnlock()) }
     var hasCoingeckoKey by remember(app) { mutableStateOf(false) }
-    var hasBlockscoutKey by remember(app) { mutableStateOf(false) }
+    var hasAlchemyKey by remember(app) { mutableStateOf(false) }
     var lockDelay by remember(host) { mutableStateOf(host.lockDelayMillis) }
     LaunchedEffect(app, dashboardRevision, revision) {
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
         marketFavorites = withContext(host.dispatcher) { app.marketFavorites() }
         generalPreferences = withContext(host.dispatcher) { app.generalPreferences() }
         hasCoingeckoKey = withContext(host.dispatcher) { app.coingeckoApiKey() != null }
-        hasBlockscoutKey = withContext(host.dispatcher) { app.blockscoutApiKey() != null }
+        hasAlchemyKey = withContext(host.dispatcher) { app.alchemyApiKey() != null }
         biometric = host.biometricUnlock()
     }
     // The saved landing page applies once per launch, and only if nothing has navigated away from Main yet.
@@ -862,11 +862,11 @@ private fun Product(
                                             },
                                         ) { app.setCoingeckoApiKey(key) }
                                     },
-                                    onBlockscoutKey = { key ->
-                                        val problem = withContext(host.dispatcher) { saveBlockscoutKey(app, key) }
+                                    onAlchemyKey = { key ->
+                                        val problem = withContext(host.dispatcher) { saveAlchemyKey(app, key) }
                                         if (problem == null) {
-                                            hasBlockscoutKey = key != null
-                                            presenter.notify(if (key == null) "Blockscout key removed" else "Blockscout key saved")
+                                            hasAlchemyKey = key != null
+                                            presenter.notify(if (key == null) "Alchemy key removed" else "Alchemy key saved")
                                         }
                                         problem
                                     },
@@ -884,7 +884,7 @@ private fun Product(
                                         biometric,
                                         hasCoingeckoKey,
                                         lockDelay,
-                                        hasBlockscoutKey = hasBlockscoutKey,
+                                        hasAlchemyKey = hasAlchemyKey,
                                     ),
                                 notifications = { NotificationSettingsSection(app, host) },
                                 csvImports = { CsvImportHistorySection(app, host, onChanged = { revision++ }) },

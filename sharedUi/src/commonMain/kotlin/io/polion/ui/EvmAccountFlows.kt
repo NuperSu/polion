@@ -57,12 +57,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Instant
 
-/** Chains preselected when the catalog lists them: Ethereum, Base, Arbitrum One, OP Mainnet, Polygon and BNB Smart Chain. */
-internal val DEFAULT_EVM_CHAIN_IDS: List<Long> = listOf(1L, 8453L, 42161L, 10L, 137L, 56L)
+/** Chains preselected in the connect flow: Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One and OP Mainnet. */
+internal val DEFAULT_EVM_CHAIN_IDS: List<Long> = listOf(1L, 56L, 8453L, 137L, 42161L, 10L)
 
-/** Explains the Blockscout key in Settings and in the connect flow. */
-internal const val BLOCKSCOUT_KEY_HELP =
-    "Free key from dev.blockscout.com. Polion uses it to read the history of EVM addresses (Ethereum, Base, Arbitrum and other chains). Stays on this device."
+/** Explains the Alchemy key in Settings and in the connect flow. */
+internal const val ALCHEMY_KEY_HELP =
+    "Free key from alchemy.com (create an app, then enable the networks you use, such as BNB Smart Chain, Base and Polygon). " +
+        "Polion reads the history of EVM addresses with it. Stays on this device."
 
 private const val EVM_REPLY_WAIT_MILLIS = 3_000L
 
@@ -92,64 +93,34 @@ internal fun evmSyncTime(millis: Long): String =
         .replace('T', ' ') + " UTC"
 
 /**
- * Stores or removes the Blockscout key and returns the core's message when it is rejected, otherwise null. Call on the
+ * Stores or removes the Alchemy key and returns the core's message when it is rejected, otherwise null. Call on the
  * host dispatcher.
  */
-internal fun saveBlockscoutKey(
+internal fun saveAlchemyKey(
     app: PortfolioApplication,
     key: String?,
 ): String? =
     try {
-        app.setBlockscoutApiKey(key)
+        app.setAlchemyApiKey(key)
         null
     } catch (rejected: IllegalArgumentException) {
-        rejected.message ?: "That does not look like a Blockscout API key."
+        rejected.message ?: "That does not look like an Alchemy API key."
     }
 
-/** Chain list for the pickers. [choices] is null until the cached catalog has been read. */
-internal data class EvmCatalog(
-    val choices: List<EvmPlatform>?,
-    val loading: Boolean,
-    /** Why the list is missing: market data is off, or CoinGecko could not be reached. Null when the list is loaded. */
-    val notice: String?,
-)
-
-/**
- * Reads the cached chain catalog. When it is missing and [fetchIfMissing] is set, asks the host to load it, which needs
- * market data consent.
- */
+/** The chains Alchemy serves, read on the host dispatcher. Names come from CoinGecko when its catalog is cached. */
 @Composable
-internal fun rememberEvmCatalog(
+internal fun rememberEvmChainChoices(
     app: PortfolioApplication,
     host: PlatformActions,
-    fetchIfMissing: Boolean = true,
-): EvmCatalog {
-    val scope = rememberCoroutineScope()
-    var choices by remember(app) { mutableStateOf<List<EvmPlatform>?>(null) }
-    var loading by remember(app) { mutableStateOf(false) }
-    var notice by remember(app) { mutableStateOf<String?>(null) }
-    LaunchedEffect(app) {
-        val cached = withContext(host.dispatcher) { app.evmChainChoices() }
-        choices = cached
-        if (cached.isEmpty() && fetchIfMissing) {
-            if (withContext(host.dispatcher) { app.marketDataConsent() }) {
-                loading = true
-                host.refreshEvmCatalog { message ->
-                    loading = false
-                    notice = message
-                    scope.launch { choices = withContext(host.dispatcher) { app.evmChainChoices() } }
-                }
-            } else {
-                notice = "Turn on market data on Main to list chains."
-            }
-        }
-    }
-    return EvmCatalog(choices, loading || choices == null, notice)
+): List<EvmPlatform> {
+    var choices by remember(app) { mutableStateOf<List<EvmPlatform>>(emptyList()) }
+    LaunchedEffect(app) { choices = withContext(host.dispatcher) { app.evmChainChoices() } }
+    return choices
 }
 
-/** Blockscout key status and entry, shared by Settings and the connect flow. [save] returns the rejection message or null. */
+/** Alchemy key status and entry, shared by Settings and the connect flow. [save] returns the rejection message or null. */
 @Composable
-internal fun BlockscoutKeyDialog(
+internal fun AlchemyKeyDialog(
     hasKey: Boolean,
     save: suspend (String?) -> String?,
     close: () -> Unit,
@@ -169,10 +140,10 @@ internal fun BlockscoutKeyDialog(
     }
     AlertDialog(
         onDismissRequest = { if (!busy) close() },
-        title = { Text("Blockscout API key") },
+        title = { Text("Alchemy API key") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(BLOCKSCOUT_KEY_HELP)
+                Text(ALCHEMY_KEY_HELP)
                 OutlinedTextField(
                     key,
                     {
@@ -182,18 +153,18 @@ internal fun BlockscoutKeyDialog(
                     singleLine = true,
                     enabled = !busy,
                     isError = error != null,
-                    label = { Text("Blockscout API key") },
+                    label = { Text("Alchemy API key") },
                     visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth().testTag("blockscout-key-field"),
+                    modifier = Modifier.fillMaxWidth().testTag("alchemy-key-field"),
                 )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("blockscout-key-error")) }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("alchemy-key-error")) }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = key.isNotBlank() && !busy,
                 onClick = { submit(key.trim()) },
-                modifier = Modifier.testTag("blockscout-key-save"),
+                modifier = Modifier.testTag("alchemy-key-save"),
             ) { Text("Save") }
         },
         dismissButton = {
@@ -202,7 +173,7 @@ internal fun BlockscoutKeyDialog(
                     TextButton(
                         enabled = !busy,
                         onClick = { submit(null) },
-                        modifier = Modifier.testTag("blockscout-key-remove"),
+                        modifier = Modifier.testTag("alchemy-key-remove"),
                     ) { Text("Remove") }
                 }
                 TextButton(enabled = !busy, onClick = close) { Text("Cancel") }
@@ -242,24 +213,19 @@ internal fun WalletKindDialog(
 }
 
 /**
- * Searchable multi-select of EVM chains. [locked] chains are already tracked for the address and cannot be unticked.
- * A chain number the catalog does not list can be added by hand, so the picker works without the catalog.
+ * Searchable multi-select of the chains Alchemy serves. [locked] chains are already tracked for the address and cannot be
+ * unticked.
  */
 @Composable
 internal fun EvmChainPicker(
-    catalog: EvmCatalog,
+    choices: List<EvmPlatform>,
     selected: Set<Long>,
     locked: Set<Long>,
     enabled: Boolean,
     onToggle: (Long) -> Unit,
 ) {
-    val choices = catalog.choices.orEmpty()
     var query by rememberSaveable { mutableStateOf("") }
-    var number by rememberSaveable { mutableStateOf("") }
-    var numberError by remember { mutableStateOf<String?>(null) }
     Text("Chains", style = MaterialTheme.typography.titleSmall)
-    if (catalog.loading) Text("Loading chains…", modifier = Modifier.testTag("evm-chains-loading"))
-    catalog.notice?.let { Text(it, modifier = Modifier.testTag("evm-chains-notice")) }
     if (choices.isNotEmpty()) {
         OutlinedTextField(
             query,
@@ -272,16 +238,13 @@ internal fun EvmChainPicker(
     }
     val needle = query.trim()
     val listed =
-        choices
-            .filter { it.name.contains(needle, ignoreCase = true) || it.chainId.toString().startsWith(needle) }
-            .map { it.chainId to it.name }
-    // Chains chosen by number that the catalog does not list.
-    val typed = selected.filter { id -> choices.none { it.chainId == id } }.sorted().map { it to "Chain $it" }
+        choices.filter { it.name.contains(needle, ignoreCase = true) || it.chainId.toString().startsWith(needle) }
     Column(
         Modifier.fillMaxWidth().heightIn(max = 280.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        (listed + typed).forEach { (id, name) ->
+        listed.forEach { choice ->
+            val id = choice.chainId
             val checked = id in selected
             val locking = id in locked
             Row(
@@ -294,7 +257,7 @@ internal fun EvmChainPicker(
             ) {
                 Checkbox(checked = checked, onCheckedChange = null, enabled = enabled && !locking)
                 Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                    Text(name)
+                    Text(choice.name)
                     Text("Chain ID $id", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (locking) Text("Tracked", style = MaterialTheme.typography.bodySmall)
@@ -302,37 +265,10 @@ internal fun EvmChainPicker(
         }
     }
     if (choices.isNotEmpty() && listed.isEmpty()) Text("No chain matches \"$needle\"")
-    if (enabled) {
-        OutlinedTextField(
-            number,
-            {
-                number = it
-                numberError = null
-            },
-            singleLine = true,
-            label = { Text("Chain number") },
-            isError = numberError != null,
-            supportingText = { numberError?.let { Text(it) } },
-            modifier = Modifier.fillMaxWidth().testTag("evm-chain-number"),
-        )
-        OutlinedButton(
-            enabled = number.isNotBlank(),
-            onClick = {
-                val id = number.trim().toLongOrNull()?.takeIf { it > 0 }
-                if (id == null) {
-                    numberError = "Enter a chain number, like 8453 for Base."
-                } else {
-                    if (id !in selected) onToggle(id)
-                    number = ""
-                }
-            },
-            modifier = Modifier.testTag("evm-chain-add-number"),
-        ) { Text("Add chain number") }
-    }
 }
 
 /**
- * Track an EVM address: account name, address, Blockscout key, chains and consent. Saves the account and its chains,
+ * Track an EVM address: account name, address, Alchemy key, chains and consent. Saves the account and its chains,
  * then refreshes history and closes when the refresh succeeds.
  */
 @Composable
@@ -347,14 +283,13 @@ internal fun EvmConnectDialog(
     syncStatus: SyncStatus = SyncStatus(),
 ) {
     val scope = rememberCoroutineScope()
-    val catalog = rememberEvmCatalog(app, host)
+    val choices = rememberEvmChainChoices(app, host)
     var label by rememberSaveable { mutableStateOf("") }
     var address by rememberSaveable { mutableStateOf("") }
     var portfolio by rememberSaveable { mutableStateOf(initialPortfolio?.value.orEmpty()) }
     var owner by rememberSaveable { mutableStateOf("") }
     var consent by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(DEFAULT_EVM_CHAIN_IDS.toSet()) }
-    var chainsTouched by remember { mutableStateOf(false) }
     var keyPresent by remember { mutableStateOf<Boolean?>(null) }
     var keyDialog by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -380,24 +315,17 @@ internal fun EvmConnectDialog(
         when {
             label.isBlank() -> "Enter an account name."
             canonical == null -> "Enter a valid EVM address."
-            keyPresent != true -> "Add a Blockscout key first. Blockscout reads the address history."
+            keyPresent != true -> "Add an Alchemy key first. Alchemy reads the address history."
             selected.isEmpty() -> "Choose at least one chain."
             owners.isNotEmpty() && ownerChoice == null -> "No owner in this portfolio can hold the address. Choose another portfolio."
-            !consent -> "Tick the consent box to let Blockscout read this address."
+            !consent -> "Tick the consent box to let Alchemy read this address."
             else -> null
         }
 
     LaunchedEffect(Unit) {
-        val (hasKey, consented) = withContext(host.dispatcher) { (app.blockscoutApiKey() != null) to app.evmConsent() }
+        val (hasKey, consented) = withContext(host.dispatcher) { (app.alchemyApiKey() != null) to app.evmConsent() }
         keyPresent = hasKey
         consent = consented
-    }
-    // Once the catalog loads, only default chains it lists stay ticked. Until then the defaults are ticked by number.
-    LaunchedEffect(catalog.choices) {
-        val choices = catalog.choices
-        if (!chainsTouched && !choices.isNullOrEmpty()) {
-            selected = DEFAULT_EVM_CHAIN_IDS.filter { id -> choices.any { it.chainId == id } }.toSet()
-        }
     }
     LaunchedEffect(hostReply, refresh == null) {
         replyUnanswered = false
@@ -502,20 +430,19 @@ internal fun EvmConnectDialog(
         canonical?.let { Text("Address: ${eip55(it)}", style = MaterialTheme.typography.bodySmall) }
         Text("Public address only. Never enter a private key or recovery phrase.")
         when (keyPresent) {
-            true -> Text("Blockscout key: added on this device.", modifier = Modifier.testTag("evm-key-status"))
+            true -> Text("Alchemy key: added on this device.", modifier = Modifier.testTag("evm-key-status"))
             false -> {
                 Text(
-                    "Blockscout reads address history and needs a free key. Add one here, or later under Settings, then API Keys.",
+                    "Alchemy reads address history and needs a free key. Add one here, or later under Settings, then API Keys.",
                     modifier = Modifier.testTag("evm-key-status"),
                 )
                 OutlinedButton(enabled = editable, onClick = { keyDialog = true }, modifier = Modifier.testTag("evm-key-add")) {
-                    Text("Add Blockscout key")
+                    Text("Add Alchemy key")
                 }
             }
             null -> Unit
         }
-        EvmChainPicker(catalog, selected, locked = emptySet(), enabled = editable) { id ->
-            chainsTouched = true
+        EvmChainPicker(choices, selected, locked = emptySet(), enabled = editable) { id ->
             selected = if (id in selected) selected - id else selected + id
         }
         TransactionChoice(
@@ -534,7 +461,7 @@ internal fun EvmConnectDialog(
         ) {
             Checkbox(checked = consent, onCheckedChange = null, enabled = editable)
             Spacer(Modifier.width(4.dp))
-            Text("Allow Blockscout to receive this address and your IP address to read its history.", Modifier.weight(1f))
+            Text("Allow Alchemy to receive this address and your IP address to read its history.", Modifier.weight(1f))
         }
         if (!requested) {
             blocker?.let { Text(it, modifier = Modifier.testTag("evm-connect-blocker")) }
@@ -564,10 +491,10 @@ internal fun EvmConnectDialog(
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("evm-connect-error")) }
     }
     if (keyDialog) {
-        BlockscoutKeyDialog(
+        AlchemyKeyDialog(
             hasKey = keyPresent == true,
             save = { key ->
-                val problem = withContext(host.dispatcher) { saveBlockscoutKey(app, key) }
+                val problem = withContext(host.dispatcher) { saveAlchemyKey(app, key) }
                 if (problem == null) keyPresent = key != null
                 problem
             },
@@ -587,7 +514,7 @@ internal fun EvmAddressDetails(
     revision: Long,
     onChanged: () -> Unit,
 ) {
-    val catalog = rememberEvmCatalog(app, host, fetchIfMissing = false)
+    val choices = rememberEvmChainChoices(app, host)
     var states by remember(address) { mutableStateOf<List<EvmChainState>>(emptyList()) }
     var expanded by remember(address) { mutableStateOf(emptySet<Long>()) }
     var adding by remember(address) { mutableStateOf(false) }
@@ -600,7 +527,7 @@ internal fun EvmAddressDetails(
         states.forEach { state ->
             val open = state.chainId in expanded
             Column(Modifier.fillMaxWidth().testTag("evm-chain-state-${state.chainId}")) {
-                Text(evmChainName(catalog.choices.orEmpty(), state.chainId), fontWeight = FontWeight.SemiBold)
+                Text(evmChainName(choices, state.chainId), fontWeight = FontWeight.SemiBold)
                 Text(
                     "Last sync: ${state.lastSuccessMillis?.let { evmSyncTime(it) } ?: "not yet"}",
                     style = MaterialTheme.typography.bodySmall,
@@ -609,9 +536,9 @@ internal fun EvmAddressDetails(
                 val status =
                     when {
                         error != null -> error
-                        state.balanceDifference != null -> "Balance differs from Blockscout"
+                        state.balanceDifference != null -> "Balance differs from Alchemy"
                         state.lastSuccessMillis == null -> "Not synced yet"
-                        else -> "Balances match Blockscout"
+                        else -> "Balances match Alchemy"
                     }
                 Text(
                     status,
@@ -626,6 +553,14 @@ internal fun EvmAddressDetails(
                     ) { Text(if (open) "Hide difference" else "Show difference") }
                     if (open) Text(state.balanceDifference.orEmpty(), style = MaterialTheme.typography.bodySmall)
                 }
+                state.coverage?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("evm-coverage-${state.chainId}"),
+                    )
+                }
             }
         }
         TextButton(onClick = { adding = true }, modifier = Modifier.testTag("evm-add-chains")) { Text("Add chains") }
@@ -634,7 +569,7 @@ internal fun EvmAddressDetails(
         AddEvmChainsDialog(
             app = app,
             host = host,
-            catalog = catalog,
+            choices = choices,
             address = address,
             tracked = states.map { it.chainId }.toSet(),
             close = { adding = false },
@@ -651,7 +586,7 @@ internal fun EvmAddressDetails(
 private fun AddEvmChainsDialog(
     app: PortfolioApplication,
     host: PlatformActions,
-    catalog: EvmCatalog,
+    choices: List<EvmPlatform>,
     address: String,
     tracked: Set<Long>,
     close: () -> Unit,
@@ -664,7 +599,7 @@ private fun AddEvmChainsDialog(
     val added = selected - tracked
     AccountFlowDialog("Add chains", busy, close) {
         Text("Address ${shortEvmAddress(address)}. Chains already tracked stay as they are.")
-        EvmChainPicker(catalog, selected, locked = tracked, enabled = !busy) { id ->
+        EvmChainPicker(choices, selected, locked = tracked, enabled = !busy) { id ->
             selected = if (id in selected) selected - id else selected + id
         }
         Text("History for new chains loads on the next refresh.", style = MaterialTheme.typography.bodySmall)

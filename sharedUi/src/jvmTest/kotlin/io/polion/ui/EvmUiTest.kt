@@ -17,6 +17,7 @@ import io.polion.core.application.AssetValuation
 import io.polion.core.application.PortfolioApplication
 import io.polion.core.evm.EvmAssets
 import io.polion.core.evm.eip55
+import io.polion.core.evm.evmAddress
 import io.polion.core.evm.evmNetwork
 import io.polion.core.ledger.Activity
 import io.polion.core.ledger.ActivityKind
@@ -62,7 +63,7 @@ class EvmUiTest {
             try {
                 val host = EvmTestHost(executor.asCoroutineDispatcher())
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.setBlockscoutApiKey("blockscout-test-key")
+                app.setAlchemyApiKey("alchemy-test-key-123")
                 val good = eip55("0x$address")
                 val bad = mistyped(good)
                 runDesktopComposeUiTest(width = 800, height = 1400) {
@@ -77,7 +78,9 @@ class EvmUiTest {
                     assertTrue(onAllNodesWithTag("evm-connect-address-error", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
                     waitUntil(
                         timeoutMillis = 10_000,
-                    ) { onAllNodesWithText("Blockscout key: added on this device.").fetchSemanticsNodes().isNotEmpty() }
+                    ) { onAllNodesWithText("Alchemy key: added on this device.").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("evm-chain-1").assertIsDisplayed()
+                    assertTrue(onAllNodesWithTag("evm-chain-number").fetchSemanticsNodes().isEmpty())
                     onNodeWithTag("evm-connect-consent").performClick()
                     onNodeWithTag("evm-connect-confirm").performClick()
                     waitUntil(timeoutMillis = 10_000) { app.evmTargets().isNotEmpty() }
@@ -94,7 +97,7 @@ class EvmUiTest {
     }
 
     @Test
-    fun blockscoutKeyRowSavesAndRejectsThroughSettings() {
+    fun alchemyKeyRowSavesAndRejectsThroughSettings() {
         JvmSqliteDatabase(":memory:").use { db ->
             val executor = Executors.newSingleThreadExecutor()
             try {
@@ -113,7 +116,7 @@ class EvmUiTest {
                         onLockNow = {},
                         onRemoveLock = {},
                         onSetup = {},
-                        onBlockscoutKey = { key -> withContext(dispatcher) { saveBlockscoutKey(app, key) } },
+                        onAlchemyKey = { key -> withContext(dispatcher) { saveAlchemyKey(app, key) } },
                     )
                 runDesktopComposeUiTest(width = 390, height = 1600) {
                     setContent {
@@ -134,15 +137,41 @@ class EvmUiTest {
                         }
                     }
                     onNodeWithTag("settings-keys").performClick()
-                    onNodeWithTag("settings-blockscout-key").performClick()
-                    onNodeWithTag("blockscout-key-field").performTextInput("short")
-                    onNodeWithTag("blockscout-key-save").performClick()
-                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("blockscout-key-error").fetchSemanticsNodes().isNotEmpty() }
-                    assertEquals(null, app.blockscoutApiKey())
-                    onNodeWithTag("blockscout-key-field").performTextReplacement("blockscout-test-key-123")
-                    onNodeWithTag("blockscout-key-save").performClick()
-                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("blockscout-key-field").fetchSemanticsNodes().isEmpty() }
-                    assertEquals("blockscout-test-key-123", app.blockscoutApiKey())
+                    onNodeWithTag("settings-alchemy-key").performClick()
+                    onNodeWithTag("alchemy-key-field").performTextInput("short")
+                    onNodeWithTag("alchemy-key-save").performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("alchemy-key-error").fetchSemanticsNodes().isNotEmpty() }
+                    assertEquals(null, app.alchemyApiKey())
+                    onNodeWithTag("alchemy-key-field").performTextReplacement("alchemy-test-key-123")
+                    onNodeWithTag("alchemy-key-save").performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("alchemy-key-field").fetchSemanticsNodes().isEmpty() }
+                    assertEquals("alchemy-test-key-123", app.alchemyApiKey())
+                }
+            } finally {
+                executor.shutdown()
+            }
+        }
+    }
+
+    @Test
+    fun chainStatusShowsCoverageNoteUnderItsChainOnly() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val host = EvmTestHost(executor.asCoroutineDispatcher())
+                val app = PortfolioApplication(db) { 1_800_000_000_000L }
+                val tracked = evmAddress("0x$address")
+                val note = "1 sent transaction not listed by Alchemy (for example approvals); their fees are not counted"
+                app.addEvmChains(tracked, listOf(1L, 8453L))
+                app.recordEvmCoverage(tracked, 8453L, note)
+                runDesktopComposeUiTest(width = 800, height = 1000) {
+                    setContent {
+                        EvmAddressDetails(app, host, tracked, revision = 0L, onChanged = {})
+                    }
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("evm-chain-state-8453").fetchSemanticsNodes().isNotEmpty() }
+                    onNodeWithTag("evm-coverage-8453").assertIsDisplayed()
+                    onNodeWithText(note).assertIsDisplayed()
+                    assertTrue(onAllNodesWithTag("evm-coverage-1").fetchSemanticsNodes().isEmpty())
                 }
             } finally {
                 executor.shutdown()

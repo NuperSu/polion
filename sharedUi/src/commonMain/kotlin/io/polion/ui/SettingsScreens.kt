@@ -57,7 +57,7 @@ internal class SettingsActions(
     /** Null removes the key. */
     val onCoingeckoKey: (String?) -> Unit = {},
     /** Null removes the key. Returns the rejection message, or null when the key was saved or removed. */
-    val onBlockscoutKey: suspend (String?) -> String? = { null },
+    val onAlchemyKey: suspend (String?) -> String? = { null },
     val onLockDelay: (Long) -> Unit = {},
 )
 
@@ -67,7 +67,7 @@ internal data class SettingsDevice(
     val biometric: BiometricUnlock = BiometricUnlock.UNSUPPORTED,
     val hasCoingeckoKey: Boolean = false,
     val lockDelayMillis: Long = 0L,
-    val hasBlockscoutKey: Boolean = false,
+    val hasAlchemyKey: Boolean = false,
 )
 
 private fun lockDelayLabel(millis: Long) =
@@ -261,15 +261,15 @@ internal fun ColumnScope.ProductSettings(
                     },
                 )
             }
-            var editingBlockscout by remember { mutableStateOf(false) }
+            var editingAlchemy by remember { mutableStateOf(false) }
             SettingsValueRow(
-                "Blockscout",
-                if (device.hasBlockscoutKey) "Set" else "Not set",
-                tag = "settings-blockscout-key",
-            ) { editingBlockscout = true }
-            SettingsNote(BLOCKSCOUT_KEY_HELP)
-            if (editingBlockscout) {
-                BlockscoutKeyDialog(device.hasBlockscoutKey, actions.onBlockscoutKey) { editingBlockscout = false }
+                "Alchemy",
+                if (device.hasAlchemyKey) "Set" else "Not set",
+                tag = "settings-alchemy-key",
+            ) { editingAlchemy = true }
+            SettingsNote(ALCHEMY_KEY_HELP)
+            if (editingAlchemy) {
+                AlchemyKeyDialog(device.hasAlchemyKey, actions.onAlchemyKey) { editingAlchemy = false }
             }
         }
         "security" -> {
