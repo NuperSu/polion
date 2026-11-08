@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -18,14 +20,29 @@ android {
         targetCompatibility = JavaVersion.VERSION_25
     }
     sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin"))
+    val releaseSigning =
+        providers
+            .gradleProperty("polion.signing")
+            .orElse(System.getProperty("user.home") + "/.config/polion-release/signing.properties")
+            .map { file(it) }
+            .get()
+    if (releaseSigning.isFile) {
+        val values = Properties().apply { releaseSigning.inputStream().use { load(it) } }
+        signingConfigs.create("release") {
+            storeFile = file(values.getProperty("storeFile"))
+            storePassword = values.getProperty("storePassword")
+            keyAlias = values.getProperty("keyAlias")
+            keyPassword = values.getProperty("keyPassword")
+        }
+    }
     buildTypes {
         release {
             // R8 removes Compose's debug overhead; without it the UI runs several times slower than shipped builds.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Local release builds use the debug key so they install over development builds. Store signing is part of L7.
-            signingConfig = signingConfigs.getByName("debug")
+            // The release key lives outside the repository; without it (CI, other machines) release builds use the debug key.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     buildFeatures { compose = true }
