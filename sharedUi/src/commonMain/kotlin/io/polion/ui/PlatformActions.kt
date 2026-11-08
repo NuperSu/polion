@@ -94,6 +94,17 @@ interface PlatformActions {
         onResult: (String) -> Unit,
     )
 
+    /**
+     * Asks for a text file, such as a CSV export, and reads it in the background. [onResult] runs on the main thread with
+     * the file name and text, or with null text when the user cancelled, the file is over [maxChars] or is not UTF-8 text.
+     */
+    fun openTextFile(
+        maxChars: Int,
+        onResult: (name: String, text: String?) -> Unit,
+    ) {
+        onResult("", null)
+    }
+
     /** Asks where to save, then streams an encrypted backup there in the background. */
     fun saveBackup(
         password: String,

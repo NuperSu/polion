@@ -65,3 +65,9 @@ internal expect fun chartTime(
     millis: Long,
     spanMillis: Long,
 ): String
+
+/** Epoch milliseconds for a date and time in the device's time zone; a time skipped by a clock change moves forward. */
+internal expect fun localToEpochMillis(stamp: io.polion.core.application.LocalStamp): Long
+
+/** The device's time zone name, for example "Europe/Berlin". */
+internal expect fun localZoneName(): String

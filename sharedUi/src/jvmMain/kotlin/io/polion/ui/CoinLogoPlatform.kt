@@ -25,3 +25,12 @@ internal actual fun chartTime(
         .withZone(java.time.ZoneId.systemDefault())
         .format(java.time.Instant.ofEpochMilli(millis))
 }
+
+internal actual fun localToEpochMillis(stamp: io.polion.core.application.LocalStamp): Long =
+    java.time.LocalDateTime
+        .of(stamp.year, stamp.month, stamp.day, stamp.hour, stamp.minute, stamp.second)
+        .atZone(java.time.ZoneId.systemDefault())
+        .toInstant()
+        .toEpochMilli()
+
+internal actual fun localZoneName(): String = java.time.ZoneId.systemDefault().id
