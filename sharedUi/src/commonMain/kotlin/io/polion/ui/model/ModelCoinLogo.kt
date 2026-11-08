@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,8 +51,11 @@ fun ModelCoinLogo(
 ) {
     val source = LocalCoinLogos.current
     val url = source?.urls?.get(coin.id)
-    val image by produceState(url?.let { source.cached(it) }, url) {
-        if (url != null && value == null) value = source.load(url)
+    // The state is keyed by URL: a reused row (a list reordering) must never keep the previous coin's image.
+    val image by key(url) {
+        produceState(url?.let { source.cached(it) }, url) {
+            if (url != null && value == null) value = source.load(url)
+        }
     }
     image?.let {
         Image(it, contentDescription = null, modifier = Modifier.size(size.dp).clip(CircleShape))
