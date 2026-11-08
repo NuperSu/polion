@@ -57,6 +57,49 @@ class BlockscoutTest {
         )
     }
 
+    @Test fun withdrawalsAreInWeiAndDecodeAsIncomingNativeCoin() {
+        val withdrawal = Blockscout.parseWithdrawals(fixture("withdrawals.json")).items.single()
+        // Block 26371286 on an Ethereum node reports this withdrawal as 65442402 gwei; Blockscout gives wei.
+        assertEquals("65442402000000000", withdrawal.amount.toString())
+        assertEquals(149381210L, withdrawal.index)
+        val receiver = "0x92ee85cdb56abbe7c2e53b62d28f1ba4d6726f46"
+        assertEquals(receiver, withdrawal.receiver)
+        val activity =
+            EvmDecoder.decodeWithdrawal(
+                1,
+                withdrawal,
+                receiver,
+                io.polion.core.model
+                    .AccountId("a"),
+                io.polion.core.model
+                    .SourceRecordId("raw"),
+            )!!
+        assertEquals(
+            EvmAssets.native(1),
+            activity.movements
+                .single()
+                .amount.assetId,
+        )
+        assertEquals(
+            "65442402000000000",
+            activity.movements
+                .single()
+                .amount.atomicUnits
+                .toString(),
+        )
+        assertNull(
+            EvmDecoder.decodeWithdrawal(
+                1,
+                withdrawal,
+                sender,
+                io.polion.core.model
+                    .AccountId("a"),
+                io.polion.core.model
+                    .SourceRecordId("raw"),
+            ),
+        )
+    }
+
     @Test fun urlsAreLimitedToTheAddressEndpoints() {
         assertEquals(
             "https://api.blockscout.com/8453/api/v2/addresses/$sender/token-transfers?block_number=1&index=2",

@@ -103,6 +103,30 @@ object EvmDecoder {
             }
     }
 
+    /** A staking withdrawal to the address: an incoming native transfer with no fee and no transaction. */
+    fun decodeWithdrawal(
+        chainId: Long,
+        withdrawal: EvmWithdrawal,
+        address: String,
+        account: AccountId,
+        source: SourceRecordId,
+    ): Activity? {
+        if (withdrawal.receiver != address || withdrawal.amount.sign <= 0) return null
+        val id = "eip155:$chainId:withdrawal-${withdrawal.index}:$address"
+        return Activity(
+            ActivityId(id),
+            withdrawal.timestampMillis,
+            "evm-chain:$chainId:${withdrawal.blockNumber.toString().padStart(20, '0')}:9999999999:withdrawal-${withdrawal.index}",
+            ActivityKind.DEPOSIT,
+            ActivityStatus.CONFIRMED,
+            listOf(
+                Movement(EventId("$id:native"), account, AtomicAmount(EvmAssets.native(chainId), withdrawal.amount), MovementRole.TRANSFER),
+            ),
+            setOf(source),
+            VERSION,
+        )
+    }
+
     /** Null when the transaction did not change any balance of [address] (for example a self-transfer with no fee). */
     fun decode(
         group: EvmTransactionGroup,

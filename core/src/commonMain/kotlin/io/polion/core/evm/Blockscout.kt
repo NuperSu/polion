@@ -55,6 +55,15 @@ data class EvmTokenTransfer(
     val flagged: Boolean,
 )
 
+/** A staking (beacon chain) withdrawal credited to the address without a transaction; [amount] is in wei. */
+data class EvmWithdrawal(
+    val index: Long,
+    val blockNumber: Long,
+    val timestampMillis: Long,
+    val receiver: String,
+    val amount: ExactInteger,
+)
+
 /** A token balance as Blockscout reports it, for the balance check. */
 data class EvmTokenBalance(
     val contract: String,
@@ -164,6 +173,20 @@ object Blockscout {
                 flagged =
                     listOf(item["from"], item["to"]).any { (it as? JsonObject)?.flag() == true } ||
                         token.text("reputation").let { it != null && it != "ok" },
+            )
+        }
+
+    /** Chains with beacon chain withdrawals: Ethereum and Gnosis. */
+    val WITHDRAWAL_CHAINS = setOf(1L, 100L)
+
+    fun parseWithdrawals(payload: String): EvmPage<EvmWithdrawal> =
+        page(payload) { item ->
+            EvmWithdrawal(
+                index = item.long("index")!!,
+                blockNumber = item.long("block_number")!!,
+                timestampMillis = millis(item.text("timestamp")),
+                receiver = address(item["receiver"]),
+                amount = evmQuantity(item.text("amount")!!),
             )
         }
 

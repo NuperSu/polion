@@ -1547,6 +1547,7 @@ class PortfolioApplication(
         chainId: Long,
         groups: List<io.polion.core.evm.EvmTransactionGroup>,
         head: String,
+        withdrawals: List<io.polion.core.evm.EvmWithdrawal> = emptyList(),
     ): Int {
         require(evmConsent()) { "EVM consent required" }
         require(evmTargets().any { it.first == account && it.second == address }) { "Unknown EVM address" }
@@ -1588,6 +1589,33 @@ class PortfolioApplication(
                 val activity =
                     io.polion.core.evm.EvmDecoder
                         .decode(group, address, account, source) ?: return@forEach
+                ids += activity.id
+                if (activities.currentById(activity.id) != activity) {
+                    activities.saveInTransaction(activity)
+                    saved++
+                }
+            }
+            withdrawals.forEach { withdrawal ->
+                val payload =
+                    "evm-1|$chainId|withdrawal|${withdrawal.index}|${withdrawal.blockNumber}|${withdrawal.receiver}|${withdrawal.amount}"
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            "eip155:$chainId:withdrawal-${withdrawal.index}",
+                            "eip155:$chainId",
+                            "withdrawal-${withdrawal.index}",
+                            "eip155:$chainId",
+                            "blockscout",
+                            Instant.fromEpochMilliseconds(retrieved).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val activity =
+                    io.polion.core.evm.EvmDecoder
+                        .decodeWithdrawal(chainId, withdrawal, address, account, source) ?: return@forEach
                 ids += activity.id
                 if (activities.currentById(activity.id) != activity) {
                     activities.saveInTransaction(activity)

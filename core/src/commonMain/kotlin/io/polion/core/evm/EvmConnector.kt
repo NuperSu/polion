@@ -21,7 +21,8 @@ val EVM_MANIFEST =
     )
 
 /**
- * Refreshes every tracked EVM address. Per chain, the newest transaction, internal transfer and token transfer are read
+ * Refreshes every tracked EVM address. Per chain, the newest transaction, internal transfer and token transfer (and on
+ * Ethereum and Gnosis, the newest staking withdrawal) are read
  * first; when they equal the saved head nothing else is fetched. Otherwise the complete history is read and applied in
  * one transaction, then balances are compared with the provider's. A failing chain is recorded and the others continue.
  *
@@ -73,11 +74,18 @@ class EvmConnector(
         val firstTransactions = Blockscout.parseTransactions(get(Blockscout.url(chain, "addresses/$address/transactions")))
         val firstInternal = Blockscout.parseInternalTransfers(get(Blockscout.url(chain, "addresses/$address/internal-transactions")))
         val firstTokens = Blockscout.parseTokenTransfers(get(Blockscout.url(chain, "addresses/$address/token-transfers")))
+        val firstWithdrawals =
+            if (chain in Blockscout.WITHDRAWAL_CHAINS) {
+                Blockscout.parseWithdrawals(get(Blockscout.url(chain, "addresses/$address/withdrawals")))
+            } else {
+                null
+            }
         val head =
             listOf(
                 firstTransactions.items.firstOrNull()?.let { "${it.hash}:${it.blockNumber}" },
                 firstInternal.items.firstOrNull()?.let { "${it.transactionHash}:${it.index}" },
                 firstTokens.items.firstOrNull()?.let { "${it.transactionHash}:${it.logIndex}" },
+                firstWithdrawals?.items?.firstOrNull()?.let { "w${it.index}" },
             ).joinToString("|") { it ?: "-" }
         // Pending transactions have no block yet; a head that includes one is always refetched.
         // A change deeper in history with unchanged newest items is not seen here; the balance check and an explicit full
@@ -86,7 +94,8 @@ class EvmConnector(
         val transactions = all(firstTransactions, "addresses/$address/transactions", chain, Blockscout::parseTransactions)
         val internal = all(firstInternal, "addresses/$address/internal-transactions", chain, Blockscout::parseInternalTransfers)
         val tokens = all(firstTokens, "addresses/$address/token-transfers", chain, Blockscout::parseTokenTransfers)
-        app.applyEvmChainHistory(account, address, chain, EvmDecoder.group(chain, transactions, internal, tokens), head)
+        val withdrawals = firstWithdrawals?.let { all(it, "addresses/$address/withdrawals", chain, Blockscout::parseWithdrawals) }.orEmpty()
+        app.applyEvmChainHistory(account, address, chain, EvmDecoder.group(chain, transactions, internal, tokens), head, withdrawals)
         val native = Blockscout.parseBalance(get(Blockscout.url(chain, "addresses/$address")))
         val balances =
             all(
