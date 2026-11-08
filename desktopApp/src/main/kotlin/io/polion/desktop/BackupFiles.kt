@@ -5,7 +5,7 @@ import java.awt.Frame
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** Native file selection for encrypted portable backups. */
+/** Native file selection for encrypted portable backups, exports and CSV imports. */
 class BackupFiles {
     fun save(
         name: String,
@@ -19,6 +19,8 @@ class BackupFiles {
     fun chooseBackupDestination(): Path? = choose(FileDialog.SAVE, "Save encrypted backup", "polion-backup.polion")
 
     fun chooseBackup(): Path? = choose(FileDialog.LOAD, "Restore encrypted backup")
+
+    fun chooseImport(): Path? = choose(FileDialog.LOAD, "Import CSV file")
 
     private fun choose(
         mode: Int,

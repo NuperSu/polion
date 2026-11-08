@@ -216,6 +216,23 @@ internal class DesktopHost(
         }
     }
 
+    override fun openTextFile(
+        maxChars: Int,
+        onResult: (name: String, text: String?) -> Unit,
+    ) {
+        SwingUtilities.invokeLater {
+            val path = runCatching { files.chooseImport() }.getOrNull()
+            if (path == null) {
+                onResult("", null)
+                return@invokeLater
+            }
+            executor.execute {
+                val text = runCatching { readText(Files.newInputStream(path), maxChars) }.getOrNull()
+                SwingUtilities.invokeLater { onResult(path.fileName.toString(), text) }
+            }
+        }
+    }
+
     override fun saveBackup(
         password: String,
         onResult: (String) -> Unit,
@@ -984,3 +1001,29 @@ internal fun walIsEmpty(database: java.nio.file.Path): Boolean {
         java.nio.file.Files
             .size(wal) == 0L
 }
+
+/** Strict UTF-8 text of at most [maxChars] characters, or null; reads at most four bytes per allowed character. */
+internal fun readText(
+    input: java.io.InputStream,
+    maxChars: Int,
+): String? =
+    input.use {
+        val limit = maxChars.toLong() * 4
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val count = it.read(buffer)
+            if (count < 0) break
+            out.write(buffer, 0, count)
+            if (out.size() > limit) return null
+        }
+        val bytes = out.toByteArray()
+        val text =
+            runCatching {
+                java.nio.charset.StandardCharsets.UTF_8
+                    .newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(bytes))
+                    .toString()
+            }.getOrNull()
+        text?.takeIf { value -> value.length <= maxChars }
+    }

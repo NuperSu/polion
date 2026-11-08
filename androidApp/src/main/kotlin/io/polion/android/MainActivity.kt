@@ -260,6 +260,31 @@ private class AndroidHost(
         main.post { files.save(name, bytes) { onResult(if (it) "File saved" else "File was not saved") } }
     }
 
+    override fun openTextFile(
+        maxChars: Int,
+        onResult: (name: String, text: String?) -> Unit,
+    ) {
+        main.post {
+            files.chooseSource { uri ->
+                if (uri == null) {
+                    onResult("", null)
+                } else {
+                    executor.execute {
+                        val resolver = activity.contentResolver
+                        val name =
+                            runCatching {
+                                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                                    if (it.moveToFirst()) it.getString(0) else null
+                                }
+                            }.getOrNull() ?: "import.csv"
+                        val text = runCatching { resolver.openInputStream(uri)?.let { readText(it, maxChars) } }.getOrNull()
+                        main.post { if (!closed) onResult(name, text) }
+                    }
+                }
+            }
+        }
+    }
+
     override fun saveBackup(
         password: String,
         onResult: (String) -> Unit,
@@ -662,3 +687,29 @@ internal fun walIsEmpty(database: java.nio.file.Path): Boolean {
     val wal = database.resolveSibling("${database.fileName}-wal")
     return !java.nio.file.Files.exists(wal) || java.nio.file.Files.size(wal) == 0L
 }
+
+/** Strict UTF-8 text of at most [maxChars] characters, or null; reads at most four bytes per allowed character. */
+internal fun readText(
+    input: java.io.InputStream,
+    maxChars: Int,
+): String? =
+    input.use {
+        val limit = maxChars.toLong() * 4
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val count = it.read(buffer)
+            if (count < 0) break
+            out.write(buffer, 0, count)
+            if (out.size() > limit) return null
+        }
+        val bytes = out.toByteArray()
+        val text =
+            runCatching {
+                java.nio.charset.StandardCharsets.UTF_8
+                    .newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(bytes))
+                    .toString()
+            }.getOrNull()
+        text?.takeIf { value -> value.length <= maxChars }
+    }
