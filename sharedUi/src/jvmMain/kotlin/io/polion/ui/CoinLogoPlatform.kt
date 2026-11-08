@@ -33,4 +33,7 @@ internal actual fun localToEpochMillis(stamp: io.polion.core.application.LocalSt
         .toInstant()
         .toEpochMilli()
 
-internal actual fun localZoneName(): String = java.time.ZoneId.systemDefault().id
+internal actual fun localZoneName(): String =
+    java.time.ZoneId
+        .systemDefault()
+        .id
