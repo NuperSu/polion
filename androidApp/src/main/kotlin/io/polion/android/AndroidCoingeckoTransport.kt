@@ -27,9 +27,18 @@ class AndroidCoingeckoTransport(
             Regex("coins/markets\\?vs_currency=[a-z]{3,4}&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=1h,24h,7d")
         const val TRENDING_PATH = "search/trending"
         val KRAKEN_TICKERS_PATH = Regex("coins/[a-z0-9][a-z0-9-]{0,99}/tickers\\?exchange_ids=kraken")
+        const val ASSET_PLATFORMS_PATH = "asset_platforms"
+        const val COINS_LIST_PATH = "coins/list?include_platform=true"
+        val SIMPLE_PRICE_PATH =
+            Regex(
+                "simple/price\\?ids=[a-z0-9-]+(,[a-z0-9-]+){0,49}&vs_currencies=[a-z]{3,4}(,[a-z]{3,4}){0,2}&include_last_updated_at=true",
+            )
 
         /** The top-250 list with sparklines is about 1 MB. */
         const val FEED_LIMIT = 4 * 1024 * 1024
+
+        /** The full coin list with platform addresses is about 4 MB. */
+        const val COINS_LIST_LIMIT = 16 * 1024 * 1024
         const val HISTORY_LIMIT = 1024 * 1024
     }
 
@@ -54,8 +63,8 @@ class AndroidCoingeckoTransport(
     }
 
     /**
-     * Market feeds and Kraken ticker lookups are not paced here: the application refreshes feeds at most once a minute and
-     * pauses after a rate limit.
+     * Market feeds, the chain catalog, linked-coin prices and Kraken ticker lookups are not paced here: the application
+     * refreshes feeds at most once a minute and pauses after a rate limit.
      */
     @Synchronized
     fun feed(
@@ -63,17 +72,23 @@ class AndroidCoingeckoTransport(
         apiKey: String?,
     ): String {
         val path = url.removePrefix("${baseUrl.trimEnd('/')}/")
-        require(url != path && (path.matches(MARKETS_PATH) || path == TRENDING_PATH || path.matches(KRAKEN_TICKERS_PATH))) {
-            "Unsupported CoinGecko request"
-        }
+        require(url != path && isFeedPath(path)) { "Unsupported CoinGecko request" }
         require(apiKey == null || apiKey.length <= 512 && apiKey.all { it.code in 33..126 }) { "Invalid API key" }
         activeApiKey = apiKey.orEmpty()
         try {
-            return fetch(url, FEED_LIMIT)
+            return fetch(url, if (path == COINS_LIST_PATH) COINS_LIST_LIMIT else FEED_LIMIT)
         } finally {
             activeApiKey = ""
         }
     }
+
+    private fun isFeedPath(path: String): Boolean =
+        path.matches(MARKETS_PATH) ||
+            path == TRENDING_PATH ||
+            path.matches(KRAKEN_TICKERS_PATH) ||
+            path == ASSET_PLATFORMS_PATH ||
+            path == COINS_LIST_PATH ||
+            path.matches(SIMPLE_PRICE_PATH)
 
     private fun request(url: String): String {
         val prefix = "${baseUrl.trimEnd('/')}/coins/"

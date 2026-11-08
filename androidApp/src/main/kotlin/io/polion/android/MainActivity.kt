@@ -131,6 +131,10 @@ private class AndroidHost(
         MarketFeedRefresher.refresh(activity, maxAgeMillis) { message -> main.post { if (!closed) onResult(message) } }
     }
 
+    override fun refreshEvmCatalog(onResult: (String?) -> Unit) {
+        MarketFeedRefresher.refreshEvmCatalog(activity, closing = { closed }) { message -> main.post { if (!closed) onResult(message) } }
+    }
+
     override fun fetchOrderBook(
         coinId: String,
         onResult: (OrderBookResult) -> Unit,
