@@ -1,6 +1,6 @@
 # Polion
 
-A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. Its shared interface uses Main, Portfolio and Insights, with account, public Bitcoin address, activity, reporting and settings workflows available from the menu. The shared core provides exact amounts, ownership scopes, SQLite persistence, raw provenance, a versioned activity ledger, Esplora history, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation and encrypted portable backup. Public descriptors and xpub wallets support bounded address discovery; see [supported wallet imports](docs/bitcoin-wallets.md). Full Bitcoin financial acceptance remains in progress. Polion does not sign transactions or accept private keys.
+A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. Its shared interface uses Main, Portfolio and Insights, with account, public Bitcoin address, activity, reporting and settings workflows available from the menu. The shared core provides exact amounts, ownership scopes, SQLite persistence, raw provenance, a versioned activity ledger, Esplora history, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation and encrypted portable backup. Public descriptors and xpub wallets support bounded address discovery; see [supported wallet imports](docs/bitcoin-wallets.md). Polion does not sign transactions or accept private keys. Release 1.0.0 limits, builds and recovery steps are in [release](docs/release.md); the [Gate D audit](docs/gate-d-audit.md) lists what remains.
 
 See the [product roadmap status](docs/roadmap-status.md) for the current direction and open gates.
 
@@ -9,7 +9,7 @@ See the [product roadmap status](docs/roadmap-status.md) for the current directi
 Use JDK 25 and an Android SDK with platform 37 (`platforms;android-37.0`) and build tools 36.0.0. Set `ANDROID_HOME` to the SDK directory or set `sdk.dir` in untracked `local.properties`.
 
 ```sh
-./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :sharedUi:jvmTest :desktopApp:test :androidApp:lintDebug :androidApp:assembleDebug :desktopApp:packageUberJarForCurrentOS
+./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :sharedUi:jvmTest :desktopApp:test :androidApp:lintDebug :androidApp:assembleDebug :androidApp:assembleRelease :desktopApp:packageUberJarForCurrentOS :desktopApp:createDistributable
 ./gradlew :desktopApp:run
 ```
 

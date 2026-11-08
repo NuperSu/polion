@@ -1,6 +1,6 @@
 # Milestone D acceptance map
 
-Phases 21–23 provide the shared Android and Linux desktop product workflows, and the local checks listed below pass. Gate D is not accepted: the rows below record evidence for individual requirements, while these items remain open, among others: Bitcoin provider financial acceptance (phase 20), connector execution through the application registry (phase 7), descriptor implementation audit (phase 15), and reconciliation integration (phase 12). This document does not certify every Milestone C chain-verification requirement or a production release audit.
+Phases 21–23 provide the shared Android and Linux desktop product workflows, and the local checks listed below pass. The open items named earlier (connector execution through the registry, reconciliation integration, the descriptor implementation and Bitcoin financial acceptance) are assessed in the [Gate D audit](gate-d-audit.md); Gate D is not fully accepted while the items listed there remain. This document does not certify a production security audit.
 
 | Requirement | Implementation and inspected evidence |
 | --- | --- |
