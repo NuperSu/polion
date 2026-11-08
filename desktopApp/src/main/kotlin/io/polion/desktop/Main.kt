@@ -522,14 +522,9 @@ internal class DesktopHost(
         ) { application ->
             runCatching {
                 val endpoint = application.sourceEndpoint()
-                // Wallets without addresses, or with a used address in the trailing gap, are discovered first.
-                val discoveryNotes = application.discoverPendingBitcoinWallets(bitcoinTransport(application, endpoint), endpoint)
-                val states =
-                    application.refreshBitcoin(
-                        bitcoinTransport(application, endpoint),
-                        recoverHistory = recoverHistory,
-                        providerEndpoint = endpoint,
-                    ) { progress ->
+                // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
+                val bitcoin =
+                    io.polion.core.application.BitcoinConnector(bitcoinTransport(application, endpoint), endpoint) { progress ->
                         syncStatus.value =
                             SyncStatus(
                                 SyncPhase.SYNCING,
@@ -543,6 +538,15 @@ internal class DesktopHost(
                                 },
                             )
                     }
+                val outcomes =
+                    application.refreshSources(
+                        io.polion.core.application
+                            .SourceRegistry(listOf(bitcoin)),
+                        io.polion.core.application
+                            .SourceRefreshOptions(recoverHistory = recoverHistory),
+                    )
+                val states = outcomes.flatMap { it.jobs }
+                val discoveryNotes = outcomes.flatMap { it.notes }
                 when {
                     states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
                     states.any {

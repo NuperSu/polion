@@ -31,13 +31,10 @@ import io.polion.core.bitcoin.EsploraHistoryFetcher
 import io.polion.core.bitcoin.EsploraTransport
 import io.polion.core.bitcoin.bitcoinMainnetAddress
 import io.polion.core.bitcoin.bitcoinWallet
-import io.polion.core.connectors.Capability
 import io.polion.core.connectors.ConnectorRegistry
-import io.polion.core.connectors.Coverage
 import io.polion.core.connectors.HistoryFetcher
 import io.polion.core.connectors.HistoryPage
 import io.polion.core.connectors.HistoryRequest
-import io.polion.core.connectors.IntegrationManifest
 import io.polion.core.connectors.RegisteredConnector
 import io.polion.core.holdings.BalanceCoverage
 import io.polion.core.holdings.BalanceView
@@ -1182,6 +1179,83 @@ class PortfolioApplication(
             SyncClock { now() },
         )
 
+    /** Networks with an enabled tracked address or wallet. */
+    fun trackedNetworks(): Set<io.polion.core.model.NetworkId> =
+        ownership
+            .load()
+            .targets
+            .filter { it.enabled }
+            .map { it.identity.networkId }
+            .toSet()
+
+    /**
+     * Refreshes every source through [registry]: each registered connector runs once, and a tracked network without a
+     * history connector is reported instead of skipped silently. Connectors run in registration order; a failure stops
+     * the refresh and propagates, so callers report it as they do for one source.
+     */
+    fun refreshSources(
+        registry: SourceRegistry,
+        options: SourceRefreshOptions = SourceRefreshOptions(),
+    ): List<SourceRefreshOutcome> {
+        val missing = trackedNetworks().filter { registry.forNetwork(it) == null }
+        return registry.connectors.map { it.refresh(this, options) } +
+            missing.map { SourceRefreshOutcome("none", emptyList(), listOf("No connector is available for ${it.value}.")) }
+    }
+
+    /**
+     * The generic history path for a connector: fetches pages for [accounts] on [network] through the sync orchestrator
+     * (leases, retries, cursors and raw provenance), then saves what [decoder] makes of each new observation. Decoded
+     * activities may only move tracked accounts. Holdings and accounting read them like any other source.
+     */
+    fun ingestHistory(
+        connector: String,
+        history: HistoryFetcher,
+        decoder: io.polion.core.connectors.RawRecordDecoder,
+        network: io.polion.core.model.NetworkId,
+        accounts: List<AccountId>,
+    ): List<JobState> {
+        require(connector.isNotBlank() && connector != BITCOIN_CONNECTOR_ID) { "Bitcoin uses its own scan" }
+        val known =
+            ownership
+                .load()
+                .accounts
+                .map { it.id }
+                .toSet()
+        require(accounts.all { it in known }) { "Unknown account" }
+        val fetched = mutableListOf<io.polion.core.storage.RawObservation>()
+        val source = SourceId(connector)
+        val orchestrator =
+            SyncOrchestrator(
+                db,
+                store,
+                listOf(
+                    SyncProvider(
+                        ProviderId(connector),
+                        fetcher { request ->
+                            history.fetch(request).also { fetched += it.observations }
+                        },
+                        setOf(network),
+                        setOf(source),
+                    ),
+                ),
+                SyncClock { now() },
+            )
+        // Each refresh is a new job; completed jobs keep their status as a record of earlier refreshes.
+        val generation = (setting("connector_refresh:$connector")?.toLongOrNull() ?: 0L) + 1
+        putSetting("connector_refresh:$connector", generation.toString())
+        val jobs = accounts.map { SyncJobId("$connector-$generation-${sha256(it.value).take(16)}") }
+        accounts.zip(jobs).forEach { (account, job) -> orchestrator.enqueue(SyncJob(job, source, network, account)) }
+        while (orchestrator.runOne()) Unit
+        val activitiesToSave = fetched.distinctBy { it.id to it.checksum }.flatMap(decoder::decode)
+        require(activitiesToSave.all { activity -> activity.movements.all { it.accountId in known } && !activity.manual }) {
+            "A connector may only record source activity in tracked accounts"
+        }
+        // A decoded activity identical to the saved one adds no revision.
+        db.transaction { activitiesToSave.filter { activities.currentById(it.id) != it }.forEach(activities::saveInTransaction) }
+        invalidate()
+        return jobs.map { orchestrator.status(it)?.state ?: JobState.FAILED }
+    }
+
     /**
      * Fetches tracked mainnet addresses after consent and applies only a complete, consistent scan.
      * Explicit [recoverHistory] starts fresh history and establishes a new continuity baseline on successful apply.
@@ -1385,14 +1459,7 @@ class PortfolioApplication(
                 ConnectorRegistry(
                     listOf(
                         RegisteredConnector(
-                            IntegrationManifest(
-                                BITCOIN_CONNECTOR_ID,
-                                setOf(BITCOIN_MAINNET),
-                                setOf("address"),
-                                setOf(Capability.HISTORY, Capability.DECODING),
-                                requiresAuthentication = false,
-                                coverage = Coverage.PARTIAL,
-                            ),
+                            BITCOIN_MANIFEST,
                             EsploraHistoryFetcher(mapOf(scan.accountId to scan.address), recordingTransport) {
                                 Instant.fromEpochMilliseconds(now()).toString()
                             },

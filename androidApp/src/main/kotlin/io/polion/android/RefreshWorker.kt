@@ -102,9 +102,6 @@ class RefreshWorker(
                                         transport,
                                         providerEndpoint = endpoint,
                                     ).notice
-                            } else if (!verifyOrder) {
-                                // Wallets without addresses, or with a used address in the trailing gap, are discovered first.
-                                app.discoverPendingBitcoinWallets(transport, endpoint).joinToString(" ").ifEmpty { null }
                             } else {
                                 null
                             }
@@ -120,8 +117,9 @@ class RefreshWorker(
                             )
                         }
                         stage = "history"
-                        val states =
-                            app.refreshBitcoin(transport, recoverHistory = recoverHistory, providerEndpoint = endpoint) { progress ->
+                        // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
+                        val bitcoin =
+                            io.polion.core.application.BitcoinConnector(transport, endpoint) { progress ->
                                 val detail =
                                     when (progress.phase) {
                                         "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
@@ -134,6 +132,13 @@ class RefreshWorker(
                                 syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
                                 onProgress(detail)
                             }
+                        val outcomes =
+                            app.refreshSources(
+                                io.polion.core.application.SourceRegistry(listOf(bitcoin)),
+                                io.polion.core.application.SourceRefreshOptions(recoverHistory = recoverHistory),
+                            )
+                        val states = outcomes.flatMap { it.jobs }
+                        val sourceNotes = outcomes.flatMap { it.notes }.joinToString(" ").ifEmpty { null }
                         when {
                             states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
                             states.any { it != JobState.COMPLETED } ->
@@ -150,7 +155,7 @@ class RefreshWorker(
                                             app.lastRefreshSkipped() -> "Checked for new activity; none found."
                                             else -> "Sync complete; coverage remains unverified"
                                         }
-                                    ) + (discoveryNotice?.let { " $it" } ?: ""),
+                                    ) + (listOfNotNull(discoveryNotice, sourceNotes).joinToString("") { " $it" }),
                                 )
                         }
                     }
