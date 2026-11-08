@@ -30,6 +30,11 @@ data class MarketListing(
     val sparkline: List<Double>,
     /** CoinGecko's small logo URL, or null when it sent none. */
     val image: String? = null,
+    /** All-time high and low prices in the list currency, with the time each was set. */
+    val allTimeHigh: ExactDecimal? = null,
+    val allTimeHighAtMillis: Long? = null,
+    val allTimeLow: ExactDecimal? = null,
+    val allTimeLowAtMillis: Long? = null,
 )
 
 /** One coin from CoinGecko's search trending list. The price is derived from its BTC price when available. */
@@ -103,6 +108,10 @@ object CoingeckoMarkets {
                                 ?.takeLast(200)
                                 .orEmpty(),
                         image = logoUrl(coin.text("image")),
+                        allTimeHigh = coin.positive("ath"),
+                        allTimeHighAtMillis = coin.millis("ath_date"),
+                        allTimeLow = coin.positive("atl"),
+                        allTimeLowAtMillis = coin.millis("atl_date"),
                     )
                 }.getOrNull()
             }.distinctBy { it.coinId }
@@ -157,6 +166,18 @@ object CoingeckoMarkets {
             ?.takeIf { it.isNotBlank() }
 
     private fun JsonObject.number(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull && !it.isString }?.content
+
+    private fun JsonObject.positive(key: String): ExactDecimal? =
+        number(key)?.let { runCatching { CoingeckoPrices.parseJsonNumber(it) }.getOrNull() }?.takeIf { it.coefficient.sign > 0 }
+
+    private fun JsonObject.millis(key: String): Long? =
+        text(key)?.let {
+            runCatching {
+                kotlin.time.Instant
+                    .parse(it)
+                    .toEpochMilliseconds()
+            }.getOrNull()
+        }
 }
 
 /**
@@ -260,6 +281,10 @@ class MarketFeedRepository(
                             // One string instead of 168 JSON numbers per coin keeps the cached list quick to read.
                             put("spark", coin.sparkline.joinToString(","))
                             coin.image?.let { put("image", it) }
+                            coin.allTimeHigh?.let { put("ath", it.toString()) }
+                            coin.allTimeHighAtMillis?.let { put("athAt", it) }
+                            coin.allTimeLow?.let { put("atl", it.toString()) }
+                            coin.allTimeLowAtMillis?.let { put("atlAt", it) }
                         },
                     )
                 }
@@ -305,6 +330,10 @@ class MarketFeedRepository(
                     ?.mapNotNull { it.toDoubleOrNull() }
                     .orEmpty(),
                 CoingeckoMarkets.logoUrl(coin.string("image")),
+                coin.string("ath")?.let(ExactDecimal::parse),
+                coin.string("athAt")?.toLongOrNull(),
+                coin.string("atl")?.let(ExactDecimal::parse),
+                coin.string("atlAt")?.toLongOrNull(),
             )
         }
 

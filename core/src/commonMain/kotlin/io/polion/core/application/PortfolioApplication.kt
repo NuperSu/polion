@@ -6,6 +6,13 @@ import io.polion.core.accounting.LedgerAccounting
 import io.polion.core.accounting.QuoteValue
 import io.polion.core.accounting.Treatment
 import io.polion.core.accounting.TreatmentRepository
+import io.polion.core.alerts.AlertCondition
+import io.polion.core.alerts.AlertRules
+import io.polion.core.alerts.NotificationKind
+import io.polion.core.alerts.NotificationMessage
+import io.polion.core.alerts.NotificationPreferences
+import io.polion.core.alerts.NotificationText
+import io.polion.core.alerts.PriceAlert
 import io.polion.core.backup.BackupEncryption
 import io.polion.core.backup.ByteArraySink
 import io.polion.core.backup.ByteArraySource
@@ -316,6 +323,12 @@ const val MEMPOOL_PAGE = 50L
 /** Privacy lock delays offered in Settings: immediately, 1, 5 and 15 minutes, and 1 hour. */
 val LOCK_DELAYS = listOf(0L, 60_000L, 300_000L, 900_000L, 3_600_000L)
 
+/** A 24-hour move at least this large, in percent, is a significant price change. */
+const val SIGNIFICANT_MOVE_PERCENT = 10.0
+
+/** Delivered notifications kept in the history. */
+const val NOTIFICATION_HISTORY_SIZE = 500
+
 /** Fiat currencies with automatic Kraken prices. */
 val DISPLAY_CURRENCIES = listOf("USD", "EUR", "GBP")
 
@@ -332,6 +345,9 @@ class PortfolioApplication(
     private val holdings = HoldingsRepository(db)
     private val market = MarketRepository(db)
     private val treatments = TreatmentRepository(db)
+    private val notifications =
+        io.polion.core.alerts
+            .NotificationRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
     private val bitcoinGraph =
         io.polion.core.bitcoin
@@ -2218,6 +2234,216 @@ class PortfolioApplication(
             }
             return MarketRefreshResult(updated, failure.failure, retry)
         }
+    }
+
+    /** The CoinGecko coin ID for a portfolio or market asset, or null when it has none. */
+    fun marketCoinId(asset: AssetId): String? =
+        when {
+            asset == BITCOIN_ASSET -> "bitcoin"
+            asset.value.startsWith("coingecko:") -> asset.value.removePrefix("coingecko:")
+            else ->
+                market
+                    .providerMappings(ProviderId(CoingeckoPrices.PROVIDER_ID))
+                    .entries
+                    .firstOrNull { it.value == asset }
+                    ?.key
+        }
+
+    fun notificationPreferences(): NotificationPreferences =
+        NotificationPreferences(
+            dailyUpdate = setting("notify_daily") == "true",
+            priceMoves = setting("notify_moves") == "true",
+            highsAndLows = setting("notify_extremes") == "true",
+        )
+
+    fun setNotificationPreferences(value: NotificationPreferences) =
+        db.transaction {
+            putSetting("notify_daily", value.dailyUpdate.toString())
+            putSetting("notify_moves", value.priceMoves.toString())
+            putSetting("notify_extremes", value.highsAndLows.toString())
+        }
+
+    /** True when any alert or notification setting is on, so hosts schedule checks and request notification permission. */
+    fun notificationsActive(): Boolean =
+        notificationPreferences().let { it.dailyUpdate || it.priceMoves || it.highsAndLows } || notifications.alerts().any { it.enabled }
+
+    fun priceAlerts(coinId: String? = null): List<PriceAlert> = notifications.alerts().filter { coinId == null || it.coinId == coinId }
+
+    /**
+     * Saves a new alert, or replaces the condition of [id]. The coin must be in the cached top-250 list for the display
+     * currency, whose price sets the starting state (see [AlertRules.start]).
+     */
+    fun savePriceAlert(
+        coinId: String,
+        condition: AlertCondition,
+        threshold: ExactDecimal,
+        id: String? = null,
+    ): PriceAlert {
+        require(threshold.coefficient.sign > 0) { "Enter a positive number" }
+        require(condition != AlertCondition.MOVE || threshold <= ExactDecimal.parse("1000")) { "Use a move of at most 1000%" }
+        val code = currency().value.lowercase()
+        val feed = marketFeeds.markets(code)
+        val listing = requireNotNull(feed?.items?.firstOrNull { it.coinId == coinId }) { "Alerts need this coin's market price" }
+        val fresh = feed!!.observedAtMillis.takeIf { now() - it <= AlertRules.MAX_PRICE_AGE_MILLIS }
+        val existing =
+            id?.let { key ->
+                notifications.alerts().firstOrNull { it.id == key }
+                    ?: throw IllegalArgumentException("Unknown alert")
+            }
+        val draft =
+            PriceAlert(
+                id = existing?.id ?: "alert-${now()}-${kotlin.random.Random.nextLong().toULong().toString(16)}",
+                coinId = coinId,
+                symbol = listing.symbol,
+                currency = code,
+                condition = condition,
+                threshold = threshold,
+                enabled = existing?.enabled ?: true,
+                armed = true,
+                reference = null,
+                referenceAtMillis = null,
+                lastObservedMillis = null,
+                lastFiredMillis = null,
+                createdAtMillis = existing?.createdAtMillis ?: now(),
+            )
+        val started = AlertRules.start(draft, fresh?.let { listing.price }, fresh)
+        notifications.save(started)
+        return started
+    }
+
+    fun setPriceAlertEnabled(
+        id: String,
+        enabled: Boolean,
+    ) = db.transaction {
+        val alert = requireNotNull(notifications.alerts().firstOrNull { it.id == id }) { "Unknown alert" }
+        notifications.save(alert.copy(enabled = enabled))
+    }
+
+    fun deletePriceAlert(id: String) = notifications.delete(id)
+
+    fun notificationHistory(limit: Int = 50): List<NotificationMessage> = notifications.history(limit)
+
+    /**
+     * Evaluates alerts and notification settings against the cached market list, and returns the notifications to show
+     * now. Each is recorded before it is returned, in the same transaction as the alert states, so no event is delivered
+     * twice, even across restarts or when two processes evaluate at once. [localDay] (for example "2026-11-08") and
+     * [localHour] come from the device clock: the daily update is sent once per local day, from 9:00.
+     */
+    fun evaluateNotifications(
+        localDay: String,
+        localHour: Int,
+    ): List<NotificationMessage> {
+        val nowMillis = now()
+        val code = currency().value.lowercase()
+        val feed = marketFeeds.markets(code)?.takeIf { nowMillis - it.observedAtMillis <= AlertRules.MAX_PRICE_AGE_MILLIS }
+        val listings = feed?.items.orEmpty().associateBy { it.coinId }
+        val preferences = notificationPreferences()
+        val daily =
+            if (preferences.dailyUpdate && localHour >= 9 && !notifications.delivered("daily:$localDay")) dailyUpdate(localDay) else null
+        val followed =
+            if (preferences.priceMoves || preferences.highsAndLows) {
+                (marketFavorites() + snapshot().valuations.filter { it.amount.atomicUnits.sign > 0 }.map { it.asset })
+                    .mapNotNull(::marketCoinId)
+                    .toSet()
+            } else {
+                emptySet()
+            }
+        return db.transaction {
+            val delivered = mutableListOf<NotificationMessage>()
+
+            fun deliver(message: NotificationMessage) {
+                if (notifications.record(message)) delivered += message
+            }
+            if (feed != null) {
+                notifications.alerts().filter { it.currency == code }.forEach { alert ->
+                    val listing = listings[alert.coinId] ?: return@forEach
+                    val step = AlertRules.step(alert, listing.price, feed.observedAtMillis, nowMillis)
+                    if (step.alert != alert) notifications.save(step.alert)
+                    if (step.fired) {
+                        val title =
+                            when (alert.condition) {
+                                AlertCondition.ABOVE -> "${alert.symbol} is above ${NotificationText.price(alert.threshold, code)}"
+                                AlertCondition.BELOW -> "${alert.symbol} is below ${NotificationText.price(alert.threshold, code)}"
+                                AlertCondition.MOVE ->
+                                    "${alert.symbol} moved " +
+                                        NotificationText.percent(AlertRules.percentChange(alert.reference!!, listing.price))
+                            }
+                        deliver(
+                            NotificationMessage(
+                                "alert:${alert.id}:${feed.observedAtMillis}",
+                                NotificationKind.PRICE_ALERT,
+                                title,
+                                "${listing.name} is ${NotificationText.price(listing.price, code)} on CoinGecko.",
+                                nowMillis,
+                                alert.id,
+                                alert.coinId,
+                            ),
+                        )
+                    }
+                }
+                followed.mapNotNull { listings[it] }.forEach { listing ->
+                    val change = listing.change24h
+                    if (preferences.priceMoves && change != null && kotlin.math.abs(change) >= SIGNIFICANT_MOVE_PERCENT) {
+                        val direction = if (change > 0) "up" else "down"
+                        deliver(
+                            NotificationMessage(
+                                "move:${listing.coinId}:$localDay:$direction",
+                                NotificationKind.PRICE_MOVE,
+                                "${listing.symbol} is $direction ${NotificationText.percent(change).trimStart('+', '-')} in 24 hours",
+                                "${listing.name} is ${NotificationText.price(listing.price, code)} on CoinGecko.",
+                                nowMillis,
+                                coinId = listing.coinId,
+                            ),
+                        )
+                    }
+                    if (preferences.highsAndLows) {
+                        val recent = { at: Long? -> at != null && feed.observedAtMillis - at in 0..86_400_000L }
+                        if (recent(listing.allTimeHighAtMillis)) {
+                            deliver(
+                                NotificationMessage(
+                                    "ath:${listing.coinId}:${listing.allTimeHighAtMillis!! / 86_400_000L}",
+                                    NotificationKind.ALL_TIME_HIGH,
+                                    "${listing.symbol} reached an all-time high",
+                                    "${listing.name} reached ${NotificationText.price(listing.allTimeHigh!!, code)} on CoinGecko.",
+                                    nowMillis,
+                                    coinId = listing.coinId,
+                                ),
+                            )
+                        }
+                        if (recent(listing.allTimeLowAtMillis)) {
+                            deliver(
+                                NotificationMessage(
+                                    "atl:${listing.coinId}:${listing.allTimeLowAtMillis!! / 86_400_000L}",
+                                    NotificationKind.ALL_TIME_LOW,
+                                    "${listing.symbol} reached an all-time low",
+                                    "${listing.name} fell to ${NotificationText.price(listing.allTimeLow!!, code)} on CoinGecko.",
+                                    nowMillis,
+                                    coinId = listing.coinId,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            daily?.let(::deliver)
+            if (delivered.isNotEmpty()) notifications.trim(NOTIFICATION_HISTORY_SIZE)
+            delivered
+        }
+    }
+
+    /** The day's portfolio summary; amounts are left out while amounts are hidden, as notifications show on the lock screen. */
+    private fun dailyUpdate(localDay: String): NotificationMessage? {
+        val end = now()
+        val result = moneyWeightedReturn(null, end - 86_400_000L, end)
+        val value = result.endValue ?: return null
+        val change = result.periodReturn?.let { "${NotificationText.percent(it * 100)} in 24 hours" }
+        val body =
+            if (generalPreferences().hideAmounts) {
+                change?.let { "Your portfolio is $it." } ?: "Your portfolio's 24-hour change is not available."
+            } else {
+                "Your portfolio is worth ${NotificationText.price(value, result.currency.value)}" + (change?.let { ", $it." } ?: ".")
+            }
+        return NotificationMessage("daily:$localDay", NotificationKind.DAILY_UPDATE, "Daily portfolio update", body, end)
     }
 
     /** Display and accounting preferences from Settings; stored in `application_settings`, so backups include them. */
