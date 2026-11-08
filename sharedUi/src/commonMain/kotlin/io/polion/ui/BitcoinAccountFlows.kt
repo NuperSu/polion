@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -30,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -288,8 +290,8 @@ internal fun BitcoinConnectDialog(
         }, enabled = editable, label = {
             Text("Bitcoin provider (HTTPS Esplora endpoint)")
         }, modifier = Modifier.fillMaxWidth().testTag("connect-endpoint"))
-        Row {
-            Checkbox(consent, { consent = it }, enabled = editable, modifier = Modifier.testTag("connect-consent"))
+        Row(Modifier.toggleable(value = consent, enabled = editable, role = Role.Checkbox) { consent = it }.testTag("connect-consent")) {
+            Checkbox(checked = consent, onCheckedChange = null, enabled = editable)
             Text("Allow public address and transaction queries to this provider.", Modifier.weight(1f))
         }
         if (wallet == null) {
@@ -387,8 +389,8 @@ internal fun BitcoinHistoryDialog(
         }, enabled = !busy && !running, label = {
             Text("Bitcoin provider (HTTPS Esplora endpoint)")
         }, modifier = Modifier.fillMaxWidth().testTag("history-endpoint"))
-        Row {
-            Checkbox(consent, { consent = it }, enabled = !busy, modifier = Modifier.testTag("history-consent"))
+        Row(Modifier.toggleable(value = consent, enabled = !busy, role = Role.Checkbox) { consent = it }.testTag("history-consent")) {
+            Checkbox(checked = consent, onCheckedChange = null, enabled = !busy)
             Text("Allow public address and transaction queries to this provider.", Modifier.weight(1f))
         }
         Text(

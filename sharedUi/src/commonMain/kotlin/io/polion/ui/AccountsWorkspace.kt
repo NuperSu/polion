@@ -26,6 +26,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -311,15 +314,18 @@ private fun ConnectionList(
                     summary.sources.isNotEmpty() -> "Address"
                     else -> "Manual"
                 }
+            // The details row is clickable on its text column only, so the sync button is a separate control for TalkBack.
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpen(summary.account.id.value) }
-                    .testTag("connection-${summary.account.id.value}")
-                    .padding(vertical = 14.dp),
+                Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .clickable(role = Role.Button) { onOpen(summary.account.id.value) }
+                        .testTag("connection-${summary.account.id.value}")
+                        .padding(vertical = 14.dp),
+                ) {
                     Text(summary.account.label, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Text(synced, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
@@ -345,7 +351,10 @@ private fun ConnectionList(
                     TextButton(
                         onClick = onSync,
                         enabled = !syncing,
-                        modifier = Modifier.testTag("connection-sync-${summary.account.id.value}"),
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = "Sync connection" }
+                                .testTag("connection-sync-${summary.account.id.value}"),
                     ) { Text("⟳", fontSize = 22.sp) }
                 }
             }

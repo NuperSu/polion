@@ -10,6 +10,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -73,7 +74,7 @@ class RewriteAcceptanceTest {
                         onNodeWithText("Saved coins").assertIsDisplayed()
                         onNodeWithText("PRICED VALUE").assertDoesNotExist()
                         capture("main")
-                        onAllNodesWithText("☆").onFirst().performClick()
+                        onAllNodesWithContentDescription("to favorites", substring = true).onFirst().performClick()
                         // Favorites are saved on the database dispatcher, not the UI thread.
                         waitUntil(timeoutMillis = 10_000) { app.marketFavorites() == setOf(AssetId("bitcoin:btc")) }
                         assertEquals(app.marketFavorites(), PortfolioApplication(db) { System.currentTimeMillis() }.marketFavorites())

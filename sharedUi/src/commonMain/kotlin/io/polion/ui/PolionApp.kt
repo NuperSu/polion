@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -78,6 +80,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -1456,26 +1459,35 @@ private fun Product(
                                             item {
                                                 Panel {
                                                     Text("Sync settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Row(
+                                                        Modifier
+                                                            .toggleable(
+                                                                value = preferences.automaticRefresh,
+                                                                role = Role.Switch,
+                                                            ) { enabled ->
+                                                                onAutomaticSwitch(enabled)
+                                                            }.testTag("automatic-refresh"),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                    ) {
                                                         Text("Automatic refresh", Modifier.weight(1f))
-                                                        Switch(
-                                                            preferences.automaticRefresh,
-                                                            { enabled -> onAutomaticSwitch(enabled) },
-                                                            modifier = Modifier.testTag("automatic-refresh"),
-                                                        )
+                                                        Switch(checked = preferences.automaticRefresh, onCheckedChange = null)
                                                     }
                                                     Text(
                                                         "Prices hourly and wallet history every 30 minutes, subject to platform " +
                                                             "scheduling. Unchanged wallets are only checked, not downloaded again.",
                                                         color = Muted,
                                                     )
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Row(
+                                                        Modifier
+                                                            .toggleable(value = preferences.wifiOnly, role = Role.Switch) { enabled ->
+                                                                val updated = preferences.copy(wifiOnly = enabled)
+                                                                execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
+                                                                preferences = updated
+                                                            }.testTag("wifi-only-refresh"),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                    ) {
                                                         Text("Wi-Fi-only background refresh", Modifier.weight(1f))
-                                                        Switch(preferences.wifiOnly, { enabled ->
-                                                            val updated = preferences.copy(wifiOnly = enabled)
-                                                            execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
-                                                            preferences = updated
-                                                        }, modifier = Modifier.testTag("wifi-only-refresh"))
+                                                        Switch(checked = preferences.wifiOnly, onCheckedChange = null)
                                                     }
                                                     Text(
                                                         if (host.wifiOnlyRefreshSupported) {
@@ -1959,7 +1971,7 @@ private fun BalanceHero(
                                 } else {
                                     Color.Transparent
                                 },
-                            ).clickable { onPeriod(days) }
+                            ).selectable(selected = period == days, role = Role.RadioButton) { onPeriod(days) }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                 )
             }
@@ -1976,7 +1988,7 @@ private fun BalanceHero(
                 "$missing unpriced asset${if (missing == 1) "" else "s"} excluded · Add a price →",
                 color = Orange,
                 fontSize = 12.sp,
-                modifier = Modifier.clickable(onClick = onPrice).padding(vertical = 4.dp),
+                modifier = Modifier.clickable(role = Role.Button, onClick = onPrice).padding(vertical = 4.dp),
             )
         }
     }
@@ -2105,7 +2117,7 @@ private fun AssetsCard(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable {
+                    .clickable(role = Role.Button) {
                         onAsset(asset)
                     }.padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -2347,7 +2359,7 @@ private fun ActivityRow(
             .clip(
                 RoundedCornerShape(16.dp),
             ).background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(if (compact) 14.dp else 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -2658,7 +2670,7 @@ internal fun SyncBanner(
                 } else {
                     Mint
                 },
-            ).clickable(onClick = onDetails)
+            ).clickable(role = Role.Button, onClick = onDetails)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

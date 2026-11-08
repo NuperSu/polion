@@ -24,11 +24,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 
 data class ModelMarketCoin(
     val identity: ModelCoinIdentity,
@@ -108,7 +111,7 @@ fun ModelMain(
                         MarketCard(
                             Modifier
                                 .width(if (wide) 210.dp else 142.dp)
-                                .clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) }
+                                .clickable(role = Role.Button) { onAction(ModelMainAction.OpenCoin(coin.identity)) }
                                 .testTag("market-top-${coin.identity.id}"),
                         ) {
                             ModelCoinLogo(coin.identity)
@@ -139,7 +142,7 @@ fun ModelMain(
                         MarketCard(
                             Modifier
                                 .width(156.dp)
-                                .clickable { onAction(ModelMainAction.OpenCoin(coin.identity)) }
+                                .clickable(role = Role.Button) { onAction(ModelMainAction.OpenCoin(coin.identity)) }
                                 .testTag("market-trending-${coin.identity.id}"),
                         ) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -180,21 +183,29 @@ private fun FavoriteStar(
     enabled: Boolean,
     onAction: (ModelMainAction) -> Unit,
 ) {
-    Text(
-        if (coin.favorite) "★" else "☆",
-        fontSize = 24.sp,
-        color = if (coin.favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        modifier =
+    val name = coin.identity.name
+    val star =
+        Modifier.semantics {
+            contentDescription = "Favorite $name"
+            stateDescription = if (coin.favorite) "Favorite" else "Not favorite"
+        }
+    TouchTarget(
+        target =
             if (enabled) {
-                Modifier
-                    .semantics { contentDescription = "Favorite ${coin.identity.name}" }
-                    .clickable(role = Role.Button, onClickLabel = "Toggle favorite ${coin.identity.name}") {
+                star
+                    .clickable(role = Role.Button, onClickLabel = "Toggle favorite $name") {
                         onAction(ModelMainAction.ToggleFavorite(coin.identity))
                     }.testTag("favorite-${coin.identity.id}")
             } else {
-                Modifier
+                star
             },
-    )
+    ) {
+        Text(
+            if (coin.favorite) "★" else "☆",
+            fontSize = 24.sp,
+            color = if (coin.favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        )
+    }
 }
 
 @Composable
@@ -239,7 +250,14 @@ internal fun MarketHeading(
         ) {
             Text(eyebrow, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
-        Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 27.sp)
+        Text(
+            title,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            lineHeight = 27.sp,
+            modifier = Modifier.semantics { heading() },
+        )
     }
 }
 
@@ -292,7 +310,7 @@ private fun MarketCoinList(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .clickable(role = Role.Button) {
                         onAction(ModelMainAction.OpenCoin(coin.identity))
                     }.testTag("market-$section-${coin.identity.id}")
                     .padding(

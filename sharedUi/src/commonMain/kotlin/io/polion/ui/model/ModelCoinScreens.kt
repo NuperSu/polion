@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -331,7 +333,7 @@ fun ColumnScope.ModelCoinDetail(
                             Modifier
                                 .fillMaxWidth()
                                 .background(c.surface, RoundedCornerShape(14.dp))
-                                .clickable {
+                                .clickable(role = Role.Button) {
                                     actions.onTransaction(transaction.id)
                                 }.testTag("transaction-card-${transaction.id}")
                                 .padding(16.dp),
@@ -365,7 +367,7 @@ fun ColumnScope.ModelCoinDetail(
                     Column(
                         Modifier
                             .weight(1f)
-                            .clickable { actions.onAlertOpen(rule.id) }
+                            .clickable(role = Role.Button) { actions.onAlertOpen(rule.id) }
                             .testTag("alert-row-${rule.id}")
                             .padding(end = 12.dp),
                     ) {
@@ -373,10 +375,14 @@ fun ColumnScope.ModelCoinDetail(
                         Text(rule.description, color = c.onSurfaceVariant, fontSize = 12.sp)
                         Text(rule.source, color = c.onSurfaceVariant, fontSize = 12.sp)
                     }
+                    // The switch sits beside the row's clickable text, so it carries its own name instead of merging with it.
                     Switch(
                         rule.enabled,
                         { actions.onAlertEnabled(rule.id, it) },
-                        modifier = Modifier.testTag("alert-switch-${rule.id}"),
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = "Enable ${rule.title} alert" }
+                                .testTag("alert-switch-${rule.id}"),
                     )
                 }
             }

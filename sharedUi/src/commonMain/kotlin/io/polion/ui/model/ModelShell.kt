@@ -51,13 +51,16 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 import io.polion.ui.model.ModelPortfolioSummary
 import io.polion.ui.model.ModelPortfolioSummaryState
 import kotlin.math.PI
@@ -185,6 +188,7 @@ fun ModelShell(
                                         .size(54.dp)
                                         .background(MaterialTheme.colorScheme.onSurface, CircleShape)
                                         .clickable(
+                                            role = Role.Button,
                                             onClick = onAdd,
                                         ).semantics { contentDescription = "Add transaction" }
                                         .testTag("add-transaction"),
@@ -217,31 +221,39 @@ private fun ModelHeader(
     var expanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Box {
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .clickable {
-                        // A single destination opens directly instead of through a one-item menu.
-                        if (back) {
-                            onBack()
-                        } else if (menuItems.size == 1) {
-                            menu(menuItems.single())
-                        } else {
-                            expanded = true
-                        }
-                    }.semantics {
-                        contentDescription =
+            TouchTarget(
+                target =
+                    Modifier
+                        .clickable(role = Role.Button) {
+                            // A single destination opens directly instead of through a one-item menu.
                             if (back) {
-                                "Back"
+                                onBack()
                             } else if (menuItems.size == 1) {
-                                menuItems.single()
+                                menu(menuItems.single())
                             } else {
-                                "Settings and tools"
+                                expanded = true
                             }
-                    }.testTag(if (back) "model-back" else "model-menu"),
-                contentAlignment = Alignment.Center,
+                        }.semantics {
+                            contentDescription =
+                                if (back) {
+                                    "Back"
+                                } else if (menuItems.size == 1) {
+                                    menuItems.single()
+                                } else {
+                                    "Settings and tools"
+                                }
+                        }.testTag(if (back) "model-back" else "model-menu"),
             ) {
-                if (back) Text("‹", fontSize = 32.sp) else ModelIcon("settings", Modifier.size(24.dp), MaterialTheme.colorScheme.onSurface)
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    if (back) {
+                        Text(
+                            "‹",
+                            fontSize = 32.sp,
+                        )
+                    } else {
+                        ModelIcon("settings", Modifier.size(24.dp), MaterialTheme.colorScheme.onSurface)
+                    }
+                }
             }
             DropdownMenu(expanded, { expanded = false }) {
                 menuItems.forEach { name ->
@@ -252,7 +264,9 @@ private fun ModelHeader(
                 }
             }
         }
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold) }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+        }
         TextButton(
             onClick = refresh,
             enabled = !refreshQueued && !refreshing,
@@ -364,7 +378,8 @@ private fun ModelIcon(
     modifier: Modifier,
     tint: Color,
 ) {
-    Canvas(modifier) {
+    // Icons are decorative: each caller pairs them with a text label or a content description on the parent.
+    Canvas(modifier.clearAndSetSemantics {}) {
         val w = size.width
         val h = size.height
         val s = 1.7.dp.toPx()

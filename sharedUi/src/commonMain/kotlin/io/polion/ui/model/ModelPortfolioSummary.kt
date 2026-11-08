@@ -37,9 +37,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 
 /** Preformatted values and normalized chart observations supplied by the host. */
 data class ModelPortfolioSummaryState(
@@ -116,7 +118,7 @@ fun ModelPortfolioSummary(
                         if (onExplain !=
                             null
                         ) {
-                            Modifier.clickable(onClick = onExplain)
+                            Modifier.clickable(role = Role.Button, onClick = onExplain)
                         } else {
                             Modifier
                         },
@@ -137,7 +139,7 @@ fun ModelPortfolioSummary(
                                 if (onCurrency !=
                                     null
                                 ) {
-                                    Modifier.clickable(onClick = onCurrency)
+                                    Modifier.clickable(role = Role.Button, onClick = onCurrency)
                                 } else {
                                     Modifier
                                 },
@@ -146,19 +148,22 @@ fun ModelPortfolioSummary(
                 currencyMenuContent()
             }
             onToggleAmounts?.let { toggle ->
-                Canvas(
-                    Modifier
-                        .padding(bottom = 12.dp)
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .clickable(
-                            role = Role.Button,
-                            onClickLabel = if (state.amountsHidden) "Show amounts" else "Hide amounts",
-                            onClick = toggle,
-                        ).semantics { contentDescription = if (state.amountsHidden) "Show amounts" else "Hide amounts" }
-                        .testTag("balance-visibility")
-                        .padding(3.dp),
-                ) { drawEye(colors.muted, closed = state.amountsHidden) }
+                TouchTarget(
+                    modifier = Modifier.padding(bottom = 12.dp),
+                    target =
+                        Modifier
+                            .clip(CircleShape)
+                            .clickable(
+                                role = Role.Button,
+                                onClickLabel = if (state.amountsHidden) "Show amounts" else "Hide amounts",
+                                onClick = toggle,
+                            ).semantics {
+                                contentDescription = if (state.amountsHidden) "Show amounts" else "Hide amounts"
+                                stateDescription = if (state.amountsHidden) "Amounts hidden" else "Amounts shown"
+                            }.testTag("balance-visibility"),
+                ) {
+                    Canvas(Modifier.size(26.dp).padding(3.dp)) { drawEye(colors.muted, closed = state.amountsHidden) }
+                }
             }
         }
         state.secondaryBalance?.let {

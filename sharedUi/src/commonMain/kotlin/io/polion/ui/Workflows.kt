@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -243,12 +245,14 @@ internal fun WorkflowDialog(
                 if (type == "portfolio") {
                     Text("Select accounts. Leave empty to include every account.", fontSize = 12.sp)
                     data.ownership.accounts.filter { "polion:archived" !in it.tags }.forEach { a ->
-                        Row {
-                            Checkbox(a.id in selectedAccounts, { checked ->
+                        Row(
+                            Modifier.toggleable(value = a.id in selectedAccounts, role = Role.Checkbox) { checked ->
                                 selectedAccounts =
                                     if (checked) selectedAccounts + a.id else selectedAccounts - a.id
-                            })
-                            ; Text(a.label, Modifier.padding(top = 12.dp))
+                            },
+                        ) {
+                            Checkbox(checked = a.id in selectedAccounts, onCheckedChange = null)
+                            Text(a.label, Modifier.padding(top = 12.dp))
                         }
                     }
                 }
@@ -530,20 +534,26 @@ internal fun WorkflowDialog(
                         "Closed hourly and daily prices refresh while scheduling is available. No API key is needed.",
                     fontSize = 13.sp,
                 )
-                Row {
-                    Checkbox(automaticPriceConsent, { accepted ->
-                        automaticPriceConsent = accepted
-                        if (accepted) automaticPortfolioPrices = true
-                        execute("Refresh settings saved") { applyAutomaticRefresh(app, host, accepted) }
-                    }, modifier = Modifier.testTag("automatic-price-consent"))
+                Row(
+                    Modifier
+                        .toggleable(value = automaticPriceConsent, role = Role.Checkbox) { accepted ->
+                            automaticPriceConsent = accepted
+                            if (accepted) automaticPortfolioPrices = true
+                            execute("Refresh settings saved") { applyAutomaticRefresh(app, host, accepted) }
+                        }.testTag("automatic-price-consent"),
+                ) {
+                    Checkbox(checked = automaticPriceConsent, onCheckedChange = null)
                     Text("Allow automatic Kraken prices and wallet refresh", modifier = Modifier.padding(top = 12.dp))
                 }
                 if (automaticPriceConsent) {
-                    Row {
-                        Checkbox(automaticPortfolioPrices, { accepted ->
-                            automaticPortfolioPrices = accepted
-                            execute("Price currencies saved") { app.setAutomaticPortfolioPriceConsent(accepted) }
-                        }, modifier = Modifier.testTag("automatic-portfolio-price-consent"))
+                    Row(
+                        Modifier
+                            .toggleable(value = automaticPortfolioPrices, role = Role.Checkbox) { accepted ->
+                                automaticPortfolioPrices = accepted
+                                execute("Price currencies saved") { app.setAutomaticPortfolioPriceConsent(accepted) }
+                            }.testTag("automatic-portfolio-price-consent"),
+                    ) {
+                        Checkbox(checked = automaticPortfolioPrices, onCheckedChange = null)
                         Text("Include other portfolio currencies", modifier = Modifier.padding(top = 12.dp))
                     }
                     Text(
@@ -572,16 +582,14 @@ internal fun WorkflowDialog(
                     "CoinGecko receives the coin, currency and time range, plus your IP address. Wallet addresses are not sent. Saved quotes are available offline and do not establish acquisition cost. The 90-day range includes hourly points; the 365-day range uses daily points.",
                     fontSize = 13.sp,
                 )
-                Row {
-                    Checkbox(
-                        priceConsent,
-                        { accepted ->
+                Row(
+                    Modifier
+                        .toggleable(value = priceConsent, enabled = !fetchingPrice, role = Role.Checkbox) { accepted ->
                             priceConsent = accepted
                             scope.launch { withContext(host.dispatcher) { app.setPriceSourceConsent(accepted) } }
-                        },
-                        enabled = !fetchingPrice,
-                        modifier = Modifier.testTag("price-source-consent"),
-                    )
+                        }.testTag("price-source-consent"),
+                ) {
+                    Checkbox(checked = priceConsent, onCheckedChange = null, enabled = !fetchingPrice)
                     Text("Allow CoinGecko price requests", modifier = Modifier.padding(top = 12.dp))
                 }
                 Text("An optional CoinGecko API key from Settings › API Keys raises the request limit.", fontSize = 13.sp)
@@ -625,8 +633,8 @@ internal fun WorkflowDialog(
                     fontSize = 13.sp,
                 )
                 Field("Esplora API endpoint", address) { address = it }
-                Row {
-                    Checkbox(consent, { consent = it }, modifier = Modifier.testTag("bitcoin-source-consent"))
+                Row(Modifier.toggleable(value = consent, role = Role.Checkbox) { consent = it }.testTag("bitcoin-source-consent")) {
+                    Checkbox(checked = consent, onCheckedChange = null)
                     Text("I allow public address queries to this endpoint", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
                 }
                 Text(
@@ -700,13 +708,13 @@ internal fun WorkflowDialog(
                         "Coverage remains provider-based and unverified.",
                     fontSize = 12.sp,
                 )
-                Row {
-                    Checkbox(
-                        acceptedRecovery,
-                        { acceptedRecovery = it },
-                        enabled = syncStatus.phase != SyncPhase.SYNCING,
-                        modifier = Modifier.testTag("bitcoin-recovery-consent"),
-                    )
+                val recoveryEnabled = syncStatus.phase != SyncPhase.SYNCING
+                Row(
+                    Modifier
+                        .toggleable(value = acceptedRecovery, enabled = recoveryEnabled, role = Role.Checkbox) { acceptedRecovery = it }
+                        .testTag("bitcoin-recovery-consent"),
+                ) {
+                    Checkbox(checked = acceptedRecovery, onCheckedChange = null, enabled = recoveryEnabled)
                     Text("I want to rescan full Bitcoin history", Modifier.weight(1f).padding(top = 8.dp), fontSize = 13.sp)
                 }
                 OutlinedButton(
@@ -737,8 +745,8 @@ internal fun WorkflowDialog(
                 if (type ==
                     "restore"
                 ) {
-                    Row {
-                        Checkbox(acceptedBackup, { acceptedBackup = it })
+                    Row(Modifier.toggleable(value = acceptedBackup, role = Role.Checkbox) { acceptedBackup = it }) {
+                        Checkbox(checked = acceptedBackup, onCheckedChange = null)
                         Text(
                             "Replace the current local portfolio after validating the backup",
                             Modifier.weight(1f).padding(top = 8.dp),
@@ -942,9 +950,9 @@ private fun RuleEditor(
     var error by remember(existing) { mutableStateOf<String?>(null) }
     if (existing == null) Field("Rule ID", id) { id = it } else Text("Rule ID: ${existing.id}")
     Field("Priority", priority) { priority = it }
-    Row {
+    Row(Modifier.toggleable(value = enabled, role = Role.Switch) { enabled = it }.testTag("rule-enabled")) {
         Text("Enabled")
-        Switch(enabled, { enabled = it }, modifier = Modifier.testTag("rule-enabled"))
+        Switch(checked = enabled, onCheckedChange = null)
     }
     Choice(
         "Match original classification",

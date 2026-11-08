@@ -30,6 +30,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -188,7 +190,12 @@ fun ModelInsights(
                 if (state.gains.isEmpty()) Text("No holdings or disposals", color = c.onSurfaceVariant, fontSize = 12.sp)
                 state.gains.forEach { row ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { onAction(ModelInsightsAction.OpenAsset(row.id)) }.padding(vertical = 6.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = Role.Button,
+                            ) { onAction(ModelInsightsAction.OpenAsset(row.id)) }
+                            .padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(row.asset, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
@@ -229,12 +236,12 @@ fun ModelInsights(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MarketCard(Modifier.weight(1f).testTag("insights-trades")) {
-                Text("Trade Statistics", fontWeight = FontWeight.Bold)
+                Text("Trade Statistics", fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                 Text(state.trades, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 Text("trades · ${state.tradedAssets} assets · ${state.range}", color = c.onSurfaceVariant, fontSize = 12.sp)
             }
             MarketCard(Modifier.weight(1f).testTag("insights-fees")) {
-                Text("Fees", fontWeight = FontWeight.Bold)
+                Text("Fees", fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                 Text(state.feesTotal ?: if (state.fees.isEmpty()) "None" else "—", fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 state.fees.forEach { Text("${it.amount} · ${it.value}", color = c.onSurfaceVariant, fontSize = 12.sp) }
                 Text(state.range, color = c.onSurfaceVariant, fontSize = 12.sp)
@@ -348,7 +355,7 @@ private fun SliceLegend(
     val c = MaterialTheme.colorScheme
     slices.forEach { slice ->
         Row(
-            Modifier.fillMaxWidth().clickable { onSlice(slice.id) }.padding(vertical = 4.dp),
+            Modifier.fillMaxWidth().clickable(role = Role.Button) { onSlice(slice.id) }.padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {

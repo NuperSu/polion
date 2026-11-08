@@ -20,6 +20,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import io.polion.core.application.CsvImportReceipt
 import io.polion.core.application.CsvReceiptRow
@@ -164,7 +167,8 @@ internal fun CsvImportHistorySection(
         Column(
             Modifier
                 .fillMaxWidth()
-                .clickable { toggle(receipt.id) }
+                .clickable(role = Role.Button) { toggle(receipt.id) }
+                .semantics { stateDescription = if (expanded == receipt.id) "Expanded" else "Collapsed" }
                 .testTag("csv-receipt-${receipt.id}")
                 .padding(vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -30,9 +31,15 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.polion.ui.TouchTarget
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -60,13 +67,13 @@ fun SettingsMenuRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .clickable(role = Role.Button, onClick = onClick)
                 .testTag(tag)
                 .padding(vertical = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val tint = green
-            Canvas(Modifier.size(26.dp)) { drawSettingsIcon(icon, tint) }
+            Canvas(Modifier.size(26.dp).clearAndSetSemantics {}) { drawSettingsIcon(icon, tint) }
             Spacer(Modifier.width(18.dp))
             Text(title, color = foreground, fontSize = 18.sp, modifier = Modifier.weight(1f))
             Chevron()
@@ -82,13 +89,22 @@ fun SettingsSubHeader(
     onBack: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TouchTarget(
+            target =
+                Modifier
+                    .clickable(role = Role.Button, onClick = onBack)
+                    .semantics { contentDescription = "Back" }
+                    .testTag("settings-back"),
+        ) {
+            Text("←", color = foreground, fontSize = 24.sp, modifier = Modifier.padding(end = 12.dp, top = 4.dp, bottom = 4.dp))
+        }
         Text(
-            "←",
+            title,
             color = foreground,
-            fontSize = 24.sp,
-            modifier = Modifier.clickable(onClick = onBack).testTag("settings-back").padding(end = 12.dp, top = 4.dp, bottom = 4.dp),
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f).semantics { heading() },
         )
-        Text(title, color = foreground, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
     }
 }
 
@@ -99,7 +115,7 @@ fun SettingsSectionLabel(text: String) {
         color = foreground,
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 18.dp, bottom = 4.dp),
+        modifier = Modifier.padding(top = 18.dp, bottom = 4.dp).semantics { heading() },
     )
 }
 
@@ -147,17 +163,20 @@ fun SettingsSwitchRow(
     onChange: (Boolean) -> Unit = {},
 ) {
     Column(Modifier.alpha(if (enabled) 1f else UNAVAILABLE_ALPHA)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        // The whole row is the toggle, so the title and explanation are read together with the switch state.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+                .then(tag?.let { Modifier.testTag(it) } ?: Modifier)
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(title, color = foreground, fontSize = 18.sp)
                 description?.let { Text(it, color = muted, fontSize = 13.sp, lineHeight = 17.sp) }
             }
-            Switch(
-                checked,
-                if (enabled) onChange else null,
-                enabled = enabled,
-                modifier = tag?.let { Modifier.testTag(it) } ?: Modifier,
-            )
+            Switch(checked = checked, onCheckedChange = null, enabled = enabled)
         }
         HorizontalDivider(color = divider)
     }
@@ -190,7 +209,7 @@ private fun SettingsRowFrame(
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable(enabled = enabled, onClick = onClick)
+                .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
                 .then(tag?.let { Modifier.testTag(it) } ?: Modifier)
                 .padding(vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -202,7 +221,7 @@ private fun SettingsRowFrame(
 
 @Composable
 private fun Chevron() {
-    Text("›", color = foreground, fontSize = 26.sp, modifier = Modifier.padding(start = 8.dp))
+    Text("›", color = foreground, fontSize = 26.sp, modifier = Modifier.padding(start = 8.dp).clearAndSetSemantics {})
 }
 
 private fun DrawScope.drawSettingsIcon(
