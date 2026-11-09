@@ -150,7 +150,10 @@ class EvmAssetsApplicationTest {
                 """{"prices":[[${now - 200 * day},$price],[${now - 100 * day},$price]]}"""
             }
             // Two linked coins, daily then hourly: the first call stops at its request limit.
-            assertEquals(6, app.backfillLinkedCoinHistory(transport, maxRequests = 2))
+            val pauses = mutableListOf<Long>()
+            assertEquals(6, app.backfillLinkedCoinHistory(transport, maxRequests = 2, pause = { pauses += it }))
+            // A pause precedes every request, so the host's paced CoinGecko transport accepts each one.
+            assertEquals(listOf(6_100L, 6_100L), pauses)
             assertEquals(
                 listOf("ethereum/market_chart?vs_currency=usd&days=365", "usd-coin/market_chart?vs_currency=usd&days=365"),
                 requests.map { it.substringAfter("/coins/") },

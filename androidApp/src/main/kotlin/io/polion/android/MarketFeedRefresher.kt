@@ -77,7 +77,7 @@ internal object MarketFeedRefresher {
         runCatching { app.refreshEvmCatalog(transport::feed) }
         runCatching { app.refreshLinkedCoinPrices(transport::feed) }
         runCatching { app.refreshLinkedCoinLogos(transport::feed) }
-        runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }) }
+        runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
     }
 
     /**

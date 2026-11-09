@@ -107,6 +107,10 @@ const val DEFAULT_LOCK_DELAY_MILLIS = 300_000L
 private const val NOTIFICATION_FIRST_CHECK_MILLIS = 30_000L
 private const val NOTIFICATION_INTERVAL_MILLIS = 300_000L
 
+/** Linked-coin history requests per backfill run, spaced past the CoinGecko transport's 6-second pacing. */
+private const val LINKED_HISTORY_REQUESTS_PER_RUN = 12
+private const val LINKED_HISTORY_INTERVAL_MILLIS = 6_100L
+
 private const val MARKET_PAUSED_MESSAGE = "Market data is paused while data is restored."
 
 internal class DesktopHost(
@@ -120,6 +124,10 @@ internal class DesktopHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     private val unlockExecutor = Executors.newSingleThreadExecutor()
     private val priceExecutor = Executors.newSingleThreadScheduledExecutor()
+
+    /** Linked-coin history backfills run here, one at a time, so they never hold up a refresh's result. */
+    private val historyExecutor = Executors.newSingleThreadExecutor()
+    private val historyBackfillQueued = AtomicBoolean(false)
     private val manualPricePending = AtomicBoolean(false)
     override val priceRefreshStatus = MutableStateFlow(io.polion.ui.PriceRefreshPhase.IDLE)
     private var automaticPriceTask: java.util.concurrent.ScheduledFuture<*>? = null
@@ -627,7 +635,43 @@ internal class DesktopHost(
         runCatching { application.refreshEvmCatalog(priceTransport::feed) }
         runCatching { application.refreshLinkedCoinPrices(priceTransport::feed) }
         runCatching { application.refreshLinkedCoinLogos(priceTransport::feed) }
-        runCatching { application.backfillLinkedCoinHistory({ url, key -> priceTransport.get(url, key.orEmpty()) }) }
+        backfillLinkedCoinHistory()
+    }
+
+    /**
+     * Fills missing linked-coin price history, one CoinGecko request at a time. Each request and its write run under the
+     * price gate on a fresh connection, so a restore never meets an open connection; the pauses run outside it. Later
+     * calls while one is queued do nothing.
+     */
+    private fun backfillLinkedCoinHistory() {
+        if (closing.get() || !historyBackfillQueued.compareAndSet(false, true)) return
+        runCatching {
+            historyExecutor.execute {
+                historyBackfillQueued.set(false)
+                var changed = false
+                runCatching {
+                    repeat(LINKED_HISTORY_REQUESTS_PER_RUN) {
+                        Thread.sleep(LINKED_HISTORY_INTERVAL_MILLIS)
+                        val recorded =
+                            synchronized(priceGate) {
+                                if (closing.get() || priceRestorePaused) return@runCatching
+                                JvmSqliteDatabase(file.toString()).use { connection ->
+                                    val application = PortfolioApplication(connection, System::currentTimeMillis)
+                                    if (!application.marketDataConsent()) return@runCatching
+                                    application.backfillLinkedCoinHistory(
+                                        { url, key -> priceTransport.get(url, key.orEmpty()) },
+                                        maxRequests = 1,
+                                    )
+                                }
+                            }
+                        // Nothing recorded means every range is filled.
+                        if (recorded == 0) return@runCatching
+                        changed = true
+                    }
+                }
+                if (changed) dataRevision.update { it + 1 }
+            }
+        }.onFailure { historyBackfillQueued.set(false) }
     }
 
     override fun refreshPreferences(): io.polion.ui.RefreshPreferences =
@@ -1024,6 +1068,7 @@ internal class DesktopHost(
         automaticPriceTask?.cancel(false)
         synchronized(hostLock) { notificationTask?.cancel(false) }
         priceExecutor.shutdownNow()
+        historyExecutor.shutdownNow()
         syncQueue.shutdown()
         executor.execute {
             // The network worker must finish cancellation and release SQLite before either connection closes.

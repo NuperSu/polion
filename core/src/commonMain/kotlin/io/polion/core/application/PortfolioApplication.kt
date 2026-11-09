@@ -628,12 +628,15 @@ class PortfolioApplication(
      * Fills the price history of held linked coins from CoinGecko's `/market_chart`, once per coin and currency, so the
      * portfolio chart can value them before the address was tracked. Every coin first gets a year of daily prices, which
      * keeps each chart point within the one-day price age; then 90 days of hourly prices. Makes at most [maxRequests]
-     * requests per call; the rest follow on later calls. Returns the number of prices recorded.
+     * requests per call, calling [pause] with [intervalMillis] before each so a paced transport accepts it; the rest
+     * follow on later calls. Returns the number of prices recorded.
      */
     fun backfillLinkedCoinHistory(
         transport: (url: String, apiKey: String?) -> String,
         baseUrl: String = "https://api.coingecko.com/api/v3",
         maxRequests: Int = 12,
+        intervalMillis: Long = 6_100L,
+        pause: (Long) -> Unit = {},
     ): Int {
         require(marketDataConsent()) { "Market data consent required" }
         val links = shownLinks()
@@ -646,6 +649,7 @@ class PortfolioApplication(
                     val marker = "linked_history:$coin:${quote.value}:$days"
                     if (marketFeeds.deviceSetting(marker) != null) continue
                     if (requests++ >= maxRequests) return recorded
+                    pause(intervalMillis)
                     val url = "$baseUrl/coins/$coin/market_chart?vs_currency=${quote.value.lowercase()}&days=$days"
                     val points = CoingeckoPrices.parseChart(transport(url, coingeckoApiKey()))
                     val observed = now()
