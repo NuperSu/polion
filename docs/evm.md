@@ -37,6 +37,10 @@ Supported chains: Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mai
 - **Contract payments:** where Alchemy has no contract-made transfer list, the chain says "Payments made by contracts are not listed on this chain".
 - **Staking withdrawals** on Ethereum and Gnosis are not available. The decoder supports them for a provider that supplies them.
 - **Balance check:** after each full read, the ledger's native balance and every listed token balance are compared with Alchemy's, except hidden assets. Spam tokens' events need not add up. Any of the gaps above shows as a difference rather than a silently wrong total.
+- **Rebasing tokens:** Lido stETH, ether.fi eETH, Origin Dollar and Ampleforth on Ethereum change balance without transfers.
+  - On every refresh, including one with no new transfer, the ledger is brought to Alchemy's balance with one activity at the time of the check.
+  - Growth of a yield token is a reward; other changes, including Ampleforth's supply adjustments and Lido's 1–2 wei transfer rounding, are adjustments.
+  - The rewards are booked when seen rather than day by day, so earlier chart points show the transferred amount.
 
 ## Assets and coins
 

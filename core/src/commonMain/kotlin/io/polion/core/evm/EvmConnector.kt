@@ -122,7 +122,11 @@ class EvmConnector(
                     ?.transactionHash,
                 "n$sent",
             ).joinToString("|") { it ?: "-" }
-        if (!force && head == state.head) return
+        if (!force && head == state.head) {
+            // A rebasing token's balance changes without a transfer, so it is read on every refresh.
+            if (app.holdsRebasing(account, chain)) checkBalances(app, account, address, chain)
+            return
+        }
 
         val transactions = mutableListOf<EvmTransaction>()
         val internal = mutableListOf<EvmInternalTransfer>()
@@ -183,10 +187,22 @@ class EvmConnector(
                 if (!network.internalTransfers) "Payments made by contracts are not listed on this chain" else null,
             ).joinToString(". ").ifEmpty { null },
         )
+        checkBalances(app, account, address, chain)
+    }
+
+    /** Reads the provider's balances, follows rebasing tokens to them, and records any remaining difference. */
+    private fun checkBalances(
+        app: PortfolioApplication,
+        account: AccountId,
+        address: String,
+        chain: Long,
+    ) {
         val (balances, errors) = Alchemy.parseTokenBalances(post(Alchemy.tokensUrl(), Alchemy.tokensBody(address, listOf(chain))))
         require(errors.isEmpty()) { "Alchemy could not report balances on this chain" }
-        val native = balances.firstOrNull { it.second.standard == EvmTokenStandard.NATIVE }?.second?.value ?: ExactInteger.ZERO
-        app.checkEvmBalances(account, address, chain, native, balances.map { it.second })
+        val tokens = balances.map { it.second }
+        app.reconcileRebasingBalances(account, address, chain, tokens)
+        val native = tokens.firstOrNull { it.standard == EvmTokenStandard.NATIVE }?.value ?: ExactInteger.ZERO
+        app.checkEvmBalances(account, address, chain, native, tokens)
     }
 
     private fun pages(

@@ -1788,6 +1788,99 @@ class PortfolioApplication(
         return saved
     }
 
+    /** Whether [account] holds a rebasing token on [chainId], so its balance is read even when no transfer is new. */
+    fun holdsRebasing(
+        account: AccountId,
+        chainId: Long,
+    ): Boolean {
+        heldAssets()
+        return holdings
+            .current(BalanceCoverage.UNKNOWN, now())
+            .quantities
+            .any { (key, units) ->
+                key.account == account &&
+                    key.asset in EvmAssets.REBASING &&
+                    EvmAssets.chainOf(key.asset) == chainId &&
+                    units.sign != 0
+            }
+    }
+
+    /**
+     * Brings rebasing tokens ([EvmAssets.REBASING]) on one chain to the provider's balance, which changes without
+     * transfers. Each difference is one activity at the time of the check: a reward when a yield token grows, otherwise
+     * an adjustment. Only tokens the provider lists are compared. Returns the number of activities recorded.
+     */
+    fun reconcileRebasingBalances(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        tokens: List<io.polion.core.evm.EvmTokenBalance>,
+    ): Int {
+        require(evmConsent()) { "EVM consent required" }
+        heldAssets()
+        val ledger =
+            holdings
+                .current(BalanceCoverage.UNKNOWN, now())
+                .quantities
+                .filterKeys { it.account == account }
+                .mapKeys { it.key.asset }
+        val provider =
+            tokens
+                .filter { it.standard == EvmTokenStandard.ERC20 }
+                .associate { EvmAssets.token(chainId, it.contract) to it.value }
+        val at = now()
+        var saved = 0
+        db.transaction {
+            EvmAssets.REBASING.filterKeys { EvmAssets.chainOf(it) == chainId && it in provider }.forEach { (asset, yields) ->
+                val difference = provider.getValue(asset) - (ledger[asset] ?: io.polion.core.model.ExactInteger.ZERO)
+                if (difference.sign == 0) return@forEach
+                val contract = asset.value.substringAfter("/erc20:")
+                val id = "evm-rebase:$chainId:$contract:$address:$at"
+                val payload = "evm-rebase-1|$chainId|$contract|$address|$at|$difference"
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            id,
+                            "eip155:$chainId",
+                            "rebase-$contract-$at",
+                            "eip155:$chainId",
+                            "alchemy",
+                            Instant.fromEpochMilliseconds(at).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val reward = yields && difference.sign > 0
+                activities.saveInTransaction(
+                    Activity(
+                        ActivityId(id),
+                        at,
+                        "evm-rebase:$chainId:${at.toString().padStart(20, '0')}:$contract",
+                        if (reward) ActivityKind.REWARD else ActivityKind.OTHER,
+                        ActivityStatus.CONFIRMED,
+                        listOf(
+                            io.polion.core.ledger.Movement(
+                                io.polion.core.model
+                                    .EventId("$id:balance"),
+                                account,
+                                io.polion.core.model
+                                    .AtomicAmount(asset, difference),
+                                if (reward) io.polion.core.ledger.MovementRole.REWARD else io.polion.core.ledger.MovementRole.TRANSFER,
+                            ),
+                        ),
+                        setOf(source),
+                        io.polion.core.evm.EvmDecoder.VERSION,
+                    ),
+                )
+                saved++
+            }
+        }
+        if (saved > 0) invalidate()
+        return saved
+    }
+
     /**
      * Compares this address's ledger balances on one chain with the provider's: the native balance and every token
      * balance it lists. Returns and records the differences, or null when everything matches.

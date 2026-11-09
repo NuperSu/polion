@@ -67,6 +67,22 @@ object EvmAssets {
         return AssetId("eip155:$chainId/nft:${evmAddress(contract)}:$tokenId")
     }
 
+    /**
+     * Rebasing tokens: balances change without transfers, so the ledger follows the provider's balance. The value says
+     * whether a growing balance is yield (a reward); Ampleforth's supply adjustments are not.
+     */
+    val REBASING: Map<AssetId, Boolean> =
+        mapOf(
+            // Lido stETH
+            token(1, "0xae7ab96520de3a18e5e111b5eaab095312d7fe84") to true,
+            // ether.fi eETH
+            token(1, "0x35fa164735182de50811e8e2e824cfb9b6118ac2") to true,
+            // Origin Dollar (OUSD)
+            token(1, "0x2a8e1e676ec238d8a992307b495b45b3feaa5e86") to true,
+            // Ampleforth (AMPL)
+            token(1, "0xd46ba6d942050d489dbd938a2c909a5d5039a161") to false,
+        )
+
     /** The chain an EVM asset ID belongs to, or null for other assets. */
     fun chainOf(asset: AssetId): Long? =
         asset.value

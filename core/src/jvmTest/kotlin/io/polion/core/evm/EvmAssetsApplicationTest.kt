@@ -202,6 +202,73 @@ class EvmAssetsApplicationTest {
         }
     }
 
+    @Test fun rebasingTokensFollowTheProviderBalanceAsRewards() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val contract = "0xae7ab96520de3a18e5e111b5eaab095312d7fe84"
+            val steth = EvmAssets.token(1, contract)
+            app.registerAsset(
+                AssetDefinition(steth, AssetIdentity(AssetKind.TOKEN, evmNetwork(1), contract, null)),
+                AssetMetadata("stETH", "Lido stETH", 18, 0),
+            )
+            // Lido transfers lose a wei or two to rounding.
+            app.saveManualActivity(
+                Activity(
+                    ActivityId("steth-in"),
+                    2,
+                    "steth-in",
+                    ActivityKind.DEPOSIT,
+                    ActivityStatus.CONFIRMED,
+                    listOf(
+                        Movement(
+                            EventId("in"),
+                            account,
+                            AtomicAmount(steth, ExactInteger.parse("999999999999999998")),
+                            MovementRole.TRANSFER,
+                        ),
+                    ),
+                    emptySet(),
+                    null,
+                    manual = true,
+                ),
+            )
+            app.setEvmConsent(true)
+            // The fixture catalog has no stETH coin, so it would start hidden.
+            app.setAssetShown(steth, true)
+            assertTrue(app.holdsRebasing(account, 1))
+            assertTrue(!app.holdsRebasing(account, 8453))
+
+            fun balance(units: String) = listOf(EvmTokenBalance(contract, EvmTokenStandard.ERC20, null, ExactInteger.parse(units)))
+            assertEquals(1, app.reconcileRebasingBalances(account, "0x" + "1".repeat(40), 1, balance("1014834724316850471")))
+            val reward =
+                app
+                    .snapshot()
+                    .activities
+                    .map { it.activity }
+                    .single { it.id.value.startsWith("evm-rebase:") }
+            assertEquals(ActivityKind.REWARD, reward.kind)
+            assertEquals(
+                "14834724316850473",
+                reward.movements
+                    .single()
+                    .amount.atomicUnits
+                    .toString(),
+            )
+            assertEquals(0, app.reconcileRebasingBalances(account, "0x" + "1".repeat(40), 1, balance("1014834724316850471")))
+            // Ordinary tokens are left to the balance check, which reports a difference instead.
+            assertEquals(0, app.reconcileRebasingBalances(account, "0x" + "1".repeat(40), 8453, emptyList()))
+            assertEquals(
+                "1014834724316850471",
+                app
+                    .snapshot()
+                    .valuations
+                    .single { it.asset == steth }
+                    .amount.atomicUnits
+                    .toString(),
+            )
+        }
+    }
+
     @Test fun linkedAssetsTakeTheirCoinLogo() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
