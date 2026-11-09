@@ -846,7 +846,7 @@ internal fun ModelWorkspace(
                         }, label = { Text("Search transactions") }, modifier = Modifier.fillMaxWidth().testTag("coin-transaction-search"))
                         TransactionChoice(
                             "Transaction type",
-                            listOf("All", "Buy", "Sell", "Transfer", "Deposit", "Withdrawal", "Reward", "Fee", "Other").map {
+                            listOf("All", "Buy", "Sell", "Transfer", "Deposit", "Withdrawal", "Reward", "Fee", "Adjustment", "Other").map {
                                 it to
                                     it
                             },

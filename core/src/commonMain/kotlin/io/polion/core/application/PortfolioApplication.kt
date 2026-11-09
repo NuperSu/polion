@@ -1888,6 +1888,109 @@ class PortfolioApplication(
     }
 
     /**
+     * Brings the native coin on one chain to the provider's [balance] when the transfer list misses movements: payments
+     * made by contracts on chains where none are listed, fees of unlisted transactions, or staking withdrawals. The
+     * adjustments are derived again on every call and replace the previous ones:
+     * - wherever the running balance would fall below zero, the missing amount is an inflow 1 ms before that activity,
+     *   the latest moment it can have arrived;
+     * - the remaining difference follows 1 ms after the chain's last activity.
+     * Returns the number of adjustments.
+     */
+    fun reconcileNativeBalance(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        balance: io.polion.core.model.ExactInteger,
+    ): Int {
+        require(evmConsent()) { "EVM consent required" }
+        val native = EvmAssets.native(chainId)
+        val prefix = "evm-adjust:$chainId:$address:"
+        val zero = io.polion.core.model.ExactInteger.ZERO
+        val history =
+            ledger()
+                .activities
+                .map { it.activity }
+                .filter { it.status == ActivityStatus.CONFIRMED && !it.id.value.startsWith(prefix) }
+                .mapNotNull { activity ->
+                    activity.movements
+                        .filter { it.accountId == account && it.amount.assetId == native }
+                        .takeIf { it.isNotEmpty() }
+                        ?.fold(zero) { sum, movement -> sum + movement.amount.atomicUnits }
+                        ?.let { activity.occurredAtEpochMillis to it }
+                }.sortedBy { it.first }
+        val adjustments = mutableListOf<Pair<Long, io.polion.core.model.ExactInteger>>()
+        var running = zero
+        history.forEach { (at, change) ->
+            running += change
+            if (running.sign < 0) {
+                adjustments += (at - 1) to -running
+                running = zero
+            }
+        }
+        val rest = balance - running
+        if (rest.sign != 0) adjustments += ((history.lastOrNull()?.first ?: now()) + 1) to rest
+        val wanted =
+            adjustments.mapIndexed { index, (at, amount) ->
+                val id = "$prefix$at:$index"
+                Activity(
+                    ActivityId(id),
+                    at,
+                    "evm-adjust:$chainId:${at.toString().padStart(20, '0')}:$index",
+                    ActivityKind.OTHER,
+                    ActivityStatus.CONFIRMED,
+                    listOf(
+                        io.polion.core.ledger.Movement(
+                            io.polion.core.model
+                                .EventId("$id:native"),
+                            account,
+                            io.polion.core.model
+                                .AtomicAmount(native, amount),
+                            io.polion.core.ledger.MovementRole.TRANSFER,
+                        ),
+                    ),
+                    emptySet(),
+                    null,
+                    manual = true,
+                ) to "evm-adjust-1|$chainId|$address|$at|$amount"
+            }
+        var changed = 0
+        db.transaction {
+            val wantedIds = wanted.map { it.first.id }.toSet()
+            activities
+                .current()
+                .filter { it.id.value.startsWith(prefix) && it.id !in wantedIds && it.status == ActivityStatus.CONFIRMED }
+                .forEach {
+                    activities.saveInTransaction(it.copy(status = ActivityStatus.SUPERSEDED))
+                    changed++
+                }
+            wanted.forEach { (activity, payload) ->
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            activity.id.value,
+                            "eip155:$chainId",
+                            activity.id.value.removePrefix("evm-adjust:"),
+                            "eip155:$chainId",
+                            "alchemy",
+                            Instant.fromEpochMilliseconds(now()).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val sourced = activity.copy(sources = setOf(source), decoderVersion = io.polion.core.evm.EvmDecoder.VERSION, manual = false)
+                if (activities.currentById(sourced.id) != sourced) {
+                    activities.saveInTransaction(sourced)
+                    changed++
+                }
+            }
+        }
+        if (changed > 0) invalidate()
+        return wanted.size
+    }
+
+    /**
      * Compares this address's ledger balances on one chain with the provider's: the native balance and every token
      * balance it lists. Returns and records the differences, or null when everything matches.
      */

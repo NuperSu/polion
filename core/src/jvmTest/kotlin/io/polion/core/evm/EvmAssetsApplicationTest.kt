@@ -273,6 +273,81 @@ class EvmAssetsApplicationTest {
         }
     }
 
+    @Test fun unlistedNativePaymentsKeepTheBalanceAtOrAboveZeroAndMatchTheProvider() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val address = "0x" + "1".repeat(40)
+
+            fun move(
+                id: String,
+                at: Long,
+                units: String,
+            ) = app.saveManualActivity(
+                Activity(
+                    ActivityId(id),
+                    at,
+                    id,
+                    ActivityKind.OTHER,
+                    ActivityStatus.CONFIRMED,
+                    listOf(Movement(EventId(id), account, AtomicAmount(ethMain, ExactInteger.parse(units)), MovementRole.TRANSFER)),
+                    emptySet(),
+                    null,
+                    manual = true,
+                ),
+            )
+            // 1 ETH arrives at 1 ms (fixture); 3 leave at 20 ms though a contract payment of 2 was never listed; 0.5 arrives at 30 ms.
+            move("pay", 20, "-3000000000000000000")
+            move("in", 30, "500000000000000000")
+            app.setEvmConsent(true)
+            assertEquals(2, app.reconcileNativeBalance(account, address, 1, ExactInteger.parse("700000000000000000")))
+            val adjustments =
+                app
+                    .snapshot()
+                    .activities
+                    .map { it.activity }
+                    .filter { it.id.value.startsWith("evm-adjust:") }
+                    .associate {
+                        it.occurredAtEpochMillis to
+                            it.movements
+                                .single()
+                                .amount.atomicUnits
+                                .toString()
+                    }
+            assertEquals(mapOf(19L to "2000000000000000000", 31L to "200000000000000000"), adjustments)
+            assertEquals(
+                "0",
+                app
+                    .history(25)
+                    .single { it.asset == ethMain }
+                    .amount.atomicUnits
+                    .toString(),
+            )
+            assertEquals(
+                "700000000000000000",
+                app
+                    .snapshot()
+                    .valuations
+                    .single { it.asset == ethMain }
+                    .amount.atomicUnits
+                    .toString(),
+            )
+            // Derived again on each check: the same balance changes nothing, a new one replaces the closing adjustment.
+            val revisions = db.query("SELECT COUNT(*) FROM ledger_activities").single().single()
+            app.reconcileNativeBalance(account, address, 1, ExactInteger.parse("700000000000000000"))
+            assertEquals(revisions, db.query("SELECT COUNT(*) FROM ledger_activities").single().single())
+            app.reconcileNativeBalance(account, address, 1, ExactInteger.parse("500000000000000000"))
+            assertEquals(
+                "500000000000000000",
+                app
+                    .snapshot()
+                    .valuations
+                    .single { it.asset == ethMain }
+                    .amount.atomicUnits
+                    .toString(),
+            )
+        }
+    }
+
     @Test fun linkedAssetsTakeTheirCoinLogo() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)

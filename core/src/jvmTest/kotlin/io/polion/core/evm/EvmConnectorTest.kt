@@ -234,13 +234,27 @@ class EvmConnectorTest {
             connector.refresh(app, SourceRefreshOptions())
             assertEquals(3, provider.requests.size)
 
-            // Another unlisted transaction: its fee shows as a balance difference, and the gap count grows.
+            // Another unlisted transaction: its fee becomes an adjustment after the last activity, so the balance matches;
+            // the gap count grows.
             provider.sentCount = 4
             provider.nativeBalance = "1999999999999999300"
             connector.refresh(app, SourceRefreshOptions())
             val after = app.evmChainStates(me).single()
-            assertTrue(after.balanceDifference!!.contains("ledger 1999999999999999600, provider 1999999999999999300"))
+            assertNull(after.balanceDifference)
             assertTrue(after.coverage!!.startsWith("2 sent transactions not listed"))
+            val adjustment =
+                app
+                    .snapshot()
+                    .activities
+                    .map { it.activity }
+                    .single { it.id.value.startsWith("evm-adjust:") }
+            assertEquals(
+                "-300",
+                adjustment.movements
+                    .single()
+                    .amount.atomicUnits
+                    .toString(),
+            )
         }
     }
 

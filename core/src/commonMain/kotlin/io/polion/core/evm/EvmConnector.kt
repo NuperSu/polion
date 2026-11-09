@@ -123,8 +123,9 @@ class EvmConnector(
                 "n$sent",
             ).joinToString("|") { it ?: "-" }
         if (!force && head == state.head) {
-            // A rebasing token's balance changes without a transfer, so it is read on every refresh.
-            if (app.holdsRebasing(account, chain)) checkBalances(app, account, address, chain)
+            // A rebasing token's balance changes without a transfer, so it is read on every refresh; a difference left by
+            // an earlier check is settled too.
+            if (state.balanceDifference != null || app.holdsRebasing(account, chain)) checkBalances(app, account, address, chain)
             return
         }
 
@@ -190,7 +191,10 @@ class EvmConnector(
         checkBalances(app, account, address, chain)
     }
 
-    /** Reads the provider's balances, follows rebasing tokens to them, and records any remaining difference. */
+    /**
+     * Reads the provider's balances, follows rebasing tokens and the native coin to them, and records any remaining
+     * difference.
+     */
     private fun checkBalances(
         app: PortfolioApplication,
         account: AccountId,
@@ -202,6 +206,7 @@ class EvmConnector(
         val tokens = balances.map { it.second }
         app.reconcileRebasingBalances(account, address, chain, tokens)
         val native = tokens.firstOrNull { it.standard == EvmTokenStandard.NATIVE }?.value ?: ExactInteger.ZERO
+        app.reconcileNativeBalance(account, address, chain, native)
         app.checkEvmBalances(account, address, chain, native, tokens)
     }
 

@@ -36,7 +36,13 @@ Supported chains: Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mai
 - **Unlisted sent transactions:** Alchemy lists transfers, so a sent transaction that moved nothing (an approval, or a failed call) is not listed and its fee is unknown. The sent count minus the sent transactions found is reported as "N sent transactions not listed by Alchemy; their fees are not counted".
 - **Contract payments:** where Alchemy has no contract-made transfer list, the chain says "Payments made by contracts are not listed on this chain".
 - **Staking withdrawals** on Ethereum and Gnosis are not available. The decoder supports them for a provider that supplies them.
-- **Balance check:** after each full read, the ledger's native balance and every listed token balance are compared with Alchemy's, except hidden assets. Spam tokens' events need not add up. Any of the gaps above shows as a difference rather than a silently wrong total.
+- **Native balance:** the gaps above leave the native coin off: contract payments not listed (BNB Chain has many: swap proceeds and withdrawals), fees of unlisted sent transactions, staking withdrawals.
+  - After each balance read, the ledger is brought to Alchemy's native balance with adjustments, shown as "Adjustment".
+  - Wherever the running balance would fall below zero, the missing amount is an inflow 1 ms before that transaction, the latest moment it can have arrived. History therefore never goes negative.
+  - The remaining difference follows 1 ms after the chain's last transaction.
+  - The adjustments are derived again on every read and replace the previous ones. They have no cost basis.
+  - A chain whose last check left a difference is read again even when nothing new was listed.
+- **Balance check:** after each full read, every listed token balance is compared with Alchemy's, except hidden assets. Spam tokens' events need not add up. A difference shows on the chain rather than as a silently wrong total.
 - **Rebasing tokens:** Lido stETH, ether.fi eETH, Origin Dollar and Ampleforth on Ethereum change balance without transfers.
   - On every refresh, including one with no new transfer, the ledger is brought to Alchemy's balance with one activity at the time of the check.
   - Growth of a yield token is a reward; other changes, including Ampleforth's supply adjustments and Lido's 1–2 wei transfer rounding, are adjustments.
