@@ -198,7 +198,11 @@ class EvmAssetsApplicationTest {
                 requests += url
                 """{"prices":[[1700000000000,1]]}"""
             })
-            assertTrue(requests.any { it.contains("/coins/usd-coin/market_chart") })
+            // The coin held now comes before the one sold, though it sorts later by name.
+            assertEquals(
+                listOf("ethereum", "usd-coin"),
+                requests.filter { it.endsWith("days=365") }.map { it.substringAfter("/coins/").substringBefore('/') },
+            )
         }
     }
 

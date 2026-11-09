@@ -648,10 +648,16 @@ class PortfolioApplication(
         val hidden = hiddenAmong(moved)
         val links = assetLinks.links().filterKeys { it in moved && it !in hidden }
         val currencies = listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct()
+        // Coins held now come first: they carry today's value, and the free API allows only a few requests a minute.
+        val held = heldAssets()
+        val coins =
+            links.values
+                .distinct()
+                .sortedWith(compareBy<String>({ coin -> links.none { (asset, linked) -> linked == coin && asset in held } }, { it }))
         var requests = 0
         var recorded = 0
         for (days in LINKED_HISTORY_DAYS) {
-            for (coin in links.values.distinct().sorted()) {
+            for (coin in coins) {
                 for (quote in currencies) {
                     val marker = "linked_history:$coin:${quote.value}:$days"
                     if (marketFeeds.deviceSetting(marker) != null) continue
