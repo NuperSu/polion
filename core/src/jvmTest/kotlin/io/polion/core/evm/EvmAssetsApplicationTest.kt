@@ -137,4 +137,59 @@ class EvmAssetsApplicationTest {
             }
         }
     }
+
+    @Test fun linkedCoinHistoryIsFilledOnceDailyFirstAndValuesEveryLinkedAsset() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val now = 1_800_000_000_000L
+            val day = 86_400_000L
+            val requests = mutableListOf<String>()
+            val transport: (String, String?) -> String = { url, _ ->
+                requests += url
+                val price = if (url.contains("/ethereum/")) "3000" else "1"
+                """{"prices":[[${now - 200 * day},$price],[${now - 100 * day},$price]]}"""
+            }
+            // Two linked coins, daily then hourly: the first call stops at its request limit.
+            assertEquals(6, app.backfillLinkedCoinHistory(transport, maxRequests = 2))
+            assertEquals(
+                listOf("ethereum/market_chart?vs_currency=usd&days=365", "usd-coin/market_chart?vs_currency=usd&days=365"),
+                requests.map { it.substringAfter("/coins/") },
+            )
+            val past = app.priceSeries(ethBase, AssetId("USD"), listOf(now - 100 * day)).single()
+            assertEquals(
+                "3000",
+                past.price
+                    ?.price
+                    ?.value
+                    ?.toString(),
+            )
+            app.backfillLinkedCoinHistory(transport)
+            assertEquals(4, requests.size)
+            assertTrue(requests.drop(2).all { it.endsWith("days=90") })
+            // Each range is fetched once.
+            app.backfillLinkedCoinHistory(transport)
+            assertEquals(4, requests.size)
+        }
+    }
+
+    @Test fun linkedAssetsTakeTheirCoinLogo() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val requests = mutableListOf<String>()
+            val transport: (String, String?) -> String = { url, _ ->
+                requests += url
+                """[{"id":"ethereum","symbol":"eth","name":"Ethereum","current_price":3000,
+                   "image":"https://coin-images.coingecko.com/coins/images/279/large/ethereum.png?1696501628"}]"""
+            }
+            app.refreshLinkedCoinLogos(transport)
+            assertTrue(
+                requests.single().contains("coins/markets?vs_currency=usd&ids=ethereum,usd-coin&per_page=250&page=1&sparkline=false"),
+            )
+            val logo = "https://coin-images.coingecko.com/coins/images/279/small/ethereum.png?1696501628"
+            assertEquals(mapOf(ethMain to logo, ethBase to logo), app.marketOverview().assetLogos)
+            // USD Coin had no logo in the response, so it is asked for again; a complete set is kept for a week.
+            app.refreshLinkedCoinLogos(transport)
+            assertEquals(2, requests.size)
+        }
+    }
 }

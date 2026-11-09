@@ -297,6 +297,8 @@ data class MarketOverview(
     val hasApiKey: Boolean,
     /** CoinGecko coin ID to the asset ID used for favorites and coin pages. */
     val assetKeys: Map<String, AssetId>,
+    /** Logo URLs for EVM assets linked to a coin, by asset. */
+    val assetLogos: Map<AssetId, String> = emptyMap(),
 )
 
 data class MarketRefreshResult(
@@ -337,6 +339,12 @@ const val NOTIFICATION_MARKET_AGE_MILLIS = 10 * 60_000L
 
 /** Order book levels shown per side. */
 const val ORDER_BOOK_DEPTH = 10
+
+/** Linked-coin history ranges: daily prices for a year first, then hourly prices for 90 days. */
+private val LINKED_HISTORY_DAYS = listOf(365, 90)
+
+/** Saved linked-coin logo URLs are refetched after a week. */
+private const val LINKED_LOGO_MAX_AGE_MILLIS = 7 * 86_400_000L
 
 /** Delivered notifications kept in the history. */
 const val NOTIFICATION_HISTORY_SIZE = 500
@@ -607,6 +615,120 @@ class PortfolioApplication(
         }
         market.recordChangedProviderPrices(prices)
         return prices.size
+    }
+
+    /** Held, shown EVM assets by their linked CoinGecko coin. */
+    private fun shownLinks(): Map<AssetId, String> {
+        val held = heldAssets()
+        val hidden = hiddenAmong(held)
+        return assetLinks.links().filterKeys { it in held && it !in hidden }
+    }
+
+    /**
+     * Fills the price history of held linked coins from CoinGecko's `/market_chart`, once per coin and currency, so the
+     * portfolio chart can value them before the address was tracked. Every coin first gets a year of daily prices, which
+     * keeps each chart point within the one-day price age; then 90 days of hourly prices. Makes at most [maxRequests]
+     * requests per call; the rest follow on later calls. Returns the number of prices recorded.
+     */
+    fun backfillLinkedCoinHistory(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+        maxRequests: Int = 12,
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        val links = shownLinks()
+        val currencies = listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct()
+        var requests = 0
+        var recorded = 0
+        for (days in LINKED_HISTORY_DAYS) {
+            for (coin in links.values.distinct().sorted()) {
+                for (quote in currencies) {
+                    val marker = "linked_history:$coin:${quote.value}:$days"
+                    if (marketFeeds.deviceSetting(marker) != null) continue
+                    if (requests++ >= maxRequests) return recorded
+                    val url = "$baseUrl/coins/$coin/market_chart?vs_currency=${quote.value.lowercase()}&days=$days"
+                    val points = CoingeckoPrices.parseChart(transport(url, coingeckoApiKey()))
+                    val observed = now()
+                    val prices =
+                        points.filter { (at, _) -> at in 1..observed }.flatMap { (at, value) ->
+                            links.filterValues { it == coin }.keys.map { asset ->
+                                PriceObservation(
+                                    "coingecko:${asset.value}:${quote.value}:$at",
+                                    io.polion.core.model
+                                        .Price(asset, quote, value),
+                                    ProviderId(CoingeckoPrices.PROVIDER_ID),
+                                    at,
+                                    observed,
+                                )
+                            }
+                        }
+                    // Unchanged points are not recorded twice, so a range fetched again after an interruption adds nothing.
+                    market.recordChangedProviderPrices(prices)
+                    marketFeeds.putDeviceSetting(marker, observed.toString())
+                    recorded += prices.size
+                }
+            }
+        }
+        return recorded
+    }
+
+    /**
+     * Fetches logo URLs for held linked coins with one `/coins/markets` request by coin ID, when a coin has none saved
+     * yet or the saved set is older than a week.
+     */
+    fun refreshLinkedCoinLogos(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ) {
+        require(marketDataConsent()) { "Market data consent required" }
+        val coins =
+            shownLinks()
+                .values
+                .distinct()
+                .sorted()
+                .take(CoingeckoMarkets.MARKET_SIZE)
+        val saved = linkedCoinLogos()
+        val fetchedAt = marketFeeds.deviceSetting("linked_coin_logos_at")?.toLongOrNull() ?: 0L
+        if (coins.isEmpty() || (coins.all { it in saved } && now() - fetchedAt < LINKED_LOGO_MAX_AGE_MILLIS)) return
+        val url =
+            "$baseUrl/coins/markets?vs_currency=usd&ids=${coins.joinToString(",")}&per_page=${CoingeckoMarkets.MARKET_SIZE}&page=1" +
+                "&sparkline=false"
+        val logos =
+            CoingeckoMarkets.parseMarkets(transport(url, coingeckoApiKey())).mapNotNull { coin ->
+                coin.image?.let {
+                    coin.coinId to
+                        it
+                }
+            }
+        db.transaction {
+            marketFeeds.putDeviceSetting(
+                "linked_coin_logos",
+                kotlinx.serialization.json
+                    .JsonObject((saved + logos).mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) })
+                    .toString(),
+            )
+            marketFeeds.putDeviceSetting("linked_coin_logos_at", now().toString())
+        }
+    }
+
+    private fun linkedCoinLogos(): Map<String, String> =
+        marketFeeds
+            .deviceSetting("linked_coin_logos")
+            ?.let { saved ->
+                runCatching {
+                    Json
+                        .parseToJsonElement(saved)
+                        .jsonObject
+                        .mapNotNull { (coin, url) ->
+                            CoingeckoMarkets.logoUrl((url as? kotlinx.serialization.json.JsonPrimitive)?.content)?.let { coin to it }
+                        }.toMap()
+                }.getOrNull()
+            }.orEmpty()
+
+    /** Logo URLs for linked EVM assets, from their coin's saved logo or the cached market feeds. */
+    private fun linkedAssetLogos(feedLogos: Map<String, String>): Map<AssetId, String> {
+        val saved = linkedCoinLogos()
+        return assetLinks.links().mapNotNull { (asset, coin) -> (saved[coin] ?: feedLogos[coin])?.let { asset to it } }.toMap()
     }
 
     /** Links registered EVM native and token assets to CoinGecko coins from the cached catalog. Links never change once set. */
@@ -2651,6 +2773,12 @@ class PortfolioApplication(
             market.providerMappings(ProviderId(CoingeckoPrices.PROVIDER_ID)).let { mapped ->
                 ids.associateWith { id -> if (id == "bitcoin") BITCOIN_ASSET else mapped[id] ?: AssetId("coingecko:$id") }
             },
+            linkedAssetLogos(
+                (
+                    markets?.items.orEmpty().mapNotNull { coin -> coin.image?.let { coin.coinId to it } } +
+                        trending?.items.orEmpty().mapNotNull { coin -> coin.image?.let { coin.coinId to it } }
+                ).toMap(),
+            ),
         )
     }
 

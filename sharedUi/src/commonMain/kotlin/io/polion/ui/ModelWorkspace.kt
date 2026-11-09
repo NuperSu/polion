@@ -520,7 +520,8 @@ internal fun ModelWorkspace(
         }
     val title = selectedAsset?.metadata?.symbol ?: if (selectedAsset != null) selectedAsset.asset.value else page.label
     val logoLoader = remember(app, host) { CoinLogoLoader(app, host.dispatcher) }
-    // Logos load only from feeds fetched with market data consent; each coin's page and rows share one image.
+    // Logos load only from feeds fetched with market data consent; each coin's page and rows share one image, and linked
+    // EVM assets use their coin's logo.
     val logoUrls =
         remember(marketOverview) {
             val overview = marketOverview
@@ -537,7 +538,8 @@ internal fun ModelWorkspace(
                                     it
                             }
                         }
-                ).mapNotNull { (key, url) -> key?.let { it to url } }.toMap()
+                ).mapNotNull { (key, url) -> key?.let { it to url } }.toMap() +
+                    overview.assetLogos.mapKeys { it.key.value }
             }
         }
     if (hiddenReview) {

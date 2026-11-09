@@ -52,7 +52,16 @@ Tokens without a CoinGecko coin, and all NFTs, start hidden, because unsolicited
 
 ## Prices
 
-Linked coins are priced from CoinGecko's keyless `/simple/price` in the display and secondary currencies. One price is recorded for every asset linked to the coin. NFTs and unlinked tokens have no value.
+- **Current prices:** Linked coins are priced from CoinGecko's keyless `/simple/price` in the display and secondary currencies. One price is recorded for every asset linked to the coin. NFTs and unlinked tokens have no value.
+- **History:** Each held linked coin's history comes once from `/coins/{id}/market_chart`, per currency.
+  - Every coin first gets a year of daily prices, which are within the one-day price age the portfolio chart accepts. Then each gets 90 days of hourly prices.
+  - The requests are paced at one every 6 seconds, with up to 12 per refresh; later refreshes continue.
+  - The keyless API offers one year, so values from before that stay unknown.
+- **Logos:** Linked coins' logos come from one `/coins/markets` request by coin ID, kept for a week. Each linked asset shows its coin's logo.
+
+## Portfolio chart
+
+A chart point sums the holdings that have a fresh price at that time. A holding without one, such as a coin whose history is still being fetched, is left out. The point inspector says how many assets have no price. A point has no value only when no holding has a price. The money-weighted return in Insights still needs every price.
 
 ## Limits
 

@@ -619,13 +619,15 @@ internal class DesktopHost(
         )
 
     /**
-     * Refreshes the CoinGecko chain catalog and then linked-coin prices. Each step is isolated, so a failure leaves the
+     * Refreshes the CoinGecko chain catalog, then linked-coin prices, logos and missing price history. Each step is isolated, so a failure leaves the
      * caller's refresh successful. Does nothing without market data consent.
      */
     private fun refreshEvmCatalogAndPrices(application: PortfolioApplication) {
         if (!application.marketDataConsent()) return
         runCatching { application.refreshEvmCatalog(priceTransport::feed) }
         runCatching { application.refreshLinkedCoinPrices(priceTransport::feed) }
+        runCatching { application.refreshLinkedCoinLogos(priceTransport::feed) }
+        runCatching { application.backfillLinkedCoinHistory({ url, key -> priceTransport.get(url, key.orEmpty()) }) }
     }
 
     override fun refreshPreferences(): io.polion.ui.RefreshPreferences =

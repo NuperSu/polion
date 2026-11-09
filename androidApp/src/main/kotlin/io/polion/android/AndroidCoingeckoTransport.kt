@@ -29,6 +29,8 @@ class AndroidCoingeckoTransport(
         val KRAKEN_TICKERS_PATH = Regex("coins/[a-z0-9][a-z0-9-]{0,99}/tickers\\?exchange_ids=kraken")
         const val ASSET_PLATFORMS_PATH = "asset_platforms"
         const val COINS_LIST_PATH = "coins/list?include_platform=true"
+        val LINKED_MARKETS_PATH =
+            Regex("coins/markets\\?vs_currency=usd&ids=[a-z0-9-]+(,[a-z0-9-]+){0,249}&per_page=250&page=1&sparkline=false")
         val SIMPLE_PRICE_PATH =
             Regex(
                 "simple/price\\?ids=[a-z0-9-]+(,[a-z0-9-]+){0,49}&vs_currencies=[a-z]{3,4}(,[a-z]{3,4}){0,2}&include_last_updated_at=true",
@@ -88,7 +90,8 @@ class AndroidCoingeckoTransport(
             path.matches(KRAKEN_TICKERS_PATH) ||
             path == ASSET_PLATFORMS_PATH ||
             path == COINS_LIST_PATH ||
-            path.matches(SIMPLE_PRICE_PATH)
+            path.matches(SIMPLE_PRICE_PATH) ||
+            path.matches(LINKED_MARKETS_PATH)
 
     private fun request(url: String): String {
         val prefix = "${baseUrl.trimEnd('/')}/coins/"

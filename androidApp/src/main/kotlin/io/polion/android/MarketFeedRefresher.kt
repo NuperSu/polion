@@ -69,13 +69,15 @@ internal object MarketFeedRefresher {
     }
 
     /**
-     * Refreshes the CoinGecko chain catalog and then linked-coin prices. Each step is isolated, so a failure never fails the
+     * Refreshes the CoinGecko chain catalog, then linked-coin prices, logos and missing price history. Each step is isolated, so a failure never fails the
      * caller. Does nothing without market data consent.
      */
     fun refreshEvmCatalogAndPrices(app: PortfolioApplication) {
         if (!app.marketDataConsent()) return
         runCatching { app.refreshEvmCatalog(transport::feed) }
         runCatching { app.refreshLinkedCoinPrices(transport::feed) }
+        runCatching { app.refreshLinkedCoinLogos(transport::feed) }
+        runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }) }
     }
 
     /**
