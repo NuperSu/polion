@@ -625,8 +625,8 @@ class PortfolioApplication(
     }
 
     /**
-     * Fills the price history of held linked coins from CoinGecko's `/market_chart`, once per coin and currency, so the
-     * portfolio chart can value them before the address was tracked. Every coin first gets a year of daily prices, which
+     * Fills the price history of linked coins the ledger has moved from CoinGecko's `/market_chart`, once per coin and
+     * currency, so the portfolio chart can value them before the address was tracked. Every coin first gets a year of daily prices, which
      * keeps each chart point within the one-day price age; then 90 days of hourly prices. Makes at most [maxRequests]
      * requests per call, calling [pause] with [intervalMillis] before each so a paced transport accepts it; the rest
      * follow on later calls. Returns the number of prices recorded.
@@ -639,7 +639,14 @@ class PortfolioApplication(
         pause: (Long) -> Unit = {},
     ): Int {
         require(marketDataConsent()) { "Market data consent required" }
-        val links = shownLinks()
+        // Every linked asset the ledger has moved, not only today's holdings: a coin sold since still values past points.
+        val moved =
+            ledger()
+                .activities
+                .flatMap { entry -> entry.activity.movements.map { it.amount.assetId } }
+                .toSet()
+        val hidden = hiddenAmong(moved)
+        val links = assetLinks.links().filterKeys { it in moved && it !in hidden }
         val currencies = listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct()
         var requests = 0
         var recorded = 0

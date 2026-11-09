@@ -108,8 +108,9 @@ private const val NOTIFICATION_FIRST_CHECK_MILLIS = 30_000L
 private const val NOTIFICATION_INTERVAL_MILLIS = 300_000L
 
 /** Linked-coin history requests per backfill run, spaced past the CoinGecko transport's 6-second pacing. */
-private const val LINKED_HISTORY_REQUESTS_PER_RUN = 12
+private const val LINKED_HISTORY_REQUESTS_PER_RUN = 24
 private const val LINKED_HISTORY_INTERVAL_MILLIS = 6_100L
+private const val LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS = 61_000L
 
 private const val MARKET_PAUSED_MESSAGE = "Market data is paused while data is restored."
 
@@ -649,20 +650,32 @@ internal class DesktopHost(
             historyExecutor.execute {
                 historyBackfillQueued.set(false)
                 var changed = false
+                var rateLimits = 0
                 runCatching {
                     repeat(LINKED_HISTORY_REQUESTS_PER_RUN) {
                         Thread.sleep(LINKED_HISTORY_INTERVAL_MILLIS)
                         val recorded =
-                            synchronized(priceGate) {
-                                if (closing.get() || priceRestorePaused) return@runCatching
-                                JvmSqliteDatabase(file.toString()).use { connection ->
-                                    val application = PortfolioApplication(connection, System::currentTimeMillis)
-                                    if (!application.marketDataConsent()) return@runCatching
-                                    application.backfillLinkedCoinHistory(
-                                        { url, key -> priceTransport.get(url, key.orEmpty()) },
-                                        maxRequests = 1,
-                                    )
+                            try {
+                                synchronized(priceGate) {
+                                    if (closing.get() || priceRestorePaused) return@runCatching
+                                    JvmSqliteDatabase(file.toString()).use { connection ->
+                                        val application = PortfolioApplication(connection, System::currentTimeMillis)
+                                        if (!application.marketDataConsent()) return@runCatching
+                                        application.backfillLinkedCoinHistory(
+                                            { url, key -> priceTransport.get(url, key.orEmpty()) },
+                                            maxRequests = 1,
+                                        )
+                                    }
                                 }
+                            } catch (failure: io.polion.core.market.CoingeckoProviderException) {
+                                // The free API allows a few requests a minute across all market requests: wait it out, twice at most.
+                                if (failure.failure != io.polion.core.market.CoingeckoProviderFailure.RATE_LIMITED ||
+                                    ++rateLimits > 2
+                                ) {
+                                    throw failure
+                                }
+                                Thread.sleep(LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS)
+                                return@repeat
                             }
                         // Nothing recorded means every range is filled.
                         if (recorded == 0) return@runCatching

@@ -175,6 +175,33 @@ class EvmAssetsApplicationTest {
         }
     }
 
+    @Test fun aCoinSoldSinceStillGetsItsHistory() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            app.saveManualActivity(
+                Activity(
+                    ActivityId("sold-usdc"),
+                    2,
+                    "sold-usdc",
+                    ActivityKind.PAYMENT,
+                    ActivityStatus.CONFIRMED,
+                    listOf(
+                        Movement(EventId("sold"), account, AtomicAmount(usdcBase, ExactInteger.parse("-2500000")), MovementRole.TRANSFER),
+                    ),
+                    emptySet(),
+                    null,
+                    manual = true,
+                ),
+            )
+            val requests = mutableListOf<String>()
+            app.backfillLinkedCoinHistory({ url, _ ->
+                requests += url
+                """{"prices":[[1700000000000,1]]}"""
+            })
+            assertTrue(requests.any { it.contains("/coins/usd-coin/market_chart") })
+        }
+    }
+
     @Test fun linkedAssetsTakeTheirCoinLogo() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
