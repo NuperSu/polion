@@ -13,6 +13,7 @@ import java.util.concurrent.Executors
 internal object MarketFeedRefresher {
     private val executor = Executors.newSingleThreadExecutor()
     val transport = AndroidCoingeckoTransport()
+    private val defiLlama = DefiLlamaTransport()
 
     fun refresh(
         context: Context,
@@ -69,14 +70,17 @@ internal object MarketFeedRefresher {
     }
 
     /**
-     * Refreshes the CoinGecko chain catalog, then linked-coin prices, logos and missing price history. Each step is isolated, so a failure never fails the
-     * caller. Does nothing without market data consent.
+     * Refreshes the CoinGecko chain catalog, then linked-coin prices (USD from DefiLlama, other currencies from
+     * CoinGecko), logos and missing price history. Each step is isolated, so a failure never fails the caller. Does
+     * nothing without market data consent.
      */
     fun refreshEvmCatalogAndPrices(app: PortfolioApplication) {
         if (!app.marketDataConsent()) return
         runCatching { app.refreshEvmCatalog(transport::feed) }
+        runCatching { app.refreshLinkedCoinUsdPrices(defiLlama::get) }
         runCatching { app.refreshLinkedCoinPrices(transport::feed) }
         runCatching { app.refreshLinkedCoinLogos(transport::feed) }
+        runCatching { app.backfillLinkedCoinUsdHistory(defiLlama::get, pause = Thread::sleep) }
         runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
     }
 

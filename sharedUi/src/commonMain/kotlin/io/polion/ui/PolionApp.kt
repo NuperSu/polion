@@ -536,6 +536,8 @@ private fun Product(
                 Text(
                     "Main shows the top 250 coins by market cap, trending coins and daily movers from CoinGecko, with their " +
                         "logos. CoinGecko receives your display currency and IP address; no wallet data is sent. " +
+                        "US dollar prices of coins on EVM chains come from DefiLlama, which receives those coins and " +
+                        "your IP address. " +
                         "Without an API key, CoinGecko allows a few requests per minute; you can add a free key in " +
                         "Settings › API Keys.",
                 )

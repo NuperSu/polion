@@ -55,6 +55,7 @@ import io.polion.core.market.CoingeckoPrices
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
+import io.polion.core.market.DefiLlamaPrices
 import io.polion.core.market.KrakenOrderBook
 import io.polion.core.market.KrakenPair
 import io.polion.core.market.KrakenPrices
@@ -340,8 +341,17 @@ const val NOTIFICATION_MARKET_AGE_MILLIS = 10 * 60_000L
 /** Order book levels shown per side. */
 const val ORDER_BOOK_DEPTH = 10
 
-/** Linked-coin history ranges: daily prices for a year first, then hourly prices for 90 days. */
+/** CoinGecko linked-coin history ranges for currencies other than USD: daily prices for a year first, then hourly prices for 90 days. */
 private val LINKED_HISTORY_DAYS = listOf(365, 90)
+
+/** DefiLlama hourly history covers this many recent days; daily history reaches back to a coin's first movement. */
+private const val LINKED_HOURLY_DAYS = 90
+
+/** A covered range whose end is older than this is extended to now; newer gaps are left to current prices. */
+private const val LINKED_HISTORY_EXTEND_AFTER_MILLIS = 86_400_000L
+
+/** US dollars, the only currency DefiLlama quotes. */
+private val USD = AssetId("USD")
 
 /** Saved linked-coin logo URLs are refetched after a week. */
 private const val LINKED_LOGO_MAX_AGE_MILLIS = 7 * 86_400_000L
@@ -557,21 +567,27 @@ class PortfolioApplication(
         linkEvmAssets()
     }
 
+    /** The display and secondary currencies; USD is left to DefiLlama, so CoinGecko quotes only the others. */
+    private fun coingeckoLinkedCurrencies(): List<AssetId> =
+        listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct().filter { it != USD }
+
+    /** True when USD is the display or secondary currency, which DefiLlama prices. */
+    private fun linkedUsdWanted(): Boolean = currency() == USD || generalPreferences().secondaryCurrency == USD
+
     /**
-     * Current CoinGecko prices for held coins linked to EVM assets, in the display and secondary currencies, from one
-     * keyless request per 50 coins. Each price is saved for every asset linked to that coin, so ETH on Base and on
-     * Ethereum get the same observation. Needs market data consent. Returns how many prices were saved.
+     * Current CoinGecko prices for held coins linked to EVM assets, in the display and secondary currencies other than
+     * USD, from one keyless request per 50 coins; USD comes from [refreshLinkedCoinUsdPrices]. Each price is saved for
+     * every asset linked to that coin, so ETH on Base and on Ethereum get the same observation. Needs market data
+     * consent. Returns how many prices were saved.
      */
     fun refreshLinkedCoinPrices(
         transport: (url: String, apiKey: String?) -> String,
         baseUrl: String = "https://api.coingecko.com/api/v3",
     ): Int {
         require(marketDataConsent()) { "Market data consent required" }
-        val held = heldAssets()
-        val hidden = hiddenAmong(held)
-        val links = assetLinks.links().filterKeys { it in held && it !in hidden }
-        if (links.isEmpty()) return 0
-        val currencies = listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct()
+        val links = shownLinks()
+        val currencies = coingeckoLinkedCurrencies()
+        if (links.isEmpty() || currencies.isEmpty()) return 0
         val observed = now()
         val prices = mutableListOf<PriceObservation>()
         links.values.distinct().sorted().chunked(50).forEach { batch ->
@@ -617,6 +633,133 @@ class PortfolioApplication(
         return prices.size
     }
 
+    /**
+     * Current DefiLlama USD prices for held coins linked to EVM assets, one keyless request per 50 coins, when USD is the
+     * display or secondary currency. Each price is saved for every asset linked to the coin. Needs market data consent.
+     * Returns how many prices were saved.
+     */
+    fun refreshLinkedCoinUsdPrices(
+        fetch: (url: String) -> String,
+        baseUrl: String = DefiLlamaPrices.BASE_URL,
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        val links = shownLinks()
+        if (links.isEmpty() || !linkedUsdWanted()) return 0
+        val observed = now()
+        val prices =
+            links.values.distinct().sorted().chunked(DefiLlamaPrices.CURRENT_BATCH).flatMap { batch ->
+                DefiLlamaPrices.parseCurrent(fetch(DefiLlamaPrices.currentUrl(baseUrl, batch))).flatMap { (coin, point) ->
+                    linkedUsdPrices(links, coin, listOf(point.first.coerceAtMost(observed) to point.second), observed)
+                }
+            }
+        market.recordChangedProviderPrices(prices)
+        return prices.size
+    }
+
+    /** One DefiLlama observation per asset linked to [coin] and point. */
+    private fun linkedUsdPrices(
+        links: Map<AssetId, String>,
+        coin: String,
+        points: List<Pair<Long, io.polion.core.model.ExactDecimal>>,
+        observed: Long,
+    ): List<PriceObservation> =
+        points.filter { (at, _) -> at in 1..observed }.flatMap { (at, value) ->
+            links.filterValues { it == coin }.keys.map { asset ->
+                PriceObservation(
+                    "${DefiLlamaPrices.PROVIDER_ID}:${asset.value}:USD:$at",
+                    io.polion.core.model
+                        .Price(asset, USD, value),
+                    ProviderId(DefiLlamaPrices.PROVIDER_ID),
+                    at,
+                    observed,
+                )
+            }
+        }
+
+    /**
+     * Fills the USD price history of linked coins the ledger has moved from DefiLlama, so the portfolio chart can value
+     * them back to their first movement.
+     *
+     * - Daily prices reach from a day before the coin's first movement to now; hourly prices cover the last
+     *   [LINKED_HOURLY_DAYS] days. Daily ranges of every coin come before hourly ones, and coins held now come first.
+     * - Each request returns up to [DefiLlamaPrices.MAX_POINTS] points. The covered range per coin and period is saved,
+     *   so each range is fetched once; a range ending more than a day ago is extended to now.
+     * - Makes at most [maxRequests] requests, calling [pause] with [intervalMillis] before each.
+     *
+     * Does nothing unless USD is the display or secondary currency. Returns the number of requests made, so 0 means
+     * every range is covered.
+     */
+    fun backfillLinkedCoinUsdHistory(
+        fetch: (url: String) -> String,
+        baseUrl: String = DefiLlamaPrices.BASE_URL,
+        maxRequests: Int = 40,
+        intervalMillis: Long = 1_000L,
+        pause: (Long) -> Unit = {},
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        if (!linkedUsdWanted()) return 0
+        val firstMoved = mutableMapOf<AssetId, Long>()
+        ledger().activities.forEach { entry ->
+            entry.activity.movements.forEach { movement ->
+                val asset = movement.amount.assetId
+                firstMoved[asset] = minOf(firstMoved[asset] ?: Long.MAX_VALUE, entry.activity.occurredAtEpochMillis)
+            }
+        }
+        val hidden = hiddenAmong(firstMoved.keys)
+        val links = assetLinks.links().filterKeys { it in firstMoved && it !in hidden }
+        val held = heldAssets()
+        val coins =
+            links.values
+                .distinct()
+                .sortedWith(compareBy<String>({ coin -> links.none { (asset, linked) -> linked == coin && asset in held } }, { it }))
+        val firstByCoin = coins.associateWith { coin -> links.filterValues { it == coin }.keys.minOf { firstMoved.getValue(it) } }
+        var requests = 0
+        for (period in DefiLlamaPrices.Period.entries) {
+            for (coin in coins) {
+                while (true) {
+                    val now = now()
+                    val step = period.stepMillis
+                    val start =
+                        maxOf(
+                            firstByCoin.getValue(coin) - step,
+                            if (period == DefiLlamaPrices.Period.HOURLY) now - LINKED_HOURLY_DAYS * 86_400_000L else 0L,
+                            0L,
+                        )
+                    val marker = "linked_usd_history:$coin:${period.query}"
+                    val covered =
+                        marketFeeds
+                            .deviceSetting(marker)
+                            ?.split(':')
+                            ?.mapNotNull { it.toLongOrNull() }
+                            ?.takeIf { it.size == 2 }
+                    val chunk = DefiLlamaPrices.MAX_POINTS * step
+                    val (from, to) =
+                        when {
+                            covered == null -> maxOf(start, now - chunk) to now
+                            now - covered[1] > LINKED_HISTORY_EXTEND_AFTER_MILLIS -> covered[1] to minOf(now, covered[1] + chunk)
+                            covered[0] > start -> maxOf(start, covered[0] - chunk) to covered[0]
+                            else -> break
+                        }
+                    if (requests >= maxRequests) return requests
+                    requests++
+                    pause(intervalMillis)
+                    val span = ((to - from + step - 1) / step).toInt().coerceIn(1, DefiLlamaPrices.MAX_POINTS)
+                    val points =
+                        DefiLlamaPrices
+                            .parseChart(
+                                fetch(DefiLlamaPrices.chartUrl(baseUrl, coin, from, span, period)),
+                            )[coin]
+                            .orEmpty()
+                    // Unchanged points are not recorded twice, so a range fetched again after an interruption adds nothing.
+                    market.recordChangedProviderPrices(linkedUsdPrices(links, coin, points, now()))
+                    // A range with no prices (before the coin existed, or unknown to DefiLlama) still counts as covered.
+                    marketFeeds.putDeviceSetting(marker, "${minOf(from, covered?.get(0) ?: from)}:${maxOf(to, covered?.get(1) ?: to)}")
+                }
+            }
+        }
+        return requests
+    }
+
     /** Held, shown EVM assets by their linked CoinGecko coin. */
     private fun shownLinks(): Map<AssetId, String> {
         val held = heldAssets()
@@ -626,7 +769,8 @@ class PortfolioApplication(
 
     /**
      * Fills the price history of linked coins the ledger has moved from CoinGecko's `/market_chart`, once per coin and
-     * currency, so the portfolio chart can value them before the address was tracked. Every coin first gets a year of daily prices, which
+     * currency other than USD (see [backfillLinkedCoinUsdHistory]), so the portfolio chart can value them before the
+     * address was tracked. The keyless API reaches back one year. Every coin first gets a year of daily prices, which
      * keeps each chart point within the one-day price age; then 90 days of hourly prices. Makes at most [maxRequests]
      * requests per call, calling [pause] with [intervalMillis] before each so a paced transport accepts it; the rest
      * follow on later calls. Returns the number of prices recorded.
@@ -647,7 +791,7 @@ class PortfolioApplication(
                 .toSet()
         val hidden = hiddenAmong(moved)
         val links = assetLinks.links().filterKeys { it in moved && it !in hidden }
-        val currencies = listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct()
+        val currencies = coingeckoLinkedCurrencies()
         // Coins held now come first: they carry today's value, and the free API allows only a few requests a minute.
         val held = heldAssets()
         val coins =
@@ -2861,7 +3005,11 @@ class PortfolioApplication(
     /** Saved provider quotes remain selectable offline, independently of permission for new requests. */
     private fun pricePolicy(current: Boolean = false) =
         PricePolicy(
-            listOf(ProviderId(KrakenPrices.PROVIDER_ID), ProviderId(CoingeckoPrices.PROVIDER_ID)),
+            listOf(
+                ProviderId(KrakenPrices.PROVIDER_ID),
+                ProviderId(DefiLlamaPrices.PROVIDER_ID),
+                ProviderId(CoingeckoPrices.PROVIDER_ID),
+            ),
             if (current) 7_200_000L else 86_400_000L,
             preferLatest = true,
         )

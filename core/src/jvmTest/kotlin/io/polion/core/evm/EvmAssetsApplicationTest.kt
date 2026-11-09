@@ -35,8 +35,11 @@ class EvmAssetsApplicationTest {
     private val spam = EvmAssets.token(8453, "0x" + "5".repeat(40))
     private val nft = EvmAssets.nft(1, "0x" + "6".repeat(40), ExactInteger.parse("7"))
 
-    private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
-        val app = PortfolioApplication(db) { 1_800_000_000_000L }
+    private fun setUp(
+        db: JvmSqliteDatabase,
+        clock: () -> Long = { 1_800_000_000_000L },
+    ): PortfolioApplication {
+        val app = PortfolioApplication(db, clock)
         app.snapshot()
         app.saveOwner(Owner(OwnerId("owner"), "Owner"))
         app.saveAccount(Account(account, OwnerId("owner"), "EVM", AccountKind.WALLET))
@@ -114,14 +117,16 @@ class EvmAssetsApplicationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
             val requests = mutableListOf<String>()
+            // USD comes from DefiLlama only, so CoinGecko is not asked while USD is the only currency.
+            assertEquals(0, app.refreshLinkedCoinPrices({ url, _ -> error("unexpected $url") }))
             val saved =
-                app.refreshLinkedCoinPrices({ url, _ ->
+                app.refreshLinkedCoinUsdPrices({ url ->
                     requests += url
-                    """{"ethereum":{"usd":3000.5,"last_updated_at":1799999990},"usd-coin":{"usd":1.0002,"last_updated_at":1799999990}}"""
+                    """{"coins":{"coingecko:ethereum":{"price":3000.5,"symbol":"ETH","timestamp":1799999990,"confidence":0.99},""" +
+                        """"coingecko:usd-coin":{"price":1.0002,"symbol":"USDC","timestamp":1799999990,"confidence":0.99}}}"""
                 })
             assertEquals(3, saved)
-            assertEquals(1, requests.size)
-            assertTrue(requests.single().contains("ids=ethereum,usd-coin&vs_currencies=usd"))
+            assertEquals(listOf("https://coins.llama.fi/prices/current/coingecko:ethereum,coingecko:usd-coin"), requests)
             val values = app.snapshot().valuations.associate { it.asset to it.value?.toString() }
             assertEquals("3000.5", values[ethMain]?.trimEnd('0')?.trimEnd('.'))
             assertEquals("1500.25", values[ethBase]?.trimEnd('0')?.trimEnd('.'))
@@ -138,9 +143,74 @@ class EvmAssetsApplicationTest {
         }
     }
 
+    @Test fun nonUsdCurrenciesComeFromCoingecko() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            app.setSecondaryCurrency(AssetId("EUR"))
+            val requests = mutableListOf<String>()
+            app.refreshLinkedCoinPrices({ url, _ ->
+                requests += url
+                """{"ethereum":{"eur":2800,"last_updated_at":1799999990}}"""
+            })
+            assertTrue(requests.single().contains("ids=ethereum,usd-coin&vs_currencies=eur&"))
+        }
+    }
+
+    @Test fun usdHistoryComesFromDefiLlamaBackToTheFirstMovement() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val day = 86_400_000L
+            var now = 1_800_000_000_000L
+            val app = setUp(db) { now }
+            val requests = mutableListOf<String>()
+            val fetch: (String) -> String = { url ->
+                requests += url
+                val coin = url.substringAfter("coingecko:").substringBefore('?')
+                val start = url.substringAfter("start=").substringBefore('&').toLong()
+                val price = if (coin == "ethereum") "3000" else "1"
+                """{"coins":{"coingecko:$coin":{"symbol":"X","confidence":0.99,"prices":""" +
+                    """[{"timestamp":$start,"price":$price},{"timestamp":${start + 86_400},"price":$price}]}}}"""
+            }
+            val pauses = mutableListOf<Long>()
+            assertEquals(2, app.backfillLinkedCoinUsdHistory(fetch, maxRequests = 2, pause = { pauses += it }))
+            assertEquals(listOf(1_000L, 1_000L), pauses)
+            // The newest 500 days first, then the 500 before them, for the held coin that sorts first.
+            assertEquals(
+                listOf(
+                    "https://coins.llama.fi/chart/coingecko:ethereum?start=${(now - 500 * day) / 1000}&span=500&period=1d",
+                    "https://coins.llama.fi/chart/coingecko:ethereum?start=${(now - 1000 * day) / 1000}&span=500&period=1d",
+                ),
+                requests,
+            )
+            // Older than CoinGecko's one-year limit, and recorded for each chain's ETH.
+            val old = app.priceSeries(ethBase, AssetId("USD"), listOf(now - 1000 * day + 3_600_000)).single()
+            assertEquals(
+                "3000",
+                old.price
+                    ?.price
+                    ?.value
+                    ?.toString(),
+            )
+            // Daily ranges reach back to the first movement (1 ms after the epoch here), then 90 days of hourly prices.
+            while (app.backfillLinkedCoinUsdHistory(fetch) > 0) Unit
+            val daily = requests.filter { it.endsWith("period=1d") }
+            val hourly = requests.filter { it.endsWith("period=1h") }
+            assertEquals(2 * 42, daily.size)
+            assertEquals(2 * 5, hourly.size)
+            assertTrue(requests.indexOfLast { it.endsWith("period=1d") } < requests.indexOfFirst { it.endsWith("period=1h") })
+            assertTrue(daily.any { it.contains("start=0&") })
+            // Covered ranges are fetched once; two days later only the new days are asked for.
+            val before = requests.size
+            assertEquals(0, app.backfillLinkedCoinUsdHistory(fetch))
+            now += 2 * day
+            assertEquals(4, app.backfillLinkedCoinUsdHistory(fetch))
+            assertTrue(requests.drop(before).all { it.contains("start=${(now - 2 * day) / 1000}&") })
+        }
+    }
+
     @Test fun linkedCoinHistoryIsFilledOnceDailyFirstAndValuesEveryLinkedAsset() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
+            app.setSecondaryCurrency(AssetId("EUR"))
             val now = 1_800_000_000_000L
             val day = 86_400_000L
             val requests = mutableListOf<String>()
@@ -155,10 +225,10 @@ class EvmAssetsApplicationTest {
             // A pause precedes every request, so the host's paced CoinGecko transport accepts each one.
             assertEquals(listOf(6_100L, 6_100L), pauses)
             assertEquals(
-                listOf("ethereum/market_chart?vs_currency=usd&days=365", "usd-coin/market_chart?vs_currency=usd&days=365"),
+                listOf("ethereum/market_chart?vs_currency=eur&days=365", "usd-coin/market_chart?vs_currency=eur&days=365"),
                 requests.map { it.substringAfter("/coins/") },
             )
-            val past = app.priceSeries(ethBase, AssetId("USD"), listOf(now - 100 * day)).single()
+            val past = app.priceSeries(ethBase, AssetId("EUR"), listOf(now - 100 * day)).single()
             assertEquals(
                 "3000",
                 past.price
@@ -193,6 +263,7 @@ class EvmAssetsApplicationTest {
                     manual = true,
                 ),
             )
+            app.setSecondaryCurrency(AssetId("EUR"))
             val requests = mutableListOf<String>()
             app.backfillLinkedCoinHistory({ url, _ ->
                 requests += url

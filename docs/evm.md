@@ -1,6 +1,6 @@
 # EVM addresses (Ethereum and other chains)
 
-Code: `core/…/evm/` (identity, Alchemy client, decoder, connector, chain state), `core/…/market/CoingeckoCatalog.kt` and `AssetLinkRepository.kt`, and in `PortfolioApplication`: `applyEvmChainHistory`, `checkEvmBalances`, `refreshEvmCatalog`, `refreshLinkedCoinPrices`. Hosts: `AlchemyTransport` in `androidApp` and `desktopApp`. Tests: `EvmIdentityTest`, `AlchemyTest`, `EvmConnectorTest`, `EvmAssetsApplicationTest`, `CoingeckoCatalogTest`, `AlchemyTransportTest`, `EvmUiTest`.
+Code: `core/…/evm/` (identity, Alchemy client, decoder, connector, chain state), `core/…/market/CoingeckoCatalog.kt` and `AssetLinkRepository.kt`, and in `PortfolioApplication`: `applyEvmChainHistory`, `checkEvmBalances`, `refreshEvmCatalog`, `refreshLinkedCoinPrices`, `refreshLinkedCoinUsdPrices`, `backfillLinkedCoinUsdHistory`; `core/…/market/DefiLlamaPrices.kt`. Hosts: `AlchemyTransport` and `DefiLlamaTransport` in `androidApp` and `desktopApp`. Tests: `EvmIdentityTest`, `AlchemyTest`, `EvmConnectorTest`, `EvmAssetsApplicationTest`, `CoingeckoCatalogTest`, `AlchemyTransportTest`, `EvmUiTest`.
 
 ## Tracking an address
 
@@ -62,11 +62,14 @@ Tokens without a CoinGecko coin, and all NFTs, start hidden, because unsolicited
 
 ## Prices
 
-- **Current prices:** Linked coins are priced from CoinGecko's keyless `/simple/price` in the display and secondary currencies. One price is recorded for every asset linked to the coin. NFTs and unlinked tokens have no value.
-- **History:** Each linked coin the ledger has moved, including coins sold since, gets its history once from `/coins/{id}/market_chart`, per currency.
-  - Every coin first gets a year of daily prices, which are within the one-day price age the portfolio chart accepts. Then each gets 90 days of hourly prices.
-  - The app waits 6 seconds before each request. On desktop a background run makes up to 24 and waits out a rate limit twice; later refreshes continue.
-  - The keyless API offers one year, so values from before that stay unknown.
+- **Sources:** US dollar prices of linked coins come only from DefiLlama's keyless coin API (`coins.llama.fi`), addressed by CoinGecko coin ID. Other display and secondary currencies come from CoinGecko, which DefiLlama does not quote. One price is recorded for every asset linked to the coin. NFTs and unlinked tokens have no value.
+- **Current prices:** DefiLlama's `/prices/current` (50 coins per request) for USD; CoinGecko's `/simple/price` for other currencies.
+- **USD history (DefiLlama `/chart`):** each linked coin the ledger has moved, including coins sold since, gets daily prices from a day before its first movement to now, then hourly prices for the last 90 days.
+  - A request returns at most 500 points, so a coin needs one daily request per 500 days. Held coins come first.
+  - The covered range per coin and period is saved; each range is fetched once, and a range ending more than a day ago is extended to now.
+  - Requests are one second apart. On desktop a background run makes up to 600 and waits out a rate limit twice; on Android each refresh makes up to 40.
+  - A coin DefiLlama does not know, or days before its first price, stay without a value.
+- **Other currencies' history (CoinGecko `/coins/{id}/market_chart`):** once per coin and currency, a year of daily prices and then 90 days of hourly prices, 6 seconds apart; desktop runs make up to 24 requests. The keyless API offers one year, so older values in these currencies stay unknown.
 - **Logos:** Linked coins' logos come from one `/coins/markets` request by coin ID, kept for a week. Each linked asset shows its coin's logo.
 
 ## Portfolio chart

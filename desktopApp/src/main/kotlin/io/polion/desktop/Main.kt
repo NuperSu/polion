@@ -107,10 +107,14 @@ const val DEFAULT_LOCK_DELAY_MILLIS = 300_000L
 private const val NOTIFICATION_FIRST_CHECK_MILLIS = 30_000L
 private const val NOTIFICATION_INTERVAL_MILLIS = 300_000L
 
-/** Linked-coin history requests per backfill run, spaced past the CoinGecko transport's 6-second pacing. */
+/** CoinGecko linked-coin history requests (currencies other than USD) per backfill run, spaced past its transport's 6-second pacing. */
 private const val LINKED_HISTORY_REQUESTS_PER_RUN = 24
 private const val LINKED_HISTORY_INTERVAL_MILLIS = 6_100L
 private const val LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS = 61_000L
+
+/** DefiLlama USD history requests per backfill run, one a second: enough for a few years of thirty coins. */
+private const val LINKED_USD_HISTORY_REQUESTS_PER_RUN = 600
+private const val LINKED_USD_HISTORY_INTERVAL_MILLIS = 1_000L
 
 private const val MARKET_PAUSED_MESSAGE = "Market data is paused while data is restored."
 
@@ -138,6 +142,7 @@ internal class DesktopHost(
     internal val priceReplacementInProgress: Boolean get() = priceRestorePaused
     private val syncQueue = BitcoinSyncQueue()
     private val priceTransport = DesktopCoingeckoTransport()
+    private val defiLlamaTransport = DefiLlamaTransport()
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
     override val hasLock: Boolean get() = lockStore.hasLock
@@ -628,63 +633,88 @@ internal class DesktopHost(
         )
 
     /**
-     * Refreshes the CoinGecko chain catalog, then linked-coin prices, logos and missing price history. Each step is isolated, so a failure leaves the
-     * caller's refresh successful. Does nothing without market data consent.
+     * Refreshes the CoinGecko chain catalog, then linked-coin prices (USD from DefiLlama, other currencies from
+     * CoinGecko), logos and missing price history. Each step is isolated, so a failure leaves the caller's refresh
+     * successful. Does nothing without market data consent.
      */
     private fun refreshEvmCatalogAndPrices(application: PortfolioApplication) {
         if (!application.marketDataConsent()) return
         runCatching { application.refreshEvmCatalog(priceTransport::feed) }
+        runCatching { application.refreshLinkedCoinUsdPrices(defiLlamaTransport::get) }
         runCatching { application.refreshLinkedCoinPrices(priceTransport::feed) }
         runCatching { application.refreshLinkedCoinLogos(priceTransport::feed) }
         backfillLinkedCoinHistory()
     }
 
     /**
-     * Fills missing linked-coin price history, one CoinGecko request at a time. Each request and its write run under the
-     * price gate on a fresh connection, so a restore never meets an open connection; the pauses run outside it. Later
-     * calls while one is queued do nothing.
+     * Fills missing linked-coin price history in the background: USD from DefiLlama, then other currencies from
+     * CoinGecko. Later calls while one is queued do nothing.
      */
     private fun backfillLinkedCoinHistory() {
         if (closing.get() || !historyBackfillQueued.compareAndSet(false, true)) return
         runCatching {
             historyExecutor.execute {
                 historyBackfillQueued.set(false)
-                var changed = false
-                var rateLimits = 0
-                runCatching {
-                    repeat(LINKED_HISTORY_REQUESTS_PER_RUN) {
-                        Thread.sleep(LINKED_HISTORY_INTERVAL_MILLIS)
-                        val recorded =
-                            try {
-                                synchronized(priceGate) {
-                                    if (closing.get() || priceRestorePaused) return@runCatching
-                                    JvmSqliteDatabase(file.toString()).use { connection ->
-                                        val application = PortfolioApplication(connection, System::currentTimeMillis)
-                                        if (!application.marketDataConsent()) return@runCatching
-                                        application.backfillLinkedCoinHistory(
-                                            { url, key -> priceTransport.get(url, key.orEmpty()) },
-                                            maxRequests = 1,
-                                        )
-                                    }
-                                }
-                            } catch (failure: io.polion.core.market.CoingeckoProviderException) {
-                                // The free API allows a few requests a minute across all market requests: wait it out, twice at most.
-                                if (failure.failure != io.polion.core.market.CoingeckoProviderFailure.RATE_LIMITED ||
-                                    ++rateLimits > 2
-                                ) {
-                                    throw failure
-                                }
-                                Thread.sleep(LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS)
-                                return@repeat
+                // An interrupted pause (the app closing) ends the run.
+                val usd =
+                    runCatching {
+                        backfillSteps(LINKED_USD_HISTORY_REQUESTS_PER_RUN, LINKED_USD_HISTORY_INTERVAL_MILLIS) { application ->
+                            application.backfillLinkedCoinUsdHistory(defiLlamaTransport::get, maxRequests = 1)
+                        }
+                    }.getOrDefault(true)
+                val other =
+                    !closing.get() &&
+                        runCatching {
+                            backfillSteps(LINKED_HISTORY_REQUESTS_PER_RUN, LINKED_HISTORY_INTERVAL_MILLIS) { application ->
+                                application.backfillLinkedCoinHistory(
+                                    { url, key -> priceTransport.get(url, key.orEmpty()) },
+                                    maxRequests = 1,
+                                )
                             }
-                        // Nothing recorded means every range is filled.
-                        if (recorded == 0) return@runCatching
-                        changed = true
-                    }
-                }
-                if (changed) dataRevision.update { it + 1 }
+                        }.getOrDefault(true)
+                if (usd || other) dataRevision.update { it + 1 }
             }
         }.onFailure { historyBackfillQueued.set(false) }
+    }
+
+    /**
+     * Runs [step] up to [steps] times, [intervalMillis] apart, until it reports no work. Each step and its write run under
+     * the price gate on a fresh connection, so a restore never meets an open connection; the pauses run outside it. A
+     * rate limit is waited out twice at most; any other failure ends the run. Returns whether any step did work.
+     */
+    private fun backfillSteps(
+        steps: Int,
+        intervalMillis: Long,
+        step: (PortfolioApplication) -> Int,
+    ): Boolean {
+        var changed = false
+        var rateLimits = 0
+        repeat(steps) {
+            Thread.sleep(intervalMillis)
+            val done =
+                try {
+                    synchronized(priceGate) {
+                        if (closing.get() || priceRestorePaused) return changed
+                        JvmSqliteDatabase(file.toString()).use { connection ->
+                            val application = PortfolioApplication(connection, System::currentTimeMillis)
+                            if (!application.marketDataConsent()) return changed
+                            step(application)
+                        }
+                    }
+                } catch (failure: Exception) {
+                    if (failure is InterruptedException) throw failure
+                    val limited =
+                        (failure as? io.polion.core.market.CoingeckoProviderException)?.failure ==
+                            io.polion.core.market.CoingeckoProviderFailure.RATE_LIMITED ||
+                            (failure as? io.polion.core.market.DefiLlamaException)?.rateLimited == true
+                    if (!limited || ++rateLimits > 2) return changed
+                    Thread.sleep(LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS)
+                    return@repeat
+                }
+            if (done == 0) return changed
+            changed = true
+        }
+        return changed
     }
 
     override fun refreshPreferences(): io.polion.ui.RefreshPreferences =
