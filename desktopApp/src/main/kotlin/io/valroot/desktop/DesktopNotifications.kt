@@ -64,14 +64,21 @@ internal object DesktopNotifications {
         icon.displayMessage(title, body, TrayIcon.MessageType.INFO)
     }
 
-    /** A plain square in the app icon's background colour; the tray needs an image even though it is only a balloon source. */
-    private fun trayImage(): BufferedImage =
-        BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB).also { image ->
+    /** The app logo at tray size; the tray needs an image even though it is only a balloon source. */
+    private fun trayImage(): BufferedImage {
+        val logo = DesktopNotifications::class.java.getResourceAsStream("/valroot.png")?.use { javax.imageio.ImageIO.read(it) }
+        return BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB).also { image ->
             val graphics = image.createGraphics()
-            graphics.color = Color(0x1B4332)
-            graphics.fillRect(0, 0, 16, 16)
+            graphics.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+            if (logo != null) {
+                graphics.drawImage(logo, 0, 0, 16, 16, null)
+            } else {
+                graphics.color = Color(0x000000)
+                graphics.fillRect(0, 0, 16, 16)
+            }
             graphics.dispose()
         }
+    }
 
     private fun findOnPath(name: String): String? =
         runCatching {

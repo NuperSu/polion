@@ -25,6 +25,7 @@ compose.desktop {
             packageVersion = "1.0.0"
             description = "Local-first, watch-only crypto portfolio tracker"
             vendor = "NuperSu"
+            linux { iconFile.set(project.file("valroot-icon.png")) }
         }
     }
 }

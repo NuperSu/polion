@@ -30,7 +30,7 @@ internal object SyncNotification {
             )
         return Notification
             .Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_valroot)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Valroot is syncing")
             .setContentText(detail)
             .setStyle(Notification.BigTextStyle().bigText(detail))

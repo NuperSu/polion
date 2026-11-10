@@ -113,7 +113,7 @@ internal object PriceAlertNotifications {
         val hidden =
             Notification
                 .Builder(context, CHANNEL)
-                .setSmallIcon(R.drawable.ic_valroot)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Valroot")
                 .setContentText("New notification")
                 .build()
@@ -121,7 +121,7 @@ internal object PriceAlertNotifications {
             val notification =
                 Notification
                     .Builder(context, CHANNEL)
-                    .setSmallIcon(R.drawable.ic_valroot)
+                    .setSmallIcon(R.drawable.ic_notification)
                     .setContentTitle(message.title)
                     .setContentText(message.body)
                     .setContentIntent(open)

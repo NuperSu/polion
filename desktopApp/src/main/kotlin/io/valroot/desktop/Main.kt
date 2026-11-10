@@ -2,6 +2,7 @@ package io.valroot.desktop
 
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
@@ -1158,6 +1159,11 @@ fun main(args: Array<String>) {
             ?.let { args.getOrNull(it + 1)?.toIntOrNull() }
             ?.coerceIn(320, 4096) ?: fallback
     val host = runCatching { DesktopHost(directory, demo) }.getOrNull()
+    val appIcon =
+        runCatching {
+            androidx.compose.ui.graphics.painter
+                .BitmapPainter(appIconImage())
+        }.getOrNull()
     application {
         Window(
             onCloseRequest = {
@@ -1165,6 +1171,7 @@ fun main(args: Array<String>) {
                 exitApplication()
             },
             title = ApplicationInfo.NAME,
+            icon = appIcon,
             state = WindowState(width = dimension("--width", 1100).dp, height = dimension("--height", 800).dp),
         ) {
             if (host == null) {
@@ -1238,3 +1245,9 @@ internal fun dataDirectory(share: Path): Path {
     }
     return directory
 }
+
+/** The Valroot logo (watch-only wallet), rendered from `design/logo/valroot.svg`. */
+internal fun appIconImage(): androidx.compose.ui.graphics.ImageBitmap =
+    org.jetbrains.skia.Image
+        .makeFromEncoded(requireNotNull(DesktopHost::class.java.getResourceAsStream("/valroot.png")).use { it.readAllBytes() })
+        .toComposeImageBitmap()
