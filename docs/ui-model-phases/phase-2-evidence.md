@@ -25,9 +25,9 @@ Final verification passed **449 tests** (270 core JVM, 47 Android host, 103 shar
 
 `PhaseTwoProjectionTest` independently checks exact endpoint changes, missing/stale/zero boundaries, sub-cent price ratios, known accounting sums, unknown opening basis, provisional results, native contribution differences and distinct UTC/intraday boundaries. `PhaseTwoControlsTest` exercises real currency, sort, filter and explanation actions, and the global-market versus selected-portfolio return path. Existing restoration and market-only tests remain in place. Production captures wait for price and accounting projections before recording coin General.
 
-The final APK and test APK were updated with `-r` in Android user 10, preserving app data. The disposable native harness passed **17 checks, zero failures** (`/tmp/phase2-final-native.log`). Fresh current-user and idle-service checks preceded installation and launch. Polion is resumed on the connected Pixel in user 10; no wallet sync or personal-data inspection was performed.
+The final APK and test APK were updated with `-r` in Android user 10, preserving app data. The disposable native harness passed **17 checks, zero failures** (`/tmp/phase2-final-native.log`). Fresh current-user and idle-service checks preceded installation and launch. Valroot is resumed on the connected Pixel in user 10; no wallet sync or personal-data inspection was performed.
 
-Review captures are available in `/tmp/polion-phase2-review/index.html` and `/tmp/polion-phase2-review.zip`. They contain 108 seeded production-screen captures, including 360×800, 390×844 and 1440×900 plus enlarged text and scrolled states. These are test data, not personal-wallet captures.
+Review captures are available in `/tmp/valroot-phase2-review/index.html` and `/tmp/valroot-phase2-review.zip`. They contain 108 seeded production-screen captures, including 360×800, 390×844 and 1440×900 plus enlarged text and scrolled states. These are test data, not personal-wallet captures.
 
 ## Acceptance boundaries
 

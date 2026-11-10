@@ -24,6 +24,6 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "Polion"
+rootProject.name = "Valroot"
 include(":core", ":sharedUi", ":androidApp", ":desktopApp")
 include(":uiModel")

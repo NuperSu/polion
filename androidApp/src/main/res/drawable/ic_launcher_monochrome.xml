@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Valroot themed-icon layer (Android 13+): the mark in one colour, which the launcher tints -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="512" android:viewportHeight="512">
+  <group android:pivotX="264" android:pivotY="248" android:scaleX="0.62" android:scaleY="0.62" android:translateX="-8" android:translateY="8">
+    <path android:pathData="M120,150 L330,96 C346,92 360,102 362,118 L366,150" android:strokeColor="#FFFFFFFF" android:strokeWidth="18" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <path android:pathData="M128,150 h256 a40,40 0 0 1 40,40 v170 a40,40 0 0 1 -40,40 h-256 a40,40 0 0 1 -40,-40 v-170 a40,40 0 0 1 40,-40z" android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <path android:pathData="M136,330 L200,288 L248,312 L310,236 L360,252" android:strokeColor="#FFFFFFFF" android:strokeWidth="20" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <path android:pathData="M364,224 h52 a24,24 0 0 1 24,24 v24 a24,24 0 0 1 -24,24 h-52 a24,24 0 0 1 -24,-24 v-24 a24,24 0 0 1 24,-24z" android:strokeColor="#FFFFFFFF" android:strokeWidth="16" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    <path android:pathData="M370,260 a12,12 0 1 0 24,0 a12,12 0 1 0 -24,0z" android:fillColor="#FFFFFFFF"/>
+  </group>
+</vector>

@@ -1,6 +1,6 @@
-# Polion
+# Valroot
 
-A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. Its shared interface uses Main, Portfolio and Insights, with account, public Bitcoin address, activity, reporting and settings workflows available from the menu. The shared core provides exact amounts, ownership scopes, SQLite persistence, raw provenance, a versioned activity ledger, Esplora history, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation and encrypted portable backup. Public descriptors and xpub wallets support bounded address discovery; see [supported wallet imports](docs/bitcoin-wallets.md). Polion does not sign transactions or accept private keys. Release 1.0.0 limits, builds and recovery steps are in [release](docs/release.md); the [Gate D audit](docs/gate-d-audit.md) lists what remains.
+A Kotlin Multiplatform, watch-only portfolio tracker for Android and desktop. Its shared interface uses Main, Portfolio and Insights, with account, public Bitcoin address, activity, reporting and settings workflows available from the menu. The shared core provides exact amounts, ownership scopes, SQLite persistence, raw provenance, a versioned activity ledger, Esplora history, historical holdings, asset prices, FIFO accounting, user corrections, reconciliation and encrypted portable backup. Public descriptors and xpub wallets support bounded address discovery; see [supported wallet imports](docs/bitcoin-wallets.md). Valroot does not sign transactions or accept private keys. Release 1.0.0 limits, builds and recovery steps are in [release](docs/release.md); the [Gate D audit](docs/gate-d-audit.md) lists what remains.
 
 See the [product roadmap status](docs/roadmap-status.md) for the current direction and open gates.
 
@@ -15,7 +15,7 @@ Use JDK 25 and an Android SDK with platform 37 (`platforms;android-37.0`) and bu
 
 Headless shared UI tests need an X display; use Xvfb with `SKIKO_RENDER_API=SOFTWARE` on Linux.
 
-Open the project in Android Studio or install `androidApp/build/outputs/apk/debug/androidApp-debug.apk` on an Android 8.0+ device, then launch Polion.
+Open the project in Android Studio or install `androidApp/build/outputs/apk/debug/androidApp-debug.apk` on an Android 8.0+ device, then launch Valroot.
 
 When a phone and emulator are connected, select the phone explicitly. Find its serial with `adb devices -l`, then build and install into its current Android profile:
 
@@ -24,7 +24,7 @@ export ANDROID_SERIAL=YOUR_PHONE_SERIAL
 phone_user=$(adb shell am get-current-user) || exit
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk ./gradlew :androidApp:assembleDebug &&
   adb install --user "$phone_user" -r androidApp/build/outputs/apk/debug/androidApp-debug.apk &&
-  adb shell am start --user "$phone_user" -n io.polion.android/.MainActivity
+  adb shell am start --user "$phone_user" -n io.valroot.android/.MainActivity
 ```
 
 If Gradle selects a different SDK from the one you prepared, set `sdk.dir=/absolute/path/to/sdk` in local `local.properties`. The selected SDK must contain the required platform, build tools and accepted licenses. Keep `ANDROID_HOME` and `ANDROID_SDK_ROOT` consistent when setting both.

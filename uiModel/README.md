@@ -1,4 +1,4 @@
-# Polion UI model
+# Valroot UI model
 
 A deterministic Compose fixture host for the shared production presentation layer. It supplies illustrative crypto-only data and preview actions to the same typed renderers used by the application.
 

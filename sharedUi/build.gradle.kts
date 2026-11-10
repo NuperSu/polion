@@ -8,7 +8,7 @@ kotlin {
     jvmToolchain(25)
     jvm()
     android {
-        namespace = "io.polion.ui"
+        namespace = "io.valroot.ui"
         compileSdk = 37
         minSdk = 26
     }
