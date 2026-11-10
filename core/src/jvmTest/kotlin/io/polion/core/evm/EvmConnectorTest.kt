@@ -41,6 +41,8 @@ class EvmConnectorTest {
     private val chain = 8453L
     private val huge = "0x" + "f".repeat(64)
 
+    private var slug = "base-mainnet"
+
     private fun h(n: Int) = "0x" + n.toString(16).padStart(64, '0')
 
     private fun hex(value: Long) = "0x" + value.toString(16)
@@ -64,7 +66,7 @@ class EvmConnectorTest {
         val fungible = raw?.let { ""","fungible":{"rawValue":"$it","value":1.0,"decimals":$decimals,"asset":"USDC"}""" } ?: ""
         val nft = tokenId?.let { ""","nfts":{"tokens":[{"tokenId":"$it","amount":"0x1"}]}""" } ?: ""
         val contractField = contract?.let { ""","contractAddress":"$it"""" } ?: ""
-        return """{"network":"base-mainnet","category":"$category","blockNum":"${hex(100L + n)}",""" +
+        return """{"network":"$slug","category":"$category","blockNum":"${hex(100L + n)}",""" +
             """"blockTimestamp":"2026-01-0${n % 9 + 1}T00:00:00.000Z","hash":"${h(n)}","from":"$from","to":"$to",""" +
             """"uniqueId":"$unique"$contractField$fungible$nft}"""
     }
@@ -84,14 +86,20 @@ class EvmConnectorTest {
 
         // Receipts by hash: the sender, its gas, and an L1 data fee on top (Base is an OP-stack chain).
         val receipts =
-            mapOf(
+            mutableMapOf(
                 h(4) to Triple(me, 500L, 100L),
                 h(7) to Triple(me, 50L, 0L),
                 // Address poisoning: the scammer sent the transaction that moved the look-alike token "from" this address.
                 h(8) to Triple(other, 999L, 0L),
+                // A failed call Alchemy does not list, found by its nonce.
+                h(20) to Triple(me, 300L, 0L),
             )
+
+        // The address's sent transactions by nonce: hash and block. Nonce 3, if sent, has no transaction in its block.
+        val sentByNonce = mutableListOf(h(4) to 104L, h(7) to 107L, h(20) to 110L)
+        val failed = setOf(h(20))
         var sentCount = 3L
-        var nativeBalance = "1999999999999999600"
+        var nativeBalance = "1999999999999999300"
         val requests = mutableListOf<String>()
 
         private fun transfersResponse(body: String): String {
@@ -101,7 +109,7 @@ class EvmConnectorTest {
             val max = request["maxCount"]!!.jsonPrimitive.content.toInt()
             val start = request["pageKey"]?.jsonPrimitive?.content?.toInt() ?: 0
             val matching =
-                if ("base-mainnet" in networks) {
+                if (slug in networks) {
                     transfers.filter { item -> categories.any { item.contains("\"category\":\"$it\"") } }
                 } else {
                     emptyList()
@@ -121,37 +129,78 @@ class EvmConnectorTest {
                     .jsonObject["networks"]!!
                     .jsonArray
                     .map { it.jsonPrimitive.content }
-            if ("base-mainnet" !in networks) return """{"data":{"tokens":[]}}"""
+            if (slug !in networks) return """{"data":{"tokens":[]}}"""
             val native = "0x" + BigInteger(nativeBalance).toString(16)
-            return """{"data":{"tokens":[{"address":"$me","network":"base-mainnet","tokenAddress":null,"tokenBalance":"$native"},""" +
-                """{"address":"$me","network":"base-mainnet","tokenAddress":"$usdc","tokenBalance":"${hex(2_500_000)}"},""" +
-                """{"address":"$me","network":"base-mainnet","tokenAddress":"$fakeUsdc","tokenBalance":"0x0"}]}}"""
+            return """{"data":{"tokens":[{"address":"$me","network":"$slug","tokenAddress":null,"tokenBalance":"$native"},""" +
+                """{"address":"$me","network":"$slug","tokenAddress":"$usdc","tokenBalance":"${hex(2_500_000)}"},""" +
+                """{"address":"$me","network":"$slug","tokenAddress":"$fakeUsdc","tokenBalance":"0x0"}]}}"""
         }
 
         private fun rpcResponse(body: String): String {
-            if (body.contains("eth_getTransactionCount")) return """{"jsonrpc":"2.0","id":1,"result":"${hex(sentCount)}"}"""
-            val hashes =
-                Json.parseToJsonElement(body).jsonArray.map {
-                    it.jsonObject["params"]!!
-                        .jsonArray[0]
-                        .jsonPrimitive.content
-                }
-            return hashes
-                .mapIndexed { index, hash ->
-                    val (from, gas, l1) = receipts.getValue(hash)
-                    """{"jsonrpc":"2.0","id":$index,"result":{"transactionHash":"$hash","from":"$from","blockNumber":"0x10",""" +
-                        """"transactionIndex":"0x1","status":"0x1","gasUsed":"${hex(
-                            gas,
-                        )}","effectiveGasPrice":"0x1","l1Fee":"${hex(l1)}"}}"""
+            val single = Json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject
+            if (single != null) {
+                val method = single["method"]!!.jsonPrimitive.content
+                val params = single["params"]!!.jsonArray
+                val result =
+                    when (method) {
+                        "eth_blockNumber" -> "\"${hex(200)}\""
+                        "eth_getTransactionCount" -> {
+                            val at = params[1].jsonPrimitive.content
+                            val count =
+                                if (at == "latest") {
+                                    sentCount
+                                } else {
+                                    val block = at.removePrefix("0x").toLong(16)
+                                    (0 until sentCount).count { blockOf(it) <= block }.toLong()
+                                }
+                            "\"${hex(count)}\""
+                        }
+                        "eth_getBlockByNumber" -> {
+                            val block =
+                                params[0]
+                                    .jsonPrimitive.content
+                                    .removePrefix("0x")
+                                    .toLong(16)
+                            val mine =
+                                sentByNonce.withIndex().filter { it.value.second == block }.joinToString("") { (nonce, tx) ->
+                                    """,{"hash":"${tx.first}","from":"$me","to":"$router","nonce":"${hex(nonce.toLong())}",""" +
+                                        """"transactionIndex":"0x2","value":"0x0"}"""
+                                }
+                            """{"number":"${hex(block)}","timestamp":"${hex(1_768_003_200L + block)}","transactions":[""" +
+                                """{"hash":"${h(
+                                    999,
+                                )}","from":"$other","to":"$me","nonce":"0x5","transactionIndex":"0x0","value":"0x0"}$mine]}"""
+                        }
+                        else -> error("Unexpected method $method")
+                    }
+                return """{"jsonrpc":"2.0","id":1,"result":$result}"""
+            }
+            val calls = Json.parseToJsonElement(body).jsonArray.map { it.jsonObject }
+            return calls
+                .mapIndexed { index, call ->
+                    val hash = call["params"]!!.jsonArray[0].jsonPrimitive.content
+                    if (call["method"]!!.jsonPrimitive.content == "eth_getTransactionByHash") {
+                        val nonce = sentByNonce.indexOfFirst { it.first == hash }
+                        """{"jsonrpc":"2.0","id":$index,"result":{"hash":"$hash","nonce":"${hex(nonce.toLong())}"}}"""
+                    } else {
+                        val (from, gas, l1) = receipts.getValue(hash)
+                        """{"jsonrpc":"2.0","id":$index,"result":{"transactionHash":"$hash","from":"$from","blockNumber":"0x10",""" +
+                            """"transactionIndex":"0x1","status":"${if (hash in failed) "0x0" else "0x1"}","gasUsed":"${hex(
+                                gas,
+                            )}","effectiveGasPrice":"0x1","l1Fee":"${hex(l1)}"}}"""
+                    }
                 }.joinToString(",", "[", "]")
         }
+
+        /** The block holding the transaction with [nonce]; a nonce without a transaction (nonce 3) is in block 112. */
+        private fun blockOf(nonce: Long): Long = sentByNonce.getOrNull(nonce.toInt())?.second ?: 112L
 
         val post = { url: String, body: String ->
             requests += url.substringAfterLast('/')
             when {
                 url.endsWith("/transfers/by-address") -> transfersResponse(body)
                 url.endsWith("/tokens/by-address") -> tokensResponse(body)
-                url.startsWith("https://base-mainnet.g.alchemy.com/v2/") -> rpcResponse(body)
+                url.startsWith("https://$slug.g.alchemy.com/v2/") -> rpcResponse(body)
                 else -> error("Unexpected request $url")
             }
         }
@@ -181,7 +230,7 @@ class EvmConnectorTest {
             val provider = FakeAlchemy()
             val connector = EvmConnector(provider.post)
             // Discovery finds Base among the networks.
-            assertEquals(listOf(JobState.COMPLETED), connector.refresh(app, SourceRefreshOptions()).jobs)
+            assertEquals(listOf(JobState.COMPLETED), connector.refresh(app, SourceRefreshOptions()).jobs, app.evmChainStates(me).toString())
             assertEquals(listOf(chain), app.evmChainStates(me).map { it.chainId })
 
             val activities =
@@ -223,10 +272,14 @@ class EvmConnectorTest {
                     .amount.assetId,
             )
 
-            // 3 ETH − 1 ETH − 600 − 50 + 250 matches Alchemy; one sent transaction (an approval, say) was not listed.
+            // A failed call Alchemy did not list was found by its nonce: its fee counts, with the search as its source.
+            val found = activities.getValue(h(20)).activity
+            assertEquals(listOf("-300" to MovementRole.FEE), found.movements.map { it.amount.atomicUnits.toString() to it.role })
+            // 3 ETH − 1 ETH − 600 − 50 + 250 − 300 matches Alchemy, with nothing missing.
             val state = app.evmChainStates(me).single()
             assertNull(state.balanceDifference)
-            assertEquals("1 sent transaction not listed by Alchemy (for example approvals); their fees are not counted", state.coverage)
+            assertNull(state.coverage)
+            assertEquals(mapOf(2L to h(20)), app.evmRecovered().nonces(me, chain).mapValues { it.value?.hash })
             assertEquals(setOf(EvmAssets.token(chain, fakeUsdc), EvmAssets.nft(chain, punk, evmQuantity(huge))), app.hiddenAssets())
 
             // Unchanged: newest transfer, newest contract transfer and the sent count only.
@@ -234,14 +287,18 @@ class EvmConnectorTest {
             connector.refresh(app, SourceRefreshOptions())
             assertEquals(3, provider.requests.size)
 
-            // Another unlisted transaction: its fee becomes an adjustment after the last activity, so the balance matches;
-            // the gap count grows.
+            // A nonce no transaction in its block uses (a delegation authorization, say) is recorded as not found once, and
+            // the unexplained difference becomes an adjustment after the last activity, so the balance matches.
             provider.sentCount = 4
-            provider.nativeBalance = "1999999999999999300"
+            provider.nativeBalance = "1999999999999999000"
             connector.refresh(app, SourceRefreshOptions())
             val after = app.evmChainStates(me).single()
             assertNull(after.balanceDifference)
-            assertTrue(after.coverage!!.startsWith("2 sent transactions not listed"))
+            assertEquals("1 sent transaction could not be found on the chain; their fees are not counted", after.coverage)
+            assertEquals(null, app.evmRecovered().nonces(me, chain)[3L])
+            provider.requests.clear()
+            connector.refresh(app, SourceRefreshOptions())
+            assertTrue(provider.requests.none { it.contains("eth_getBlockByNumber") })
             val adjustment =
                 app
                     .snapshot()
@@ -255,6 +312,138 @@ class EvmConnectorTest {
                     .amount.atomicUnits
                     .toString(),
             )
+        }
+    }
+
+    /** 1inch's history: events with their transaction hash, block, sender and token actions. */
+    private fun oneInchHistory(vararg events: String) = """{"items":[${events.joinToString(",")}]}"""
+
+    private fun oneInchEvent(
+        n: Int,
+        sender: String,
+        vararg actions: String,
+    ) = """{"timeMs":${1_767_225_600_000L + n * 86_400_000L},"details":{"txHash":"${h(n)}","blockNumber":${100 + n},""" +
+        """"fromAddress":"$sender","tokenActions":[${actions.joinToString(",")}]}}"""
+
+    private fun action(
+        standard: String,
+        from: String,
+        to: String,
+        amount: String,
+        contract: String = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    ) = """{"standard":"$standard","address":"$contract","fromAddress":"$from","toAddress":"$to","amount":"$amount"}"""
+
+    @Test fun contractPaymentsAreRecoveredFromOneInchTracesWhereAlchemyDoesNotListThem() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            slug = "bnb-mainnet"
+            val app = setUp(db)
+            val provider = FakeAlchemy()
+            // Only the deposit, the swap's token side and the address-poisoning transfer are listed; Alchemy lists no
+            // contract payments on BNB Smart Chain.
+            provider.receipts.remove(h(20))
+            provider.sentByNonce.removeAt(2)
+            provider.sentCount = 2
+            // 3 − 1 − 600 − 50 + 250 (swap proceeds) + 1000 (paid in someone else's transaction).
+            provider.nativeBalance = "2000000000000000600"
+            val payer = "0x4444444444444444444444444444444444444444"
+            val traces =
+                mapOf(
+                    h(7) to
+                        """{"transactionTrace":{"txHash":"${h(7)}","type":"CALL","from":"$me","to":"$router","value":"0x0",""" +
+                        """"status":"RETURNED","calls":[""" +
+                        """{"type":"CALL","from":"$router","to":"$me","value":"0xfa","status":"NO_CONTRACT","success":1},""" +
+                        // A delegate call carries the caller's value without moving it.
+                        """{"type":"DELEGATECALL","from":"$router","to":"$me","value":"0x3e7","status":"RETURNED","success":1},""" +
+                        // A payment inside a reverted call never happened.
+                        """{"type":"CALL","from":"$router","to":"$router","value":"0x0","status":"REVERTED","success":0,"calls":[""" +
+                        """{"type":"CALL","from":"$router","to":"$me","value":"0x7","status":"NO_CONTRACT","success":1}]}]}}""",
+                    h(30) to
+                        """{"transactionTrace":{"txHash":"${h(30)}","type":"CALL","from":"$other","to":"$payer","value":"0x0",""" +
+                        """"status":"RETURNED","calls":[{"type":"CALL","from":"$payer","to":"$me","value":"0x3e8","status":"NO_CONTRACT","success":1}]}}""",
+                )
+            val oneInchRequests = mutableListOf<String>()
+            val oneInch = { path: String ->
+                oneInchRequests += path
+                when {
+                    path.startsWith("/history/") ->
+                        oneInchHistory(
+                            oneInchEvent(30, other, action("Native", payer, me, "1000")),
+                            oneInchEvent(7, me, action("ERC20", me, router, "2500000", usdc), action("Native", router, me, "250")),
+                            // A plain transfer from the sender is listed by Alchemy and needs no trace.
+                            oneInchEvent(1, other, action("Native", other, me, "3000000000000000000")),
+                        )
+                    else -> traces.getValue(path.substringAfter("/tx-hash/"))
+                }
+            }
+            val connector = EvmConnector(provider.post, oneInch)
+            app.addEvmChains(me, setOf(56L))
+            app.recordEvmDiscovery(me)
+            assertEquals(listOf(JobState.COMPLETED), connector.refresh(app, SourceRefreshOptions()).jobs)
+            val activities =
+                app.transactionEntries(ActivityFilter()).associate {
+                    it.activity.id.value
+                        .substringAfter("56:")
+                        .substringBefore(':') to it.activity
+                }
+            // The swap's proceeds join the swap itself.
+            val swap = activities.getValue(h(7))
+            assertEquals(ActivityKind.TRADE, swap.kind)
+            assertTrue(swap.movements.any { it.amount.assetId == EvmAssets.native(56) && it.amount.atomicUnits.toString() == "250" })
+            // A payment in a transaction Alchemy never listed is its own deposit.
+            assertEquals(ActivityKind.DEPOSIT, activities.getValue(h(30)).kind)
+            // Balances match with no adjustment, and the chain reports no gap.
+            val state = app.evmChainStates(me).single()
+            assertNull(state.balanceDifference)
+            assertNull(state.coverage)
+            assertTrue(
+                app.snapshot().activities.none {
+                    it.activity.id.value
+                        .startsWith("evm-adjust:")
+                },
+            )
+            assertEquals(listOf("/history/", "/traces/", "/traces/"), oneInchRequests.map { it.substring(0, it.indexOf('/', 1) + 1) })
+
+            // Unchanged and checked recently: 1inch is not asked again, and nothing is traced twice.
+            oneInchRequests.clear()
+            connector.refresh(app, SourceRefreshOptions())
+            assertTrue(oneInchRequests.isEmpty())
+
+            // Without a key the chain says what is missing.
+            EvmConnector(provider.post).refresh(app, SourceRefreshOptions(recoverHistory = true))
+            assertEquals(
+                "Payments made by contracts are not listed on this chain; a 1inch key recovers them",
+                app.evmChainStates(me).single { it.chainId == 56L }.coverage,
+            )
+            slug = "base-mainnet"
+        }
+    }
+
+    @Test fun tokensOneInchLeavesOutStartHidden() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            val provider = FakeAlchemy()
+            var listed = emptyList<String>()
+            val oneInch = { path: String ->
+                require(path.startsWith("/history/"))
+                oneInchHistory(*listed.map { oneInchEvent(5, other, action("ERC20", other, me, "1", it)) }.toTypedArray())
+            }
+            app.addEvmChains(me, setOf(chain))
+            app.recordEvmDiscovery(me)
+            EvmConnector(provider.post, oneInch).refresh(app, SourceRefreshOptions())
+            val usdcAsset = EvmAssets.token(chain, usdc)
+            // USD Coin has a CoinGecko coin, but 1inch's history of the address leaves it out.
+            assertTrue(usdcAsset in app.hiddenAssets())
+            // The user's choice wins.
+            app.setAssetShown(usdcAsset, true)
+            assertTrue(usdcAsset !in app.hiddenAssets())
+            app.evmRecovered().saveListing(me, chain, OneInchListing(1_800_000_000_000L, setOf(usdc)))
+            JvmSqliteDatabase(":memory:").use { other ->
+                val fresh = setUp(other)
+                fresh.addEvmChains(me, setOf(chain))
+                listed = listOf(usdc)
+                EvmConnector(FakeAlchemy().post, oneInch).refresh(fresh, SourceRefreshOptions())
+                assertTrue(usdcAsset !in fresh.hiddenAssets())
+            }
         }
     }
 

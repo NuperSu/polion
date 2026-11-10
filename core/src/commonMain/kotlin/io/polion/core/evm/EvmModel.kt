@@ -13,6 +13,8 @@ data class EvmTransaction(
     val value: ExactInteger,
     val fee: ExactInteger,
     val success: Boolean,
+    /** Where the transaction was found when not in Alchemy's transfer list, such as `nonce-search`; saved with the record. */
+    val source: String? = null,
 )
 
 /** Native coin moved by a contract during a transaction. */
@@ -25,6 +27,8 @@ data class EvmInternalTransfer(
     val to: String?,
     val value: ExactInteger,
     val success: Boolean,
+    /** Where the transfer was read when not from Alchemy, such as `1inch-trace`; saved with the record. */
+    val source: String? = null,
 )
 
 /** NATIVE marks a chain's own coin in balance lists. */

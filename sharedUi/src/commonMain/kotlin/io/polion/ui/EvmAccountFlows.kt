@@ -63,6 +63,12 @@ internal const val ALCHEMY_KEY_HELP =
     "Free key from alchemy.com (create an app, then enable the networks you use, such as BNB Smart Chain, Base and Polygon). " +
         "Polion reads the history of EVM addresses with it. Stays on this device."
 
+/** Explains the optional 1inch key in Settings. */
+internal const val ONE_INCH_KEY_HELP =
+    "Optional free key from business.1inch.com. On BNB Smart Chain, Arbitrum, OP and Gnosis, Alchemy does not list coins " +
+        "a contract pays you, such as swap proceeds; Polion finds them in 1inch's history and reads each amount from the " +
+        "transaction's trace. 1inch receives your EVM addresses and your IP address. Stays on this device."
+
 private const val EVM_REPLY_WAIT_MILLIS = 3_000L
 
 /** The reason an EVM address cannot be tracked, or null when it is valid or still empty. */
@@ -105,6 +111,18 @@ internal fun saveAlchemyKey(
         rejected.message ?: "That does not look like an Alchemy API key."
     }
 
+/** Stores or removes the 1inch key and returns the core's message when it is rejected, otherwise null. */
+internal fun saveOneInchKey(
+    app: PortfolioApplication,
+    key: String?,
+): String? =
+    try {
+        app.setOneInchApiKey(key)
+        null
+    } catch (rejected: IllegalArgumentException) {
+        rejected.message ?: "That does not look like a 1inch API key."
+    }
+
 /** The chains Alchemy serves, read on the host dispatcher. Names come from CoinGecko when its catalog is cached. */
 @Composable
 internal fun rememberEvmChainChoices(
@@ -116,11 +134,17 @@ internal fun rememberEvmChainChoices(
     return choices
 }
 
-/** Alchemy key status and entry, shared by Settings and the connect flow. [save] returns the rejection message or null. */
+/**
+ * Alchemy key status and entry, shared by Settings and the connect flow, and the same for other providers' keys through
+ * [name], [help] and [tag]. [save] returns the rejection message or null.
+ */
 @Composable
 internal fun AlchemyKeyDialog(
     hasKey: Boolean,
     save: suspend (String?) -> String?,
+    name: String = "Alchemy",
+    help: String = ALCHEMY_KEY_HELP,
+    tag: String = "alchemy",
     close: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -138,10 +162,10 @@ internal fun AlchemyKeyDialog(
     }
     AlertDialog(
         onDismissRequest = { if (!busy) close() },
-        title = { Text("Alchemy API key") },
+        title = { Text("$name API key") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(ALCHEMY_KEY_HELP)
+                Text(help)
                 OutlinedTextField(
                     key,
                     {
@@ -151,18 +175,18 @@ internal fun AlchemyKeyDialog(
                     singleLine = true,
                     enabled = !busy,
                     isError = error != null,
-                    label = { Text("Alchemy API key") },
+                    label = { Text("$name API key") },
                     visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth().testTag("alchemy-key-field"),
+                    modifier = Modifier.fillMaxWidth().testTag("$tag-key-field"),
                 )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("alchemy-key-error")) }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("$tag-key-error")) }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = key.isNotBlank() && !busy,
                 onClick = { submit(key.trim()) },
-                modifier = Modifier.testTag("alchemy-key-save"),
+                modifier = Modifier.testTag("$tag-key-save"),
             ) { Text("Save") }
         },
         dismissButton = {
@@ -171,7 +195,7 @@ internal fun AlchemyKeyDialog(
                     TextButton(
                         enabled = !busy,
                         onClick = { submit(null) },
-                        modifier = Modifier.testTag("alchemy-key-remove"),
+                        modifier = Modifier.testTag("$tag-key-remove"),
                     ) { Text("Remove") }
                 }
                 TextButton(enabled = !busy, onClick = close) { Text("Cancel") }

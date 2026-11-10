@@ -282,6 +282,86 @@ object Alchemy {
         return evmQuantity(requireNotNull(root.text("result")) { "Transaction count not available" }).toString().toLong()
     }
 
+    /** The address's sent-transaction count at [blockNumber] (archive state). */
+    fun nonceAtBody(
+        address: String,
+        blockNumber: Long,
+    ): String {
+        require(blockNumber >= 0)
+        return """{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionCount","params":["${evmAddress(
+            address,
+        )}","0x${blockNumber.toString(16)}"]}"""
+    }
+
+    fun blockNumberBody(): String = """{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}"""
+
+    /** A single numeric JSON-RPC result, such as a block number or a count. */
+    fun parseQuantity(payload: String): Long {
+        val root = Json.parseToJsonElement(payload).jsonObject
+        return evmQuantity(requireNotNull(root.text("result")) { "Result not available" }).toString().toLong()
+    }
+
+    /** A JSON-RPC batch of transaction lookups, for their nonces. */
+    fun transactionsBody(hashes: List<String>): String {
+        require(hashes.size in 1..RECEIPT_BATCH)
+        return buildJsonArray {
+            hashes.forEachIndexed { index, hash ->
+                add(
+                    buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("id", index)
+                        put("method", "eth_getTransactionByHash")
+                        put("params", buildJsonArray { add(JsonPrimitive(hash(hash))) })
+                    },
+                )
+            }
+        }.toString()
+    }
+
+    /** Nonces by transaction hash. */
+    fun parseNonces(payload: String): Map<String, Long> =
+        (Json.parseToJsonElement(payload) as JsonArray).associate { element ->
+            val response = element.jsonObject
+            val transaction = requireNotNull(response["result"] as? JsonObject) { "Transaction not available" }
+            hash(transaction.text("hash")) to evmQuantity(transaction.text("nonce")!!).toString().toLong()
+        }
+
+    fun blockBody(blockNumber: Long): String {
+        require(blockNumber >= 0)
+        return """{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["0x${blockNumber.toString(16)}",true]}"""
+    }
+
+    /**
+     * The transaction [address] sent with [nonce] in a full block, without its fee and status (those come from the
+     * receipt), or null when the block has none.
+     */
+    fun parseBlockTransaction(
+        payload: String,
+        address: String,
+        nonce: Long,
+    ): EvmTransaction? {
+        val block = requireNotNull(Json.parseToJsonElement(payload).jsonObject["result"] as? JsonObject) { "Block not available" }
+        val time = evmQuantity(block.text("timestamp")!!).toString().toLong() * 1000
+        val number = evmQuantity(block.text("number")!!).toString().toLong()
+        return block["transactions"]!!
+            .jsonArray
+            .map { it.jsonObject }
+            .firstOrNull { it.text("from")?.lowercase() == address && evmQuantity(it.text("nonce")!!).toString().toLong() == nonce }
+            ?.let { tx ->
+                EvmTransaction(
+                    hash(tx.text("hash")),
+                    number,
+                    evmQuantity(tx.text("transactionIndex")!!).toString().toInt(),
+                    time,
+                    address,
+                    tx.text("to")?.let(::evmAddress),
+                    evmQuantity(tx.text("value") ?: "0x0"),
+                    ExactInteger.ZERO,
+                    success = true,
+                )
+            }
+    }
+
     const val ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
     /** Token names are attacker-controlled: invisible and control characters are dropped. */

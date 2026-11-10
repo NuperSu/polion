@@ -155,7 +155,17 @@ class RefreshWorker(
                                         check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
                                     },
                                 )
-                            connectors += EvmConnector(alchemy::post)
+                            val oneInch =
+                                app.oneInchApiKey()?.let {
+                                    OneInchTransport(
+                                        apiKey = { app.oneInchApiKey() },
+                                        beforeRequest = {
+                                            ensureActive()
+                                            check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
+                                        },
+                                    )
+                                }
+                            connectors += EvmConnector(alchemy::post, oneInch?.let { it::get })
                         }
                         val outcomes =
                             app.refreshSources(

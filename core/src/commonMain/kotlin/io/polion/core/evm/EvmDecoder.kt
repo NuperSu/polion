@@ -36,10 +36,15 @@ data class EvmTransactionGroup(
             append("evm-1|$chainId|$hash\n")
             transaction?.let {
                 append(
-                    "tx|${it.blockNumber}|${it.position}|${it.timestampMillis}|${it.from}|${it.to}|${it.value}|${it.fee}|${it.success}\n",
+                    "tx|${it.blockNumber}|${it.position}|${it.timestampMillis}|${it.from}|${it.to}|${it.value}|${it.fee}|${it.success}" +
+                        (it.source?.let { source -> "|$source" } ?: "") + "\n",
                 )
             }
-            internal.sortedBy { it.index }.forEach { append("in|${it.index}|${it.from}|${it.to}|${it.value}|${it.success}\n") }
+            internal.sortedBy { it.index }.forEach {
+                append(
+                    "in|${it.index}|${it.from}|${it.to}|${it.value}|${it.success}" + (it.source?.let { source -> "|$source" } ?: "") + "\n",
+                )
+            }
             tokens.sortedBy { it.logIndex }.forEach {
                 append("tok|${it.logIndex}|${it.from}|${it.to}|${it.contract}|${it.standard}|${it.tokenId}|${it.amount}|${it.decimals}\n")
             }

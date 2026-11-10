@@ -1,6 +1,6 @@
 # EVM addresses (Ethereum and other chains)
 
-Code: `core/…/evm/` (identity, Alchemy client, decoder, connector, chain state), `core/…/market/CoingeckoCatalog.kt` and `AssetLinkRepository.kt`, and in `PortfolioApplication`: `applyEvmChainHistory`, `checkEvmBalances`, `refreshEvmCatalog`, `refreshLinkedCoinPrices`, `refreshLinkedCoinUsdPrices`, `backfillLinkedCoinUsdHistory`; `core/…/market/DefiLlamaPrices.kt`. Hosts: `AlchemyTransport` and `DefiLlamaTransport` in `androidApp` and `desktopApp`. Tests: `EvmIdentityTest`, `AlchemyTest`, `EvmConnectorTest`, `EvmAssetsApplicationTest`, `CoingeckoCatalogTest`, `AlchemyTransportTest`, `EvmUiTest`.
+Code: `core/…/evm/` (identity, Alchemy client, decoder, connector, chain state), `core/…/market/CoingeckoCatalog.kt` and `AssetLinkRepository.kt`, and in `PortfolioApplication`: `applyEvmChainHistory`, `checkEvmBalances`, `refreshEvmCatalog`, `refreshLinkedCoinPrices`, `refreshLinkedCoinUsdPrices`, `backfillLinkedCoinUsdHistory`; `core/…/market/DefiLlamaPrices.kt`, `core/…/evm/OneInch.kt` and `EvmRecoveredRepository.kt`. Hosts: `AlchemyTransport`, `OneInchTransport` and `DefiLlamaTransport` in `androidApp` and `desktopApp`. Tests: `EvmIdentityTest`, `AlchemyTest`, `EvmConnectorTest`, `OneInchTransportTest`, `EvmAssetsApplicationTest`, `CoingeckoCatalogTest`, `AlchemyTransportTest`, `EvmUiTest`.
 
 ## Tracking an address
 
@@ -16,11 +16,22 @@ History comes from Alchemy, using the user's free key from alchemy.com. In the A
 
 Supported chains: Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mainnet, Gnosis, Celo and Ronin.
 
+### 1inch (optional)
+
+A 1inch key (free from business.1inch.com, Settings › API Keys) adds what Alchemy does not list. It is a device setting like the Alchemy key. 1inch receives the address and the device's IP address. Requests are spaced 1.1 seconds apart, within the free plan's 60 a minute. 1inch's public API terms limit free use to personal use; each user brings their own key.
+
+- **History** (`/history/v2.0/history/{address}/events`, up to 10,000 events per request, paged by time) finds transactions in which a contract paid the address native coin, and lists the tokens 1inch shows for the address.
+- **Traces** (`/traces/v1.0/chain/{chain}/block-trace/{block}/tx-hash/{hash}`) give every call of such a transaction with its value.
+- **Not used:** 1inch's fees and amounts. Checked against receipts, its fees differed on BNB Smart Chain and Arbitrum and left out the L1 data fee on Base and OP, and its history missed a 23.3 POL payment on Polygon.
+- Served on Ethereum, BNB Smart Chain, Polygon, OP, Arbitrum, Gnosis and Base; not on Celo or Ronin.
+
 ## What a refresh reads
 
 - **Discovery:** on the first refresh and then weekly, balances and newest transfers are read in groups of five networks. They add the chains the address has used; chains the user chose are kept.
 - **Skip check:** per chain, the newest transfer (plus the newest contract-made transfer where listed) and the sent count. If they equal the saved head, nothing else is read: two or three small requests per chain.
 - **Full read:** otherwise every transfer page is read, then receipts for transactions the address may have sent. The history is applied in one database transaction, and the balances are then checked. "Recover full history" forces a full read.
+- **1inch check:** with a 1inch key, its history is read on a full read and at least every 6 hours, even when Alchemy shows nothing new, since a contract can pay the address in someone else's transaction. A found payment triggers a full read.
+- **Closable gaps:** an unchanged chain is also read in full while its note reports sent transactions still to be searched for, or contract payments not listed when a 1inch key is set.
 - **Failures:** a network that fails or times out applies nothing, and the chain shows the error.
 
 ## Decoding
@@ -33,10 +44,18 @@ Supported chains: Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mai
 
 ## Coverage gaps, shown per chain
 
-- **Unlisted sent transactions:** Alchemy lists transfers, so a sent transaction that moved nothing (an approval, or a failed call) is not listed and its fee is unknown. The sent count minus the sent transactions found is reported as "N sent transactions not listed by Alchemy; their fees are not counted".
-- **Contract payments:** where Alchemy has no contract-made transfer list, the chain says "Payments made by contracts are not listed on this chain".
+- **Unlisted sent transactions:** Alchemy lists transfers, so a sent transaction that moved nothing (such as a failed call) is not listed. Every nonce up to the sent count belongs to one transaction, so each nonce no listed transaction uses is searched for:
+  - The nonces of the listed sent transactions come from `eth_getTransactionByHash`.
+  - A binary search over the address's historical transaction count (`eth_getTransactionCount` at a block, archive state) finds the block where the count passes the nonce, about 30 requests.
+  - That block's transaction from the address with that nonce, and its receipt, give hash, fee and status. It is recorded with the source `nonce-search`.
+  - At most 3 nonces are searched per chain and refresh. A nonce with no such transaction in its block (for example used by a delegation authorization) is recorded as not found and not searched again; the chain reports it as "could not be found on the chain".
+- **Contract payments:** where Alchemy has no contract-made transfer list (BNB Smart Chain, Arbitrum, OP, Gnosis, Celo, Ronin):
+  - With a 1inch key, each transaction in which 1inch's history shows a contract paying the address is traced once. Every successful `CALL` or `SELFDESTRUCT` inside it that moves native coin to or from the address is an internal transfer, identified by its order in the call tree and recorded with the source `1inch-trace`. Calls inside a failed call do not count; delegate and static calls move no value.
+  - The transfers join their transaction's activity, so swap proceeds are part of the swap. A payment in a transaction Alchemy did not list is its own deposit.
+  - Traces and searched nonces are saved in `evm_recovered`, which backups include.
+  - Without a key, the chain says "Payments made by contracts are not listed on this chain", with a hint where 1inch could recover them.
 - **Staking withdrawals** on Ethereum and Gnosis are not available. The decoder supports them for a provider that supplies them.
-- **Native balance:** the gaps above leave the native coin off: contract payments not listed (BNB Chain has many: swap proceeds and withdrawals), fees of unlisted sent transactions, staking withdrawals.
+- **Native balance:** whatever the steps above cannot recover leaves the native coin off: contract payments without a 1inch key, sent transactions not found, staking withdrawals.
   - After each balance read, the ledger is brought to Alchemy's native balance with adjustments, shown as "Adjustment".
   - Wherever the running balance would fall below zero, the missing amount is an inflow 1 ms before that transaction, the latest moment it can have arrived. History therefore never goes negative.
   - The remaining difference follows 1 ms after the chain's last transaction.
@@ -58,7 +77,11 @@ Supported chains: Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mai
 
 ## Hidden tokens
 
-Tokens without a CoinGecko coin, and all NFTs, start hidden, because unsolicited tokens are often scams. Hidden assets stay in the ledger and in accounting but are left out of values and totals, and are listed for review. Showing or hiding an asset is the user's choice and is kept in backups.
+Tokens without a CoinGecko coin, and all NFTs, start hidden, because unsolicited tokens are often scams.
+
+With a 1inch key, a token with a CoinGecko coin also starts hidden when 1inch's history leaves it out, since 1inch omits tokens it rates as scams (on the test wallet: junk airdrops such as Based Coin and Black Agnus on Base). The listing of every tracked address on the chain must be at least an hour newer than the token's first movement, so a token newer than the listing is not judged.
+
+Hidden assets stay in the ledger and in accounting but are left out of values and totals, and are listed for review. Showing or hiding an asset is the user's choice and is kept in backups.
 
 ## Prices
 

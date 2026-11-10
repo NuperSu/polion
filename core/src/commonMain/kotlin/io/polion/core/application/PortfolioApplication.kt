@@ -350,6 +350,9 @@ private const val LINKED_HOURLY_DAYS = 90
 /** A covered range whose end is older than this is extended to now; newer gaps are left to current prices. */
 private const val LINKED_HISTORY_EXTEND_AFTER_MILLIS = 86_400_000L
 
+/** A token is judged against a 1inch listing only if it first moved at least this long before the listing. */
+private const val ONE_INCH_LISTING_MARGIN_MILLIS = 3_600_000L
+
 /** US dollars, the only currency DefiLlama quotes. */
 private val USD = AssetId("USD")
 
@@ -382,6 +385,9 @@ class PortfolioApplication(
     private val evmChains =
         io.polion.core.evm
             .EvmChainRepository(db)
+    private val evmRecovered =
+        io.polion.core.evm
+            .EvmRecoveredRepository(db)
     private val assetLinks =
         io.polion.core.market
             .AssetLinkRepository(db)
@@ -497,8 +503,9 @@ class PortfolioApplication(
     }
 
     /**
-     * Assets hidden from values and lists. An EVM token without a CoinGecko coin, and every NFT, starts hidden, because
-     * unknown tokens are often spam; the user's choice to show or hide an asset always wins.
+     * Assets hidden from values and lists. An EVM token without a CoinGecko coin, a token 1inch leaves out of the
+     * address's history (it omits tokens it rates as scams), and every NFT start hidden, because such tokens are often
+     * spam; the user's choice to show or hide an asset always wins.
      */
     fun hiddenAssets(): Set<AssetId> = hiddenAmong(heldAssets())
 
@@ -521,12 +528,54 @@ class PortfolioApplication(
         if (assets.none { it.value.startsWith("eip155:") }) return emptySet()
         val links = assetLinks.links()
         val choices = assetLinks.choices()
+        val unlisted = unlistedByOneInch(assets.filter { it !in choices && it in links && it.value.contains("/erc20:") })
         return assets
             .filter { asset ->
                 choices[asset]?.not() ?: (
                     asset.value.startsWith("eip155:") &&
-                        (asset.value.contains("/nft:") || (!asset.value.endsWith("/native") && asset !in links))
+                        (asset.value.contains("/nft:") || (!asset.value.endsWith("/native") && (asset !in links || asset in unlisted)))
                 )
+            }.toSet()
+    }
+
+    /**
+     * Tokens 1inch leaves out of every tracked address's history on their chain. A token counts only when 1inch has
+     * listed every tracked address on the chain since the token first moved, so a token newer than the listing is not
+     * judged.
+     */
+    private fun unlistedByOneInch(tokens: List<AssetId>): Set<AssetId> {
+        if (tokens.isEmpty()) return emptySet()
+        val listings = evmRecovered.listings()
+        if (listings.isEmpty()) return emptySet()
+        val tracked = evmChains.states().groupingBy { it.chainId }.eachCount()
+        val candidates =
+            tokens.filter { asset ->
+                val chain =
+                    io.polion.core.evm.EvmAssets
+                        .chainOf(asset) ?: return@filter false
+                val chainListings = listings[chain] ?: return@filter false
+                chainListings.size >= (tracked[chain] ?: 0) &&
+                    chainListings.none { asset.value.substringAfter("/erc20:") in it.contracts }
+            }
+        if (candidates.isEmpty()) return emptySet()
+        val firstMoved = mutableMapOf<AssetId, Long>()
+        ledger().activities.forEach { entry ->
+            entry.activity.movements.forEach { movement ->
+                val asset = movement.amount.assetId
+                if (asset in candidates) {
+                    firstMoved[asset] = minOf(firstMoved[asset] ?: Long.MAX_VALUE, entry.activity.occurredAtEpochMillis)
+                }
+            }
+        }
+        return candidates
+            .filter { asset ->
+                val listed =
+                    listings
+                        .getValue(
+                            io.polion.core.evm.EvmAssets
+                                .chainOf(asset)!!,
+                        ).minOf { it.atMillis }
+                (firstMoved[asset] ?: Long.MAX_VALUE) < listed - ONE_INCH_LISTING_MARGIN_MILLIS
             }.toSet()
     }
 
@@ -1774,6 +1823,21 @@ class PortfolioApplication(
         db.transaction { activitiesToSave.filter { activities.currentById(it.id) != it }.forEach(activities::saveInTransaction) }
         invalidate()
         return jobs.map { orchestrator.status(it)?.state ?: JobState.FAILED }
+    }
+
+    /** Payments, transactions and token listings recovered beyond Alchemy's lists; see [io.polion.core.evm.EvmConnector]. */
+    fun evmRecovered(): io.polion.core.evm.EvmRecoveredRepository = evmRecovered
+
+    /** The application clock, for connectors that time their own lookups. */
+    fun clockMillis(): Long = now()
+
+    /** The optional 1inch API key that recovers contract payments Alchemy does not list; a device setting, not part of backups. */
+    fun oneInchApiKey(): String? = marketFeeds.deviceSetting("oneinch_api_key")
+
+    fun setOneInchApiKey(key: String?) {
+        val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{16,200}"))) { "That does not look like a 1inch API key" }
+        marketFeeds.putDeviceSetting("oneinch_api_key", trimmed)
     }
 
     /** The Alchemy API key for EVM history; a device setting, not part of backups. */

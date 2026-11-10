@@ -570,7 +570,20 @@ internal class DesktopHost(
                                 )
                         }
                 }
-                if (evmOn) connectors += EvmConnector(alchemyTransport(application)::post)
+                if (evmOn) {
+                    val oneInch =
+                        application.oneInchApiKey()?.let {
+                            OneInchTransport(
+                                apiKey = { application.oneInchApiKey() },
+                                beforeRequest = {
+                                    check(
+                                        !closing.get() && application.evmConsent(),
+                                    ) { "EVM refresh was cancelled. Retry if needed." }
+                                },
+                            )
+                        }
+                    connectors += EvmConnector(alchemyTransport(application)::post, oneInch?.let { it::get })
+                }
                 val outcomes =
                     application.refreshSources(
                         SourceRegistry(connectors),

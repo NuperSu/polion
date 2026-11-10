@@ -282,6 +282,7 @@ private fun Product(
     var biometric by remember(host) { mutableStateOf(host.biometricUnlock()) }
     var hasCoingeckoKey by remember(app) { mutableStateOf(false) }
     var hasAlchemyKey by remember(app) { mutableStateOf(false) }
+    var hasOneInchKey by remember(app) { mutableStateOf(false) }
     var lockDelay by remember(host) { mutableStateOf(host.lockDelayMillis) }
     LaunchedEffect(app, dashboardRevision, revision) {
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
@@ -289,6 +290,7 @@ private fun Product(
         generalPreferences = withContext(host.dispatcher) { app.generalPreferences() }
         hasCoingeckoKey = withContext(host.dispatcher) { app.coingeckoApiKey() != null }
         hasAlchemyKey = withContext(host.dispatcher) { app.alchemyApiKey() != null }
+        hasOneInchKey = withContext(host.dispatcher) { app.oneInchApiKey() != null }
         biometric = host.biometricUnlock()
     }
     // The saved landing page applies once per launch, and only if nothing has navigated away from Main yet.
@@ -872,6 +874,14 @@ private fun Product(
                                         }
                                         problem
                                     },
+                                    onOneInchKey = { key ->
+                                        val problem = withContext(host.dispatcher) { saveOneInchKey(app, key) }
+                                        if (problem == null) {
+                                            hasOneInchKey = key != null
+                                            presenter.notify(if (key == null) "1inch key removed" else "1inch key saved")
+                                        }
+                                        problem
+                                    },
                                     onBiometric = { enabled ->
                                         host.setBiometricUnlock(enabled) { result ->
                                             biometric = host.biometricUnlock()
@@ -887,6 +897,7 @@ private fun Product(
                                         hasCoingeckoKey,
                                         lockDelay,
                                         hasAlchemyKey = hasAlchemyKey,
+                                        hasOneInchKey = hasOneInchKey,
                                     ),
                                 notifications = { NotificationSettingsSection(app, host) },
                                 csvImports = { CsvImportHistorySection(app, host, onChanged = { revision++ }) },
