@@ -5,15 +5,15 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 android {
-    namespace = "io.polion.android"
+    namespace = "io.valroot.android"
     compileSdk = 37
     defaultConfig {
-        applicationId = "io.polion.android"
+        applicationId = "io.valroot.android"
         minSdk = 26
         targetSdk = 37
         versionCode = 2
         versionName = "1.0.0"
-        testInstrumentationRunner = "io.polion.android.ReliabilityInstrumentation"
+        testInstrumentationRunner = "io.valroot.android.ReliabilityInstrumentation"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_25
@@ -22,8 +22,8 @@ android {
     sourceSets.getByName("androidTest").kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin"))
     val releaseSigning =
         providers
-            .gradleProperty("polion.signing")
-            .orElse(System.getProperty("user.home") + "/.config/polion-release/signing.properties")
+            .gradleProperty("valroot.signing")
+            .orElse(System.getProperty("user.home") + "/.config/valroot-release/signing.properties")
             .map { file(it) }
             .get()
     if (releaseSigning.isFile) {

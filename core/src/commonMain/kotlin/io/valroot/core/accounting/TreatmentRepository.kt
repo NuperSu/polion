@@ -1,0 +1,105 @@
+package io.valroot.core.accounting
+
+import io.valroot.core.model.ActivityId
+import io.valroot.core.model.AssetId
+import io.valroot.core.model.EventId
+import io.valroot.core.model.ExactInteger
+import io.valroot.core.model.Rational
+import io.valroot.core.storage.SqliteDatabase
+
+/** Durable user accounting decisions are independent of decoded activity revisions. */
+class TreatmentRepository(
+    private val db: SqliteDatabase,
+) {
+    init {
+        db.transaction {
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS accounting_treatments (activity_id TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL, movement TEXT NOT NULL, other_movement TEXT, numerator TEXT, denominator TEXT, flag INTEGER NOT NULL, PRIMARY KEY(activity_id, position))",
+            )
+            val columns = db.query("PRAGMA table_info(accounting_treatments)").map { it[1] }
+            if ("quote_asset" !in columns) db.execute("ALTER TABLE accounting_treatments ADD COLUMN quote_asset TEXT")
+        }
+    }
+
+    fun save(
+        activity: ActivityId,
+        treatments: List<Treatment>,
+    ) = db.transaction { saveInTransaction(activity, treatments) }
+
+    internal fun saveInTransaction(
+        activity: ActivityId,
+        treatments: List<Treatment>,
+    ) {
+        db.execute("DELETE FROM accounting_treatments WHERE activity_id=?", listOf(activity.value))
+        treatments.forEachIndexed { index, item ->
+            val kind: String
+            val movement: EventId
+            val other: EventId?
+            val value: QuoteValue?
+            val flag: Boolean
+            when (item) {
+                is Treatment.Acquire -> {
+                    kind = "ACQUIRE"
+                    movement = item.movement
+                    other = null
+                    value = item.cost
+                    flag = item.opening
+                }
+                is Treatment.Dispose -> {
+                    kind = "DISPOSE"
+                    movement = item.movement
+                    other = null
+                    value = item.proceeds
+                    flag = item.fee
+                }
+                is Treatment.InternalTransfer -> {
+                    kind = "TRANSFER"
+                    movement = item.outgoing
+                    other = item.incoming
+                    value = null
+                    flag =
+                        false
+                }
+            }
+            db.execute(
+                "INSERT INTO accounting_treatments (activity_id, position, kind, movement, other_movement, numerator, denominator, flag, quote_asset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                listOf(
+                    activity.value,
+                    index.toString(),
+                    kind,
+                    movement.value,
+                    other?.value,
+                    value?.amount?.numerator?.toString(),
+                    value?.amount?.denominator?.toString(),
+                    if (flag) "1" else "0",
+                    value?.asset?.value,
+                ),
+            )
+        }
+    }
+
+    fun load(activity: ActivityId): List<Treatment> =
+        db
+            .query(
+                "SELECT kind, movement, other_movement, numerator, denominator, flag, quote_asset FROM accounting_treatments WHERE activity_id=? ORDER BY position",
+                listOf(activity.value),
+            ).map { row ->
+                val value =
+                    row[3]?.let {
+                        QuoteValue(
+                            AssetId(
+                                requireNotNull(row[6]) {
+                                    "Legacy amount has no quote asset; reclassify explicitly"
+                                },
+                            ),
+                            Rational(ExactInteger.parse(it), ExactInteger.parse(requireNotNull(row[4]))),
+                        )
+                    }
+                when (row[0]) {
+                    "ACQUIRE" -> Treatment.Acquire(EventId(row[1]!!), value, row[5] == "1")
+                    "DISPOSE" -> Treatment.Dispose(EventId(row[1]!!), value, row[5] == "1")
+                    "TRANSFER" -> Treatment.InternalTransfer(EventId(row[1]!!), EventId(row[2]!!))
+                    else -> error("Unknown accounting treatment")
+                }
+            }
+}

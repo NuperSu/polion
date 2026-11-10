@@ -1,18 +1,18 @@
 # Release 1.0.0 — limits and recovery
 
-Polion 1.0.0 is a local-first, watch-only portfolio tracker for Android (8.0 and later) and Linux desktop. It has no account and no server. This page states what the release supports and how to recover data.
+Valroot 1.0.0 is a local-first, watch-only portfolio tracker for Android (8.0 and later) and Linux desktop. It has no account and no server. This page states what the release supports and how to recover data.
 
 ## Builds
 
-- **Android:** `./gradlew :androidApp:assembleRelease` builds an R8-shrunk APK. It is signed with the release key in `~/.config/polion-release/` when that folder exists, and with the debug key otherwise (CI and other machines). An app signed with one key cannot be updated by an APK signed with the other: switching keys requires uninstalling, which erases the app's data, so restore from a backup afterwards. Keep a copy of the release key; without it, installed copies can no longer be updated.
-- **Desktop:** `./gradlew :desktopApp:createDistributable` builds a self-contained folder with its own Java runtime (`desktopApp/build/compose/binaries/main/app/Polion`). `packageDeb` builds a Debian package where `dpkg` is available; `packageUberJarForCurrentOS` builds a single JAR that needs Java 25. Desktop data lives in `~/.local/share/polion`.
+- **Android:** `./gradlew :androidApp:assembleRelease` builds an R8-shrunk APK. It is signed with the release key in `~/.config/valroot-release/` when that folder exists, and with the debug key otherwise (CI and other machines). An app signed with one key cannot be updated by an APK signed with the other: switching keys requires uninstalling, which erases the app's data, so restore from a backup afterwards. Keep a copy of the release key; without it, installed copies can no longer be updated.
+- **Desktop:** `./gradlew :desktopApp:createDistributable` builds a self-contained folder with its own Java runtime (`desktopApp/build/compose/binaries/main/app/Valroot`). `packageDeb` builds a Debian package where `dpkg` is available; `packageUberJarForCurrentOS` builds a single JAR that needs Java 25. Desktop data lives in `~/.local/share/valroot`.
 
 ## Supported sources
 
 - **Bitcoin mainnet only**, watch-only. Accepted inputs: single addresses, mainnet `xpub` keys (native SegWit receive and change branches) and the descriptors `addr`, `pkh`, `wpkh` and `sh(wpkh)` with unhardened derivation. Legacy and nested-SegWit extended-key versions (`ypub`, `zpub`), Taproot descriptors and multipath syntax are not accepted; see [wallets](bitcoin-wallets.md). Key handling uses ACINQ's bitcoin-kmp with libsecp256k1.
-- **History provider:** an Esplora-compatible API. The default is blockstream.info, which fails over to mempool.space while it is unavailable. A custom endpoint is used alone and must answer as Bitcoin mainnet. Providers are trusted: Polion checks the consistency of what they return (block continuity, reorganisations, UTXO comparison), but cannot prove that a provider returned every transaction.
+- **History provider:** an Esplora-compatible API. The default is blockstream.info, which fails over to mempool.space while it is unavailable. A custom endpoint is used alone and must answer as Bitcoin mainnet. Providers are trusted: Valroot checks the consistency of what they return (block continuity, reorganisations, UTXO comparison), but cannot prove that a provider returned every transaction.
 - **EVM addresses** on Ethereum, BNB Smart Chain, Base, Polygon, Arbitrum One, OP Mainnet, Gnosis, Celo and Ronin, through Alchemy with the user's free key. Coverage gaps are shown per chain; see [EVM](evm.md).
-- **Other sources:** CSV import of transactions in Polion's template, with explicit account, currency, fee and asset choices ([CSV import](csv-import.md)). Exchange connections and other networks are not available. New source families plug into the connector registry (`SourceConnector`); Bitcoin and EVM are registered.
+- **Other sources:** CSV import of transactions in Valroot's template, with explicit account, currency, fee and asset choices ([CSV import](csv-import.md)). Exchange connections and other networks are not available. New source families plug into the connector registry (`SourceConnector`); Bitcoin and EVM are registered.
 
 ## Prices and market data
 

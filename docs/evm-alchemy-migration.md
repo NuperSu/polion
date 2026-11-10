@@ -76,7 +76,7 @@ Delete `Blockscout.kt`, `BlockscoutTransport` (both hosts), their tests and fixt
 - **Haiku xhigh agents** (own worktrees from the current commit):
   1. Hosts: `AlchemyTransport`, key storage, registry, removal of the Blockscout transport.
   2. UI: key row, chain picker list, coverage notes, removal of the Blockscout row.
-- **First step:** Anton saves an Alchemy key to `~/.config/polion-dev/alchemy.key` (read by curl from the file, never printed). Capture real responses for `0xDBAb…1DF9` on BNB and for a public address with Base/OP history, and confirm the response shapes, the `maxCount` limit and the receipt `l1Fee` field before writing the parsers.
+- **First step:** Anton saves an Alchemy key to `~/.config/valroot-dev/alchemy.key` (read by curl from the file, never printed). Capture real responses for `0xDBAb…1DF9` on BNB and for a public address with Base/OP history, and confirm the response shapes, the `maxCount` limit and the receipt `l1Fee` field before writing the parsers.
 
 ## Verification
 

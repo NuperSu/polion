@@ -8,7 +8,7 @@ With JDK 25, Xvfb and software Skia, run serially:
 
 ```sh
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk SKIKO_RENDER_API=SOFTWARE xvfb-run -a ./gradlew :uiModel:test --rerun-tasks
-JAVA_HOME=/usr/lib/jvm/java-25-openjdk SKIKO_RENDER_API=SOFTWARE xvfb-run -a ./gradlew :sharedUi:jvmTest --tests io.polion.ui.RewriteAcceptanceTest --rerun-tasks
+JAVA_HOME=/usr/lib/jvm/java-25-openjdk SKIKO_RENDER_API=SOFTWARE xvfb-run -a ./gradlew :sharedUi:jvmTest --tests io.valroot.ui.RewriteAcceptanceTest --rerun-tasks
 ```
 
 The successful runs used the same commands without `--rerun-tasks` after changing the test sources. The model test and the targeted production capture method passed with the menu additions; the production class had previously passed all six tests. `:uiModel:ktlintCheck :sharedUi:ktlintCheck` passed after formatting. Captures are build artifacts, not packaged-app or device evidence. The [SHA-256 manifest](evidence/phase-0-captures.sha256) identifies the 140 reference and 92 production images generated in the recorded runs. The model test clears its output first; the production output directory should be cleared before a fresh run. The tests were formatted after those runs; formatting does not change their behavior.
@@ -19,13 +19,13 @@ Both sets use `WIDTHxHEIGHT-FONTSCALE-STATE.png`: `360x800-1.0`, `390x844-1.0`, 
 | --- | --- | --- |
 | Shell menu | `menu` | `menu` |
 | Main top | `main` | `main` |
-| Main lower sections | `main-favorites`, `main-trending`, `main-top-gainers`, `main-top-losers`, `main-polion-·-design-prev` | `main-discover`, `main-discover-bottom` (unavailable discovery) |
+| Main lower sections | `main-favorites`, `main-trending`, `main-top-gainers`, `main-top-losers`, `main-valroot-·-design-prev` | `main-discover`, `main-discover-bottom` (unavailable discovery) |
 | Portfolio | `portfolio` | `portfolio`, `portfolio-assets` |
 | Coin General | `coin-general`, `coin-general-bottom` | `coin-general` |
 | Coin Transactions | `coin-transactions`, `coin-transactions-scrolled`, `coin-transactions-bottom`, `coin-manual-transaction` | `coin-transactions`, `coin-transactions-scrolled`, `coin-manual-transaction` |
 | Coin Alerts and order book | `coin-alerts`, `coin-alert-dialog`, `coin-order-book`, `coin-order-book-bottom` | `coin-alerts`, `coin-order-book` |
 | Add and manual form | `add-method`, `manual-transaction` (Buy), `manual-sell`, `manual-transfer`, `manual-scrolled` | `add-method`, `add-method-bottom`, `manual-transaction`, `manual-scrolled`, `manual-bottom` |
-| Insights | `insights`, `insights-portfolio-performanc`, `insights-decisions`, `insights-portfolio-diversity`, `insights-gains-reporting`, `insights-asset-location`, `insights-trade-statistics`, `insights-fees`, `insights-asset-worth`, `insights-polion-·-design-prev` | `insights`, `insights-allocation`, `insights-export` |
+| Insights | `insights`, `insights-portfolio-performanc`, `insights-decisions`, `insights-portfolio-diversity`, `insights-gains-reporting`, `insights-asset-location`, `insights-trade-statistics`, `insights-fees`, `insights-asset-worth`, `insights-valroot-·-design-prev` | `insights`, `insights-allocation`, `insights-export` |
 | Accounts and Settings | `accounts`, `settings` | `accounts`, `settings`, `settings-appearance` |
 
 The footer anchors show content below section-heading anchors: in particular Main loser rows, the last transaction card's fee and worth fields, and Asset Worth. Some heading anchors only place the heading at the bottom edge. Production Accounts and Settings screenshots follow an export action and can include its transient notification; settings switches were changed during the test. The reference manual lower capture is on Transfer. The screenshots are not matched fixture renderings: production lacks Buy/Sell/Transfer and alert creation, and no production counterpart exists for those reference states.

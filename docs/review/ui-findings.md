@@ -1,22 +1,22 @@
 # UI and UX findings
 
-Paths are relative to `sharedUi/src/commonMain/kotlin/io/polion/ui/`. Captures are in `/tmp/polion-phase4-review/` (seeded example data, not copied here).
+Paths are relative to `sharedUi/src/commonMain/kotlin/io/valroot/ui/`. Captures are in `/tmp/valroot-phase4-review/` (seeded example data, not copied here).
 
 ## UI-1 · P2 · state loss · [V] — App lock discards the whole UI tree
 
-- Where: `PolionApp.kt:129-133` (`if (locked) LockScreen else OnboardingProduct`); Android locks in `MainActivity.onStop`.
+- Where: `ValrootApp.kt:129-133` (`if (locked) LockScreen else OnboardingProduct`); Android locks in `MainActivity.onStop`.
 - Scenario: with a lock set, switching to an exchange app to read a price loses the open manual form, connect dialog, selected coin, tab and filters.
 - Fix: render the lock as an overlay, or keep saveable state across the swap.
 
 ## UI-2 · P2 · data entry · [V] — Closed draft reopens on the next New Transaction
 
-- Where: `PolionApp.kt:1376-1393` (`removeState` only in `onSaved`); `TransactionEntry.kt:92-108`.
+- Where: `ValrootApp.kt:1376-1393` (`removeState` only in `onSaved`); `TransactionEntry.kt:92-108`.
 - Scenario: start an ETH entry, close with ×, open New Transaction from BTC — the form shows ETH, the old amount and stale timestamp.
 - Fix: clear on close, or key by context and confirm discard.
 
 ## UI-3 · P2 · misleading / noise · [V] — "Sync complete" banner never goes away
 
-- Where: `PolionApp.kt:2323` (`SyncBanner`), `ModelWorkspace.kt:379` (shown whenever phase ≠ IDLE); hosts never reset SUCCESS to IDLE.
+- Where: `ValrootApp.kt:2323` (`SyncBanner`), `ModelWorkspace.kt:379` (shown whenever phase ≠ IDLE); hosts never reset SUCCESS to IDLE.
 - Scenario: after one sync, Main/Portfolio/Insights show "Sync complete" until restart, while its own message says coverage is unverified.
 - Fix: show only running, error or interrupted; word success as "Refresh accepted · history coverage partial".
 
@@ -78,7 +78,7 @@ On Accounts and Settings the header refresh icon refreshes prices only, while wa
 
 ## UI-15 · P2 · currency control · [V]
 
-Model currency control is bare "USD" text (~25 dp, no chevron/role) in `model/ModelPortfolioSummary.kt:114-129`. Legacy pickers (`PolionApp.kt:787, 1233-1235`) call only `app.setCurrency`, which a selected portfolio's `valuationCurrency` overrides — they report "Saved" and change nothing.
+Model currency control is bare "USD" text (~25 dp, no chevron/role) in `model/ModelPortfolioSummary.kt:114-129`. Legacy pickers (`ValrootApp.kt:787, 1233-1235`) call only `app.setCurrency`, which a selected portfolio's `valuationCurrency` overrides — they report "Saved" and change nothing.
 
 ## UI-16 · P2 · performance · [V] — Search keystrokes blank and recompute the timeline
 
@@ -86,7 +86,7 @@ Model currency control is bare "USD" text (~25 dp, no chevron/role) in `model/Mo
 
 ## UI-17 · P2 · robustness · [V] — Unguarded effect
 
-`PolionApp.kt:236-246`: `LaunchedEffect(modelEditingId)` calls `app.transactionDraft` without try/catch; a storage error crashes instead of showing a message. [R] further unguarded effects in `PolionApp.kt` and `Workflows.kt`.
+`ValrootApp.kt:236-246`: `LaunchedEffect(modelEditingId)` calls `app.transactionDraft` without try/catch; a storage error crashes instead of showing a message. [R] further unguarded effects in `ValrootApp.kt` and `Workflows.kt`.
 
 ## UI-18 · P2 · [R]
 

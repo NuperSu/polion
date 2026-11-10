@@ -8,7 +8,7 @@ tasks.register<JavaExec>("bitcoinHeapStress") {
     description = "Runs two generated Bitcoin refreshes in a separate JVM with a 64 MiB heap."
     dependsOn("jvmTestClasses")
     classpath = tasks.named<Test>("jvmTest").get().classpath
-    mainClass.set("io.polion.core.application.BitcoinHeapStress")
+    mainClass.set("io.valroot.core.application.BitcoinHeapStress")
     maxHeapSize = "64m"
     jvmArgs("-XX:+ExitOnOutOfMemoryError")
     args(providers.gradleProperty("bitcoinStressTransactions").orElse("100000").get())
@@ -17,7 +17,7 @@ kotlin {
     jvmToolchain(25)
     jvm()
     android {
-        namespace = "io.polion.core"
+        namespace = "io.valroot.core"
         compileSdk = 37
         minSdk = 26
         withHostTestBuilder {}

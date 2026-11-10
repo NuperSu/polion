@@ -1,6 +1,6 @@
 # UI map
 
-Polion's production default uses the shared typed `ModelShell` and screen renderers, with **Main, Portfolio, Insights** in compact navigation and the desktop sidebar. The contextual menu opens Accounts, Settings and Advanced tools. Screen state is supplied from saved application data; each screen shows unavailable values where a calculation or source is not connected. The detailed data bindings, workflows, recreation state and refresh behavior are in [Frontend and refresh behavior](frontend-rewrite.md).
+Valroot's production default uses the shared typed `ModelShell` and screen renderers, with **Main, Portfolio, Insights** in compact navigation and the desktop sidebar. The contextual menu opens Accounts, Settings and Advanced tools. Screen state is supplied from saved application data; each screen shows unavailable values where a calculation or source is not connected. The detailed data bindings, workflows, recreation state and refresh behavior are in [Frontend and refresh behavior](frontend-rewrite.md).
 
 - Main presents saved market prices and favorites.
 - Portfolio presents portfolio selection, priced balance, historical value and holdings. Saved hide-empty, hide-small and sort preferences apply through anchored controls. Quote selection changes the selected portfolio currency. Endpoint value change is distinct from investment return; supported basis and gains appear in coin General; the floating Add action opens the full-screen shared form.

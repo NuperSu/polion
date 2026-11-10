@@ -4,7 +4,7 @@ This contract maps the crypto-first roadmap to the current application. It defin
 
 ## Invariants
 
-Polion is a watch-only, local-first portfolio tracker. It accepts public tracking information and manual records, never recovery phrases, private keys, signing requests or custody of funds. Android and Linux desktop share domain logic and presentation; platform hosts own scheduling, file access, notifications and secure credential storage.
+Valroot is a watch-only, local-first portfolio tracker. It accepts public tracking information and manual records, never recovery phrases, private keys, signing requests or custody of funds. Android and Linux desktop share domain logic and presentation; platform hosts own scheduling, file access, notifications and secure credential storage.
 
 Local portfolios, exact accounting, manual entries, offline access, backup, export and user-configured integrations remain free capabilities. A future managed service may charge for remote data access and quotas. Subscription expiry, provider failure or service shutdown must leave saved local data accessible. Managed service and billing are future capabilities, not prerequisites for current workflows.
 
@@ -60,8 +60,8 @@ Do not infer these dimensions from one success callback, nonzero asset count or 
 
 ## Reference and compatibility boundaries
 
-CoinStats screenshot descriptions inform discovery, navigation and information hierarchy. The actual ten images were not available in this repository audit; mappings are description-derived until the images are reviewed. Polion wording, components, marks and visual assets must be original or appropriately licensed.
+CoinStats screenshot descriptions inform discovery, navigation and information hierarchy. The actual ten images were not available in this repository audit; mappings are description-derived until the images are reviewed. Valroot wording, components, marks and visual assets must be original or appropriately licensed.
 
-Wealthfolio is a selective reference for financial metrics, dashboard/allocations, lot-method UX and optional AI/provider tooling. Financial implementation work must pin and inspect its implementation/tests and produce independent crypto-native Kotlin designs. It does not replace Polion's chain evidence, ledger, identity or architecture.
+Wealthfolio is a selective reference for financial metrics, dashboard/allocations, lot-method UX and optional AI/provider tooling. Financial implementation work must pin and inspect its implementation/tests and produce independent crypto-native Kotlin designs. It does not replace Valroot's chain evidence, ledger, identity or architecture.
 
 Presentation extraction preserves existing actions and navigation, facade behavior, persisted IDs, database contents and backup compatibility. Any later schema change requires versioned forward migration and reopen/restore evidence. Proposed screens must consume implemented projections; unsupported metrics and source types stay hidden or explicitly informational.

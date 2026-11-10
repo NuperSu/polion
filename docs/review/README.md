@@ -15,7 +15,7 @@ Excluded on purpose:
 
 1. Three parallel read-only audits: core/application, Bitcoin plus hosts plus build/CI, shared Compose UI.
 2. A direct read of the highest-risk code: `PortfolioApplication.kt` in full, backup, holdings, sync, market repository, both SQLite drivers, host threading, connect/accounts/settings screens, the Bitcoin decoder and wallet crypto.
-3. Inspection of 14 seeded captures from `/tmp/polion-phase4-review/` (360×800, 390×844 at 1.5× text, 1440×900).
+3. Inspection of 14 seeded captures from `/tmp/valroot-phase4-review/` (360×800, 390×844 at 1.5× text, 1440×900).
 
 No build or test was run; this is a static review.
 

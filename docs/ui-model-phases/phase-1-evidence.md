@@ -15,14 +15,14 @@ The Phase 0 capture record and its SHA-256 manifest identify the reference basel
 The capture test clears `uiModel/build/previews` before writing. Preserve the manifest-verified Phase 0 PNGs in a separate directory first; the [Phase 0 record](phase-0-captures.md) documents their source revision and manifest. Run the new fixture capture using its command, then create full-size side-by-side and amplified-difference images with Pillow installed:
 
 ```sh
-python scripts/compare-ui-model-captures.py /path/to/phase0-reference uiModel/build/previews /tmp/polion-phase1-comparison
+python scripts/compare-ui-model-captures.py /path/to/phase0-reference uiModel/build/previews /tmp/valroot-phase1-comparison
 ```
 
 The agreed inline alert editor replaces the alert dialog: the gallery explicitly pairs each Phase 0 `coin-alert-dialog` image with the current `coin-alert-editor` image and records both filenames in `metrics.csv`. The approved reference also uses a fullscreen add flow, a grey disabled exchange choice, and the revised order-book styling. Alert delivery belongs to Phase 7, with system notifications rather than modal alerts. These agreed changes require review against the updated contract; their differences from Phase 0 are intentional.
 
 The output includes one image per reference state and `metrics.csv`, which reports missing images and pixel differences. Metrics locate changes; they cannot decide visual acceptance. Review is pending. Captures of the live application binding are separate from the fixture gallery.
 
-The refreshed [comparison gallery](/tmp/polion-phase1-comparison/index.html) provides 140 reference/current fixture comparisons, 140 directly linked current model previews, and 108 production binding captures in separate indexes. The [archive](/tmp/polion-phase1-comparison.zip) contains both sets and passed ZIP CRC validation. All 140 reference mappings have matching dimensions and a `compared` result; visual review remains pending.
+The refreshed [comparison gallery](/tmp/valroot-phase1-comparison/index.html) provides 140 reference/current fixture comparisons, 140 directly linked current model previews, and 108 production binding captures in separate indexes. The [archive](/tmp/valroot-phase1-comparison.zip) contains both sets and passed ZIP CRC validation. All 140 reference mappings have matching dimensions and a `compared` result; visual review remains pending.
 
 The latest source commit is `11f91ea`. Unselected transaction-kind pills have no fill while retaining keyboard focus outlines. Transaction-kind text is white/on-surface over a transparent fill; only the tertiary outline is colored. Formatting, strict lint, and 12 focused UI tests passed. The separate model capture test passed and generated 140 previews. Android debug lint and APK assembly, plus desktop packaging, passed. Logs are `/tmp/eth-outline-format.log`, `/tmp/eth-outline-lint.log`, `/tmp/eth-outline-tests.log`, `/tmp/eth-outline-model.log`, and `/tmp/eth-outline-platform.log`. At the sampled ETH pill pixels RGB is (0, 0, 0); the BTC comparison pixel is (37, 37, 37). These checks do not establish visual approval. Phase 1 remains open pending user review and remaining acceptance gates.
 

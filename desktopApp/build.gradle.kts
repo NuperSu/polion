@@ -13,7 +13,7 @@ dependencies {
 }
 compose.desktop {
     application {
-        mainClass = "io.polion.desktop.MainKt"
+        mainClass = "io.valroot.desktop.MainKt"
         nativeDistributions {
             // A self-contained folder with its own Java runtime; `createDistributable` builds it, and the Deb needs dpkg.
             targetFormats(
@@ -21,7 +21,7 @@ compose.desktop {
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
             )
             modules("java.instrument", "java.sql", "jdk.unsupported", "java.net.http")
-            packageName = "Polion"
+            packageName = "Valroot"
             packageVersion = "1.0.0"
             description = "Local-first, watch-only crypto portfolio tracker"
             vendor = "NuperSu"

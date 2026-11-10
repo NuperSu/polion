@@ -26,7 +26,7 @@
 
 ## PLAT-5 · P2 · reliability · [V] — Database reads on the UI thread
 
-- Where: `sharedUi/…/PolionApp.kt:260` (`app.assetListPreference()` in `remember`), `:525-527` (`app.marketFavorites()` in composition and click), `:370-371` (`refreshPrices` reads consent/currencies). [R] further host-preference reads in `Workflows.kt` and desktop `Main.kt`.
+- Where: `sharedUi/…/ValrootApp.kt:260` (`app.assetListPreference()` in `remember`), `:525-527` (`app.marketFavorites()` in composition and click), `:370-371` (`refreshPrices` reads consent/currencies). [R] further host-preference reads in `Workflows.kt` and desktop `Main.kt`.
 - Both drivers lock per connection for entire transactions, so the main thread/EDT blocks behind long exports, restores or snapshots (ANR risk).
 - Fix: load through `host.dispatcher` or cache in the presenter.
 

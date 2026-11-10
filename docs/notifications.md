@@ -31,7 +31,7 @@ Each notification has a unique key (for example the alert and snapshot, or the c
 
 ## Timing limits
 
-- **Desktop:** checks run while Polion is open, 30 seconds after launch and every 5 minutes. Nothing runs while it is closed.
-- **Android:** a background check every 15 minutes at best, with a network connection. Android may delay or batch checks when the phone is idle or in battery saver, and notifications need the notification permission. Polion also checks when it is opened.
+- **Desktop:** checks run while Valroot is open, 30 seconds after launch and every 5 minutes. Nothing runs while it is closed.
+- **Android:** a background check every 15 minutes at best, with a network connection. Android may delay or batch checks when the phone is idle or in battery saver, and notifications need the notification permission. Valroot also checks when it is opened.
 
 Neither platform monitors prices continuously; an alert reports a crossing seen at a check, not the moment it happened.

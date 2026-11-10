@@ -1,10 +1,10 @@
 # Core findings
 
-Paths are relative to `core/src/commonMain/kotlin/io/polion/core/` unless stated. `PA` = `application/PortfolioApplication.kt`.
+Paths are relative to `core/src/commonMain/kotlin/io/valroot/core/` unless stated. `PA` = `application/PortfolioApplication.kt`.
 
 ## CORE-1 · P1 · correctness · [V] — Display currency and accounting currency are conflated
 
-- Where: `PA:694` (`require(quotes.all { it.asset == quote … })`, caught at `PA:697`); trigger in `sharedUi/…/PolionApp.kt:541-549`.
+- Where: `PA:694` (`require(quotes.all { it.asset == quote … })`, caught at `PA:697`); trigger in `sharedUi/…/ValrootApp.kt:541-549`.
 - Scenario: treatments record USD cost/proceeds; the user taps the headline currency and picks EUR. `accountingReport` now marks every USD-quoted activity invalid and drops its asset from FIFO. Basis and gains become unknown with no explanation.
 - Fix: account in each treatment's own quote (convert only for display with explicit FX evidence), or warn and block the switch while treatments exist.
 - Verify: save a Buy in USD, switch the portfolio to EUR, open coin breakdown.
@@ -18,7 +18,7 @@ Paths are relative to `core/src/commonMain/kotlin/io/polion/core/` unless stated
 ## CORE-3 · P1 · race / lost update · [V] — Discovery writes back a stale ownership snapshot
 
 - Where: `PA:1971` (`ownership.load()`), network loop, then `PA:2050` (`ownership.replace(catalog.copy(…))`); `storage/OwnershipRepository.kt` `replaceInTransaction` deletes and reinserts every ownership table. `updateOwnership` (`PA:2063`) is also load-then-replace in two transactions.
-- Scenario (desktop): discovery runs on `polion-bitcoin-sync` with its own connection for minutes at 1 request/s. Any account, owner, portfolio or target saved meanwhile is reverted. Android hides it only because all work shares one executor (PLAT-1).
+- Scenario (desktop): discovery runs on `valroot-bitcoin-sync` with its own connection for minutes at 1 request/s. Any account, owner, portfolio or target saved meanwhile is reverted. Android hides it only because all work shares one executor (PLAT-1).
 - Fix: re-load inside the final `db.transaction`, merge only the child targets, re-check wallet, scope and consent as `PA:1143` does.
 
 ## CORE-4 · P2 · correctness · [V] — Pending Bitcoin transactions are dated 1970

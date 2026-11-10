@@ -12,5 +12,5 @@ dependencies {
     testImplementation(compose.desktop.uiTestJUnit4)
 }
 compose.desktop {
-    application { mainClass = "io.polion.model.MainKt" }
+    application { mainClass = "io.valroot.model.MainKt" }
 }

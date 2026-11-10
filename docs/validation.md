@@ -94,13 +94,13 @@ Outputs are ignored build artifacts:
 
 APK metadata inspection confirms no Internet permission. AndroidX contributes a package-scoped receiver permission.
 
-An isolated SDK was installed under `/tmp/polion-android-sdk` to provide the project SDK platform 37 and build tools 36.0.0. The system SDK was not changed.
+An isolated SDK was installed under `/tmp/valroot-android-sdk` to provide the project SDK platform 37 and build tools 36.0.0. The system SDK was not changed.
 
 Android runtime validation requires a connected device or an emulator. `adb devices -l` found no connected device; this laptop has no installed emulator or configured AVD. Android launch therefore remains unverified locally.
 
 The initial AGP 9.0.1/Gradle 9.1.0 candidate was rejected by Android AAR metadata checks: Compose 1.12.2 resolves AndroidX 1.12.1 components requiring compile SDK 37 and AGP 9.1.0 or newer. The selected baseline satisfies those requirements.
 
-Desktop launch passed with `JAVA_HOME=/usr/lib/jvm/java-21-openjdk ./gradlew :desktopApp:run --offline`: the process emitted `polion:APPLICATION_STARTED` and X11 window inspection identified `WM_NAME="Polion"`. The validation process was then closed. Window creation was verified; the screen contents were not visually inspected.
+Desktop launch passed with `JAVA_HOME=/usr/lib/jvm/java-21-openjdk ./gradlew :desktopApp:run --offline`: the process emitted `valroot:APPLICATION_STARTED` and X11 window inspection identified `WM_NAME="Valroot"`. The validation process was then closed. Window creation was verified; the screen contents were not visually inspected.
 
 ## Milestone A phases 2–8 — 2026-10-28
 
@@ -125,11 +125,11 @@ Android host tests validate common logic, not device crypto, SQLite driver execu
 
 The integrated run before short-landscape refinements passed formatting, **80 core JVM tests, 27 Android host tests, 5 shared UI tests and 1 desktop test**, Android lint, both APKs and desktop packaging: `BUILD SUCCESSFUL in 18s`, 175 actionable tasks. UI tests exercise 360×800, 800×900 and 1440×1000 surfaces; manual activity and price persistence; correction/search/CSV export; source settings while the worker dispatcher is blocked; and reversible account removal. Follow-up verification for 800×360 landscape navigation and projection-cache refinement passed **all 6 shared UI tests**, formatting, Android lint and desktop packaging: `BUILD SUCCESSFUL in 14s`, 110 tasks.
 
-The Android API 29 emulator executed `io.polion.android.ReliabilityInstrumentation` with **checks=4, failures=0**. It uses disposable databases and the actual Android driver/crypto bindings for persisted projections/reopen, wrong-password staging restore, SQLite-full transaction rollback/integrity and password verification. The harness builds with `:androidApp:assembleDebugAndroidTest`; run it using `adb -s <emulator> shell am instrument -w io.polion.android.test/io.polion.android.ReliabilityInstrumentation` and inspect the failures count.
+The Android API 29 emulator executed `io.valroot.android.ReliabilityInstrumentation` with **checks=4, failures=0**. It uses disposable databases and the actual Android driver/crypto bindings for persisted projections/reopen, wrong-password staging restore, SQLite-full transaction rollback/integrity and password verification. The harness builds with `:androidApp:assembleDebugAndroidTest`; run it using `adb -s <emulator> shell am instrument -w io.valroot.android.test/io.valroot.android.ReliabilityInstrumentation` and inspect the failures count.
 
-A separate emulator UI check configured a privacy lock, force-stopped and reopened Polion, rejected a wrong password, accepted the correct password and removed the test lock. An unused public-address fixture sync was started, then the emulator switched to Home. `dumpsys activity services io.polion.android` showed `BitcoinRefreshService` with `isForeground=true`; returning to the app showed progress and subsequently **Sync complete**. This validates the foreground-service transition and a real zero-history source request, not a full Bitcoin financial fixture.
+A separate emulator UI check configured a privacy lock, force-stopped and reopened Valroot, rejected a wrong password, accepted the correct password and removed the test lock. An unused public-address fixture sync was started, then the emulator switched to Home. `dumpsys activity services io.valroot.android` showed `BitcoinRefreshService` with `isForeground=true`; returning to the app showed progress and subsequently **Sync complete**. This validates the foreground-service transition and a real zero-history source request, not a full Bitcoin financial fixture.
 
-The Pixel 8 Pro is connected on Android 17. Polion is installed and opens in the current Main profile (user 10); package updates preserve data. A user-provided address scan on an earlier product build fetched 17,527 raw records and failed before materialization; no successful financial sync is claimed from that attempt. Source settings remained saved. The foreground-service/account-removal update was subsequently installed in Main. Phone interaction is left to the user during development.
+The Pixel 8 Pro is connected on Android 17. Valroot is installed and opens in the current Main profile (user 10); package updates preserve data. A user-provided address scan on an earlier product build fetched 17,527 raw records and failed before materialization; no successful financial sync is claimed from that attempt. Source settings remained saved. The foreground-service/account-removal update was subsequently installed in Main. Phone interaction is left to the user during development.
 
 Current outstanding Gate D evidence and implementation requirements are listed in [milestone-d.md](milestone-d.md). Hosted CI has not run in this session and no changes have been pushed.
 
@@ -138,7 +138,7 @@ Current outstanding Gate D evidence and implementation requirements are listed i
 
 On the API 29 emulator, airplane mode was enabled before starting sync through the normal source dialog, followed by switching to Home. Sync completed with the fixed message “The provider could not be reached. Check your connection and endpoint.” A consistent SQLite snapshot confirmed all four fixture activity revisions and every ledger movement/source row were unchanged. Airplane mode was disabled in cleanup. This check did not alter the connected Pixel.
 
-Periodic refresh was enabled for the emulator’s unused public-address fixture. WorkManager logged `RETRY` while the manual foreground sync was active, then `SUCCESS` for `io.polion.android.RefreshWorker`. Android JobScheduler registered the next network-constrained job with a minimum latency of approximately 30 minutes. The emulator’s periodic schedule was disabled after validation. These checks verify offline preservation and real scheduled-worker execution; process death during an active network scan remains a separate acceptance case.
+Periodic refresh was enabled for the emulator’s unused public-address fixture. WorkManager logged `RETRY` while the manual foreground sync was active, then `SUCCESS` for `io.valroot.android.RefreshWorker`. Android JobScheduler registered the next network-constrained job with a minimum latency of approximately 30 minutes. The emulator’s periodic schedule was disabled after validation. These checks verify offline preservation and real scheduled-worker execution; process death during an active network scan remains a separate acceptance case.
 
 
 ### Wallet, secure storage and interrupted-scan checks
@@ -181,7 +181,7 @@ The 2026-10-29 integrated JDK21 run passes 133 core JVM tests, 29 Android-host t
 
 API29 emulator instrumentation passes 9 checks with 0 failures, including the shared Bitcoin financial workflow and exact historical-price persistence after consent revocation. Core regressions cover explicit consent, exact provider valuation/manual priority/offline reuse, missing/error prices, request pacing and cancellation after erasure or consent replacement. Desktop transport tests verify sensitive header placement and access/rate-limit failures. UI tests cover historical date/consent flow. Live CoinGecko access with a personal Demo key has not been exercised; fake transports and native persistence establish the local call paths.
 
-Local evidence: `/tmp/polion-integrated-prices-utxo-final.log` and `/tmp/polion-native-prices-utxo.txt`. These checks do not close the remaining descriptor audit, durable Bitcoin graph, operational reorg/RBF, independent chain acceptance, rule-management and broader connector-execution requirements.
+Local evidence: `/tmp/valroot-integrated-prices-utxo-final.log` and `/tmp/valroot-native-prices-utxo.txt`. These checks do not close the remaining descriptor audit, durable Bitcoin graph, operational reorg/RBF, independent chain acceptance, rule-management and broader connector-execution requirements.
 
 ## Automatic hourly price verification
 
@@ -189,7 +189,7 @@ On the Pixel 8 Pro, a disposable Android database fetched live public Kraken hou
 
 ## Revised frontend — 2026-11-02
 
-The integrated JDK25 run passes **270 core JVM, 47 Android-host, 81 shared UI and 28 desktop tests** (426 total; zero failures, errors or skips). Formatting checks, Android lint, app/test APK assembly and desktop JAR packaging pass: `BUILD SUCCESSFUL in 1m 27s`, 182 tasks. Evidence: `/tmp/polion-rewrite-integrated-final.log` and the module XML reports.
+The integrated JDK25 run passes **270 core JVM, 47 Android-host, 81 shared UI and 28 desktop tests** (426 total; zero failures, errors or skips). Formatting checks, Android lint, app/test APK assembly and desktop JAR packaging pass: `BUILD SUCCESSFUL in 1m 27s`, 182 tasks. Evidence: `/tmp/valroot-rewrite-integrated-final.log` and the module XML reports.
 
 The shared UI suite captures **360×800, 390×844 and 1440×900**, plus 390×844 at 1.5× font scale. Main, Portfolio/holdings, all four coin tabs, Insights/allocation/exports, Accounts and Settings/appearance are captured, including scrolled sections. Rendered PNGs under `sharedUi/build/rewrite-previews` were inspected for navigation, readable metrics, holdings alignment, horizontal tab access, enlarged text and floating-action clearance. Consecutive mouse-click filter tests verify save notifications leave controls accessible. The packaged desktop JAR also launched with disposable demo data under software rendering on Xvfb; its rendered window was inspected.
 
@@ -201,7 +201,7 @@ New regression evidence covers market prices without holdings or ownership, exac
 
 At source commit `11f91ea`, formatting and strict lint passed. The full shared UI and desktop run from the preceding visual polish passed 95 shared UI and 28 desktop tests; the latest focused form, restoration and production-capture run passed 12 tests. The separate model capture test passed and generated 140 fixture PNGs. Android debug lint and APK assembly, plus desktop packaging, passed. Latest logs: `/tmp/eth-outline-format.log`, `/tmp/eth-outline-lint.log`, `/tmp/eth-outline-tests.log`, `/tmp/eth-outline-model.log`, and `/tmp/eth-outline-platform.log`.
 
-The [comparison gallery](/tmp/polion-phase1-comparison/index.html) provides 140 mapped Phase 0/current fixture comparisons, 140 directly linked current model previews, and 108 production binding captures. All mappings are marked compared, and archive CRC validation passed for `/tmp/polion-phase1-comparison.zip`. User visual review is pending; Phase 1 exit is not complete. No Android device execution or native desktop interaction review is claimed. See [Phase 1 evidence](ui-model-phases/phase-1-evidence.md) for the current scope and remaining gates.
+The [comparison gallery](/tmp/valroot-phase1-comparison/index.html) provides 140 mapped Phase 0/current fixture comparisons, 140 directly linked current model previews, and 108 production binding captures. All mappings are marked compared, and archive CRC validation passed for `/tmp/valroot-phase1-comparison.zip`. User visual review is pending; Phase 1 exit is not complete. No Android device execution or native desktop interaction review is claimed. See [Phase 1 evidence](ui-model-phases/phase-1-evidence.md) for the current scope and remaining gates.
 
 ## Frontend Phase 2 — 2026-11-03
 

@@ -1,6 +1,6 @@
 # Architecture and inception decisions
 
-Polion is an AGPL-3.0 local-first, watch-only portfolio tracker. Initial validation targets are Android API 26+ and Linux x86-64 desktop. This repository is independent of the adjacent Rotki checkout.
+Valroot is an AGPL-3.0 local-first, watch-only portfolio tracker. Initial validation targets are Android API 26+ and Linux x86-64 desktop. This repository is independent of the adjacent Rotki checkout.
 
 ## Boundaries
 

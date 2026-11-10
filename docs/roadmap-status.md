@@ -1,6 +1,6 @@
 # Product roadmap status
 
-Polion is a local-first, watch-only portfolio tracker. The free local app must remain usable without a hosted account, subscription or AI service. Bitcoin is the first supported network.
+Valroot is a local-first, watch-only portfolio tracker. The free local app must remain usable without a hosted account, subscription or AI service. Bitcoin is the first supported network.
 
 This is a progress map for the crypto-first roadmap. A working feature does not by itself satisfy its phase's acceptance gate. Phase numbers here are from the crypto-first roadmap; they differ from the earlier milestone A–D phase numbering.
 
@@ -23,4 +23,4 @@ This is a progress map for the crypto-first roadmap. A working feature does not 
 
 The 100,000-transaction snapshot memory limit is a known open issue and is deferred. The bounded reconciliation work is not connected to portfolio snapshots. Large-wallet acceptance remains open; see [validation](validation.md) for the measured behavior.
 
-The tracked architecture and detailed milestone records are linked from the [documentation index](../README.md). The active detailed crypto-first roadmap is maintained in the project workspace as `polion_roadmap_wealthfolio_references.md`.
+The tracked architecture and detailed milestone records are linked from the [documentation index](../README.md). The active detailed crypto-first roadmap is maintained in the project workspace as `valroot_roadmap_wealthfolio_references.md`.

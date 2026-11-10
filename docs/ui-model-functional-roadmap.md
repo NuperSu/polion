@@ -1,4 +1,4 @@
-# Roadmap: make the uiModel design the working Polion application
+# Roadmap: make the uiModel design the working Valroot application
 
 Planning baseline: 2 November 2026. This is an implementation and acceptance plan, not a claim that the current frontend reproduces the model or that the financial backend is complete.
 
