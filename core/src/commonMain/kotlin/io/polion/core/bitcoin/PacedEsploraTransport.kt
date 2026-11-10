@@ -9,9 +9,12 @@ data class EsploraRetryProgress(
         get() = "Provider rate limit · waiting ${(delayMillis + 999) / 1000}s before retry $retry/$maxRetries"
 }
 
-/** Bounds apply to a serial worker's transport instance, including all requests in that scan. */
+/**
+ * Bounds apply to a serial worker's transport instance, including all requests in that scan. Four requests a second keep
+ * a large wallet's scan to minutes; a rate limit backs off and the default provider fails over to its backup.
+ */
 data class EsploraPacingPolicy(
-    val requestIntervalMillis: Long = 1_000,
+    val requestIntervalMillis: Long = 250,
     val initialRetryMillis: Long = 2_000,
     val maxRetriesPerRequest: Int = 2,
     val maxRetriesPerScan: Int = 6,

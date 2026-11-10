@@ -3,9 +3,15 @@ package io.polion.android
 import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import io.polion.core.application.BitcoinConnector
 import io.polion.core.application.PortfolioApplication
+import io.polion.core.application.SourceConnector
+import io.polion.core.application.SourceRefreshOptions
+import io.polion.core.application.SourceRegistry
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
+import io.polion.core.evm.EVM_MANIFEST
+import io.polion.core.evm.EvmConnector
 import io.polion.core.storage.AndroidSqliteDatabase
 import io.polion.core.sync.JobState
 import io.polion.ui.SyncPhase
@@ -57,6 +63,7 @@ class RefreshWorker(
             recoverHistory: Boolean = false,
             ensureActive: () -> Unit = {},
             onProgress: (String) -> Unit = {},
+            evmOnly: Boolean = false,
         ): SyncStatus {
             // The stage and exception class name the failing step without revealing addresses or provider payloads.
             var stage = "setup"
@@ -65,7 +72,10 @@ class RefreshWorker(
                 file.parentFile?.mkdirs()
                 AndroidSqliteDatabase(file.path).use { db ->
                     val app = PortfolioApplication(db, System::currentTimeMillis)
-                    if (!app.sourceConsent()) {
+                    // Each source needs its own consent. Wallet discovery and order verification are Bitcoin-only.
+                    val bitcoinOn = app.sourceConsent() && !evmOnly
+                    val evmOn = app.evmConsent() && app.evmTargets().isNotEmpty()
+                    if (!bitcoinOn && (!evmOn || walletId != null || verifyOrder)) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
                         val endpoint = app.sourceEndpoint()
@@ -118,29 +128,73 @@ class RefreshWorker(
                         }
                         stage = "history"
                         // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
-                        val bitcoin =
-                            io.polion.core.application.BitcoinConnector(transport, endpoint) { progress ->
-                                val detail =
-                                    when (progress.phase) {
-                                        "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                                        "verify" -> "Checking chain consistency…"
-                                        "apply" -> "Applying verified history…"
-                                        else ->
-                                            "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
-                                                "${progress.pages} pages · ${progress.transactions} transactions"
-                                    }
-                                syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
-                                onProgress(detail)
-                            }
+                        val connectors = mutableListOf<SourceConnector>()
+                        if (bitcoinOn) {
+                            connectors +=
+                                BitcoinConnector(transport, endpoint) { progress ->
+                                    val detail =
+                                        "Bitcoin · " +
+                                            when (progress.phase) {
+                                            "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
+                                            "verify" -> "Checking chain consistency…"
+                                            "apply" -> "Applying verified history…"
+                                            else ->
+                                                "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
+                                                    "${progress.pages} pages · ${progress.transactions} transactions"
+                                        }
+                                    syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
+                                    onProgress(detail)
+                                }
+                        }
+                        if (evmOn) {
+                            val alchemy =
+                                AlchemyTransport(
+                                    apiKey = { app.alchemyApiKey() },
+                                    beforeRequest = {
+                                        ensureActive()
+                                        check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
+                                    },
+                                )
+                            val oneInch =
+                                app.oneInchApiKey()?.let {
+                                    OneInchTransport(
+                                        apiKey = { app.oneInchApiKey() },
+                                        beforeRequest = {
+                                            ensureActive()
+                                            check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
+                                        },
+                                    )
+                                }
+                            connectors += EvmConnector(alchemy::post, oneInch?.let { it::get })
+                        }
                         val outcomes =
                             app.refreshSources(
-                                io.polion.core.application.SourceRegistry(listOf(bitcoin)),
-                                io.polion.core.application.SourceRefreshOptions(recoverHistory = recoverHistory),
+                                SourceRegistry(connectors),
+                                SourceRefreshOptions(
+                                    recoverHistory = recoverHistory,
+                                    onProgress = { detail ->
+                                        syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = "EVM · $detail")
+                                        onProgress("EVM · $detail")
+                                    },
+                                    withoutConsent =
+                                        setOfNotNull(
+                                            io.polion.core.bitcoin.BITCOIN_MAINNET.takeIf { !app.sourceConsent() },
+                                            io.polion.core.evm.EVM_FAMILY.takeIf { !app.evmConsent() },
+                                        ),
+                                ),
                             )
                         val states = outcomes.flatMap { it.jobs }
                         val sourceNotes = outcomes.flatMap { it.notes }.joinToString(" ").ifEmpty { null }
+                        // Once a chain has refreshed, new tokens are linked to coins and priced.
+                        if (outcomes.any { it.connector == EVM_MANIFEST.id && it.jobs.contains(JobState.COMPLETED) }) {
+                            MarketFeedRefresher.refreshEvmCatalogAndPrices(app)
+                        }
                         when {
-                            states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
+                            states.isEmpty() ->
+                                SyncStatus(
+                                    SyncPhase.IDLE,
+                                    if (bitcoinOn) "Add a public address to sync" else sourceNotes ?: "Add a public address to sync",
+                                )
                             states.any { it != JobState.COMPLETED } ->
                                 SyncStatus(
                                     SyncPhase.ERROR,

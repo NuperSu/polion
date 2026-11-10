@@ -13,6 +13,7 @@ import java.util.concurrent.Executors
 internal object MarketFeedRefresher {
     private val executor = Executors.newSingleThreadExecutor()
     val transport = AndroidCoingeckoTransport()
+    private val defiLlama = DefiLlamaTransport()
 
     fun refresh(
         context: Context,
@@ -28,9 +29,10 @@ internal object MarketFeedRefresher {
                     } else {
                         runCatching {
                             AndroidSqliteDatabase(path).use { db ->
-                                marketRefreshMessage(
-                                    PortfolioApplication(db, System::currentTimeMillis).refreshMarketFeeds(transport::feed, maxAgeMillis),
-                                )
+                                val app = PortfolioApplication(db, System::currentTimeMillis)
+                                val result = marketRefreshMessage(app.refreshMarketFeeds(transport::feed, maxAgeMillis))
+                                refreshEvmCatalogAndPrices(app)
+                                result
                             }
                         }.getOrElse { "Could not refresh market data." }
                     }
@@ -38,6 +40,48 @@ internal object MarketFeedRefresher {
             RefreshWorker.dataRevision.update { it + 1 }
             onResult(message)
         }
+    }
+
+    /** Loads the CoinGecko chain catalog on this executor, under the same pause gate and closing check as market refreshes. */
+    fun refreshEvmCatalog(
+        context: Context,
+        closing: () -> Boolean,
+        onResult: (String?) -> Unit,
+    ) {
+        val path = context.applicationContext.getDatabasePath("portfolio.sqlite").path
+        executor.execute {
+            val message =
+                synchronized(AutomaticPriceGate.lock) {
+                    when {
+                        closing() -> "The app is closing."
+                        AutomaticPriceGate.paused -> "Market data is paused while data is restored."
+                        else ->
+                            runCatching {
+                                AndroidSqliteDatabase(path).use { db ->
+                                    PortfolioApplication(db, System::currentTimeMillis).refreshEvmCatalog(transport::feed)
+                                }
+                                null
+                            }.getOrElse { "Could not load the chain list from CoinGecko." }
+                    }
+                }
+            RefreshWorker.dataRevision.update { it + 1 }
+            onResult(message)
+        }
+    }
+
+    /**
+     * Refreshes the CoinGecko chain catalog, then linked-coin prices (USD from DefiLlama, other currencies from
+     * CoinGecko), logos and missing price history. Each step is isolated, so a failure never fails the caller. Does
+     * nothing without market data consent.
+     */
+    fun refreshEvmCatalogAndPrices(app: PortfolioApplication) {
+        if (!app.marketDataConsent()) return
+        runCatching { app.refreshEvmCatalog(transport::feed) }
+        runCatching { app.refreshLinkedCoinUsdPrices(defiLlama::get) }
+        runCatching { app.refreshLinkedCoinPrices(transport::feed) }
+        runCatching { app.refreshLinkedCoinLogos(transport::feed) }
+        runCatching { app.backfillLinkedCoinUsdHistory(defiLlama::get, pause = Thread::sleep) }
+        runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
     }
 
     /**

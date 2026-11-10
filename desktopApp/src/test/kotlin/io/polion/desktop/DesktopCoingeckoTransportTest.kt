@@ -15,6 +15,7 @@ class DesktopCoingeckoTransportTest {
 
     private class Response(
         private val code: Int,
+        private val body: ByteArray = "{}".toByteArray(),
     ) : HttpURLConnection(URI("https://api.coingecko.com").toURL()) {
         var disconnected = false
 
@@ -28,7 +29,7 @@ class DesktopCoingeckoTransportTest {
 
         override fun getResponseCode() = code
 
-        override fun getInputStream() = "{}".byteInputStream()
+        override fun getInputStream() = body.inputStream()
     }
 
     @Test fun credentialsAreHeadersAndAccessDenialIsExplicit() {
@@ -90,5 +91,48 @@ class DesktopCoingeckoTransportTest {
             "https://api.coingecko.com/api/v3/coins/chainlink/tickers?exchange_ids=kraken&page=2",
         ).forEach { bad -> assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().feed(bad, null) } }
         assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().get(tickers) }
+    }
+
+    private val base = "https://api.coingecko.com/api/v3"
+
+    @Test fun chainCatalogAndLinkedPricesAreAllowedAsFeedRequests() {
+        val ids = (1..50).joinToString(",") { "coin-$it" }
+        listOf(
+            "$base/asset_platforms",
+            "$base/coins/list?include_platform=true",
+            "$base/simple/price?ids=ethereum,usd-coin&vs_currencies=usd,eur&include_last_updated_at=true",
+            "$base/simple/price?ids=$ids&vs_currencies=usd&include_last_updated_at=true",
+        ).forEach { allowed ->
+            val response = Response(200)
+            assertEquals("{}", DesktopCoingeckoTransport(openConnection = { response }).feed(allowed, "key"))
+            assertEquals("key", response.getRequestProperty("x-cg-demo-api-key"))
+        }
+    }
+
+    @Test fun chainCatalogAndLinkedPricesRejectOtherShapes() {
+        val tooManyIds = (1..51).joinToString(",") { "coin-$it" }
+        listOf(
+            "$base/asset_platforms?page=2",
+            "$base/coins/list",
+            "$base/coins/list?include_platform=true&page=2",
+            "$base/simple/price?ids=bitcoin&vs_currencies=usd",
+            "$base/simple/price?ids=Bitcoin&vs_currencies=usd&include_last_updated_at=true",
+            "$base/simple/price?ids=$tooManyIds&vs_currencies=usd&include_last_updated_at=true",
+            "$base/simple/price?ids=bitcoin&vs_currencies=usd,eur,gbp,jpy&include_last_updated_at=true",
+            "$base/simple/price?ids=bitcoin&vs_currencies=us1&include_last_updated_at=true",
+            "$base/simple/price?ids=bitcoin&vs_currencies=usd&include_last_updated_at=true&extra=1",
+        ).forEach { bad -> assertFailsWith<IllegalArgumentException> { DesktopCoingeckoTransport().feed(bad, null) } }
+    }
+
+    @Test fun coinListUsesItsOwnSizeLimit() {
+        val fiveMebibytes = ByteArray(5 * 1024 * 1024) { ' '.code.toByte() }
+        val coins = DesktopCoingeckoTransport(openConnection = { Response(200, fiveMebibytes) })
+        assertEquals(fiveMebibytes.size, coins.feed("$base/coins/list?include_platform=true", null).length)
+        assertEquals(
+            CoingeckoProviderFailure.INVALID_RESPONSE,
+            assertFailsWith<CoingeckoProviderException> {
+                DesktopCoingeckoTransport(openConnection = { Response(200, fiveMebibytes) }).feed("$base/asset_platforms", null)
+            }.failure,
+        )
     }
 }

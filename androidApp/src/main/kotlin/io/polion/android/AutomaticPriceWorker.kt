@@ -96,6 +96,7 @@ class AutomaticPriceWorker(
                     // Market lists ride on the same schedule; a failure here never fails the price refresh.
                     if (app.marketDataConsent()) {
                         runCatching { app.refreshMarketFeeds(MarketFeedRefresher.transport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
+                        MarketFeedRefresher.refreshEvmCatalogAndPrices(app)
                     }
                 } catch (failure: Exception) {
                     if (!isStopped &&

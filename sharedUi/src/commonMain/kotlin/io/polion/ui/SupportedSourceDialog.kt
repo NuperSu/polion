@@ -31,6 +31,8 @@ internal fun SupportedSourceDialog(
     onSelect: (SourceChoice) -> Unit,
     onImportCsv: () -> Unit,
     onDismiss: () -> Unit,
+    /** Opens the EVM address flow; null hides the choice. */
+    onEvm: (() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -47,6 +49,23 @@ internal fun SupportedSourceDialog(
                             Text(choice.title, style = MaterialTheme.typography.titleSmall)
                             Text(choice.description, style = MaterialTheme.typography.bodySmall)
                             if (choice.requiresQueryConsent) {
+                                Text("Provider queries require your consent.", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                onEvm?.let { openEvm ->
+                    item {
+                        OutlinedButton(
+                            onClick = openEvm,
+                            modifier = Modifier.fillMaxWidth().testTag("source-choice-evm"),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("EVM address", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "Ethereum, Base, Arbitrum and other chains. Public address only.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                                 Text("Provider queries require your consent.", style = MaterialTheme.typography.bodySmall)
                             }
                         }

@@ -36,6 +36,8 @@ import io.polion.core.connectors.HistoryFetcher
 import io.polion.core.connectors.HistoryPage
 import io.polion.core.connectors.HistoryRequest
 import io.polion.core.connectors.RegisteredConnector
+import io.polion.core.evm.EvmAssets
+import io.polion.core.evm.EvmTokenStandard
 import io.polion.core.holdings.BalanceCoverage
 import io.polion.core.holdings.BalanceView
 import io.polion.core.holdings.HoldingsRepository
@@ -45,6 +47,7 @@ import io.polion.core.ledger.ActivityRepository
 import io.polion.core.ledger.ActivityStatus
 import io.polion.core.market.AssetDefinition
 import io.polion.core.market.AssetMetadata
+import io.polion.core.market.CoingeckoCatalog
 import io.polion.core.market.CoingeckoHistoricalResult
 import io.polion.core.market.CoingeckoMarkets
 import io.polion.core.market.CoingeckoPriceClient
@@ -52,6 +55,7 @@ import io.polion.core.market.CoingeckoPrices
 import io.polion.core.market.CoingeckoProviderException
 import io.polion.core.market.CoingeckoProviderFailure
 import io.polion.core.market.CoingeckoTransport
+import io.polion.core.market.DefiLlamaPrices
 import io.polion.core.market.KrakenOrderBook
 import io.polion.core.market.KrakenPair
 import io.polion.core.market.KrakenPrices
@@ -273,6 +277,8 @@ data class PortfolioSnapshot(
     /** The same balances valued in the secondary currency from Settings; null when none is chosen or it equals [currency]. */
     val secondaryCurrency: AssetId? = null,
     val secondaryValuations: List<AssetValuation> = emptyList(),
+    /** Held assets that are hidden: unknown tokens and NFTs until the user shows them. Not in [valuations] or totals. */
+    val hiddenAssets: List<AssetValuation> = emptyList(),
 )
 
 /** Wallet discovery refused an address because another account already tracks it. The message is safe to show. */
@@ -292,6 +298,8 @@ data class MarketOverview(
     val hasApiKey: Boolean,
     /** CoinGecko coin ID to the asset ID used for favorites and coin pages. */
     val assetKeys: Map<String, AssetId>,
+    /** Logo URLs for EVM assets linked to a coin, by asset. */
+    val assetLogos: Map<AssetId, String> = emptyMap(),
 )
 
 data class MarketRefreshResult(
@@ -333,6 +341,24 @@ const val NOTIFICATION_MARKET_AGE_MILLIS = 10 * 60_000L
 /** Order book levels shown per side. */
 const val ORDER_BOOK_DEPTH = 10
 
+/** CoinGecko linked-coin history ranges for currencies other than USD: daily prices for a year first, then hourly prices for 90 days. */
+private val LINKED_HISTORY_DAYS = listOf(365, 90)
+
+/** DefiLlama hourly history covers this many recent days; daily history reaches back to a coin's first movement. */
+private const val LINKED_HOURLY_DAYS = 90
+
+/** A covered range whose end is older than this is extended to now; newer gaps are left to current prices. */
+private const val LINKED_HISTORY_EXTEND_AFTER_MILLIS = 86_400_000L
+
+/** A token is judged against a 1inch listing only if it first moved at least this long before the listing. */
+private const val ONE_INCH_LISTING_MARGIN_MILLIS = 3_600_000L
+
+/** US dollars, the only currency DefiLlama quotes. */
+private val USD = AssetId("USD")
+
+/** Saved linked-coin logo URLs are refetched after a week. */
+private const val LINKED_LOGO_MAX_AGE_MILLIS = 7 * 86_400_000L
+
 /** Delivered notifications kept in the history. */
 const val NOTIFICATION_HISTORY_SIZE = 500
 
@@ -356,6 +382,15 @@ class PortfolioApplication(
         io.polion.core.alerts
             .NotificationRepository(db)
     private val csvImports = CsvImportRepository(db)
+    private val evmChains =
+        io.polion.core.evm
+            .EvmChainRepository(db)
+    private val evmRecovered =
+        io.polion.core.evm
+            .EvmRecoveredRepository(db)
+    private val assetLinks =
+        io.polion.core.market
+            .AssetLinkRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
     private val bitcoinGraph =
         io.polion.core.bitcoin
@@ -463,7 +498,472 @@ class PortfolioApplication(
             },
             secondary,
             secondary?.let { valuations(balance, it, at, pricePolicy(current = true)) }.orEmpty(),
+            valuations(balance, currency, at, pricePolicy(current = true), hidden = true),
         )
+    }
+
+    /**
+     * Assets hidden from values and lists. An EVM token without a CoinGecko coin, a token 1inch leaves out of the
+     * address's history (it omits tokens it rates as scams), and every NFT start hidden, because such tokens are often
+     * spam; the user's choice to show or hide an asset always wins.
+     */
+    fun hiddenAssets(): Set<AssetId> = hiddenAmong(heldAssets())
+
+    /** Assets with a recorded balance in any account, from up-to-date holdings. */
+    private fun heldAssets(): Set<AssetId> {
+        if (!holdingsCurrent) {
+            holdings.refresh(ledger().activities.map { it.activity })
+            holdingsCurrent = true
+        }
+        return holdings
+            .current(BalanceCoverage.UNKNOWN, now())
+            .quantities
+            .filterValues { it.sign != 0 }
+            .keys
+            .map { it.asset }
+            .toSet()
+    }
+
+    private fun hiddenAmong(assets: Set<AssetId>): Set<AssetId> {
+        if (assets.none { it.value.startsWith("eip155:") }) return emptySet()
+        val links = assetLinks.links()
+        val choices = assetLinks.choices()
+        val unlisted = unlistedByOneInch(assets.filter { it !in choices && it in links && it.value.contains("/erc20:") })
+        return assets
+            .filter { asset ->
+                choices[asset]?.not() ?: (
+                    asset.value.startsWith("eip155:") &&
+                        (asset.value.contains("/nft:") || (!asset.value.endsWith("/native") && (asset !in links || asset in unlisted)))
+                )
+            }.toSet()
+    }
+
+    /**
+     * Tokens 1inch leaves out of every tracked address's history on their chain. A token counts only when 1inch has
+     * listed every tracked address on the chain since the token first moved, so a token newer than the listing is not
+     * judged.
+     */
+    private fun unlistedByOneInch(tokens: List<AssetId>): Set<AssetId> {
+        if (tokens.isEmpty()) return emptySet()
+        val listings = evmRecovered.listings()
+        if (listings.isEmpty()) return emptySet()
+        val tracked = evmChains.states().groupingBy { it.chainId }.eachCount()
+        val candidates =
+            tokens.filter { asset ->
+                val chain =
+                    io.polion.core.evm.EvmAssets
+                        .chainOf(asset) ?: return@filter false
+                val chainListings = listings[chain] ?: return@filter false
+                chainListings.size >= (tracked[chain] ?: 0) &&
+                    chainListings.none { asset.value.substringAfter("/erc20:") in it.contracts }
+            }
+        if (candidates.isEmpty()) return emptySet()
+        val firstMoved = mutableMapOf<AssetId, Long>()
+        ledger().activities.forEach { entry ->
+            entry.activity.movements.forEach { movement ->
+                val asset = movement.amount.assetId
+                if (asset in candidates) {
+                    firstMoved[asset] = minOf(firstMoved[asset] ?: Long.MAX_VALUE, entry.activity.occurredAtEpochMillis)
+                }
+            }
+        }
+        return candidates
+            .filter { asset ->
+                val listed =
+                    listings
+                        .getValue(
+                            io.polion.core.evm.EvmAssets
+                                .chainOf(asset)!!,
+                        ).minOf { it.atMillis }
+                (firstMoved[asset] ?: Long.MAX_VALUE) < listed - ONE_INCH_LISTING_MARGIN_MILLIS
+            }.toSet()
+    }
+
+    fun setAssetShown(
+        asset: AssetId,
+        shown: Boolean,
+    ) = assetLinks.setShown(asset, shown)
+
+    /** Every portfolio asset that is the CoinGecko coin [coinId], for example ETH on each EVM chain. */
+    fun assetsForCoin(coinId: String): List<AssetId> =
+        (if (coinId == "bitcoin") listOf(BITCOIN_ASSET) else emptyList()) +
+            assetLinks.assetsOf(coinId) +
+            listOfNotNull(market.resolveProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId))
+
+    /**
+     * Refreshes the CoinGecko chain and contract catalog when it is older than a week (two keyless requests), then links
+     * held EVM assets to their coins. Needs market data consent.
+     */
+    fun refreshEvmCatalog(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ) {
+        require(marketDataConsent()) { "Market data consent required" }
+        val cached = marketFeeds.catalog()
+        if (cached == null || now() - cached.first > 7 * 86_400_000L) {
+            val key = coingeckoApiKey()
+            val platforms = CoingeckoCatalog.parsePlatforms(transport(baseUrl + CoingeckoCatalog.PLATFORMS_PATH, key))
+            require(platforms.isNotEmpty()) { "CoinGecko returned no chains" }
+            val coins = transport(baseUrl + CoingeckoCatalog.COINS_PATH, key)
+            val catalog =
+                CoingeckoCatalog(
+                    platforms,
+                    CoingeckoCatalog.parseContracts(coins, platforms),
+                    CoingeckoCatalog.parseNatives(coins, platforms),
+                )
+            marketFeeds.saveCatalog(catalog, now())
+        }
+        linkEvmAssets()
+    }
+
+    /** The display and secondary currencies; USD is left to DefiLlama, so CoinGecko quotes only the others. */
+    private fun coingeckoLinkedCurrencies(): List<AssetId> =
+        listOfNotNull(currency(), generalPreferences().secondaryCurrency).distinct().filter { it != USD }
+
+    /** True when USD is the display or secondary currency, which DefiLlama prices. */
+    private fun linkedUsdWanted(): Boolean = currency() == USD || generalPreferences().secondaryCurrency == USD
+
+    /**
+     * Current CoinGecko prices for held coins linked to EVM assets, in the display and secondary currencies other than
+     * USD, from one keyless request per 50 coins; USD comes from [refreshLinkedCoinUsdPrices]. Each price is saved for
+     * every asset linked to that coin, so ETH on Base and on Ethereum get the same observation. Needs market data
+     * consent. Returns how many prices were saved.
+     */
+    fun refreshLinkedCoinPrices(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        val links = shownLinks()
+        val currencies = coingeckoLinkedCurrencies()
+        if (links.isEmpty() || currencies.isEmpty()) return 0
+        val observed = now()
+        val prices = mutableListOf<PriceObservation>()
+        links.values.distinct().sorted().chunked(50).forEach { batch ->
+            val url =
+                "$baseUrl/simple/price?ids=${batch.joinToString(",")}&vs_currencies=" +
+                    currencies.joinToString(",") { it.value.lowercase() } + "&include_last_updated_at=true"
+            val document = Json.parseToJsonElement(transport(url, coingeckoApiKey())).jsonObject
+            batch.forEach { coin ->
+                val entry = document[coin] as? kotlinx.serialization.json.JsonObject ?: return@forEach
+                val validAt =
+                    (entry["last_updated_at"] as? kotlinx.serialization.json.JsonPrimitive)
+                        ?.content
+                        ?.toLongOrNull()
+                        ?.times(1000)
+                        ?.takeIf { it in 1..observed } ?: observed
+                currencies.forEach { quote ->
+                    val number =
+                        (entry[quote.value.lowercase()] as? kotlinx.serialization.json.JsonPrimitive)
+                            ?.takeIf { !it.isString }
+                            ?.content
+                    val value =
+                        number?.let { runCatching { CoingeckoPrices.parseJsonNumber(it) }.getOrNull() }?.takeIf {
+                            it.coefficient.sign >
+                                0
+                        }
+                    if (value != null) {
+                        links.filterValues { it == coin }.keys.forEach { asset ->
+                            prices +=
+                                PriceObservation(
+                                    "coingecko:${asset.value}:${quote.value}:$validAt",
+                                    io.polion.core.model
+                                        .Price(asset, quote, value),
+                                    ProviderId(CoingeckoPrices.PROVIDER_ID),
+                                    validAt,
+                                    observed,
+                                )
+                        }
+                    }
+                }
+            }
+        }
+        market.recordChangedProviderPrices(prices)
+        return prices.size
+    }
+
+    /**
+     * Current DefiLlama USD prices for held coins linked to EVM assets, one keyless request per 50 coins, when USD is the
+     * display or secondary currency. Each price is saved for every asset linked to the coin. Needs market data consent.
+     * Returns how many prices were saved.
+     */
+    fun refreshLinkedCoinUsdPrices(
+        fetch: (url: String) -> String,
+        baseUrl: String = DefiLlamaPrices.BASE_URL,
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        val links = shownLinks()
+        if (links.isEmpty() || !linkedUsdWanted()) return 0
+        val observed = now()
+        val prices =
+            links.values.distinct().sorted().chunked(DefiLlamaPrices.CURRENT_BATCH).flatMap { batch ->
+                DefiLlamaPrices.parseCurrent(fetch(DefiLlamaPrices.currentUrl(baseUrl, batch))).flatMap { (coin, point) ->
+                    linkedUsdPrices(links, coin, listOf(point.first.coerceAtMost(observed) to point.second), observed)
+                }
+            }
+        market.recordChangedProviderPrices(prices)
+        return prices.size
+    }
+
+    /** One DefiLlama observation per asset linked to [coin] and point. */
+    private fun linkedUsdPrices(
+        links: Map<AssetId, String>,
+        coin: String,
+        points: List<Pair<Long, io.polion.core.model.ExactDecimal>>,
+        observed: Long,
+    ): List<PriceObservation> =
+        points.filter { (at, _) -> at in 1..observed }.flatMap { (at, value) ->
+            links.filterValues { it == coin }.keys.map { asset ->
+                PriceObservation(
+                    "${DefiLlamaPrices.PROVIDER_ID}:${asset.value}:USD:$at",
+                    io.polion.core.model
+                        .Price(asset, USD, value),
+                    ProviderId(DefiLlamaPrices.PROVIDER_ID),
+                    at,
+                    observed,
+                )
+            }
+        }
+
+    /**
+     * Fills the USD price history of linked coins the ledger has moved from DefiLlama, so the portfolio chart can value
+     * them back to their first movement.
+     *
+     * - Daily prices reach from a day before the coin's first movement to now; hourly prices cover the last
+     *   [LINKED_HOURLY_DAYS] days. Daily ranges of every coin come before hourly ones, and coins held now come first.
+     * - Each request returns up to [DefiLlamaPrices.MAX_POINTS] points. The covered range per coin and period is saved,
+     *   so each range is fetched once; a range ending more than a day ago is extended to now.
+     * - Makes at most [maxRequests] requests, calling [pause] with [intervalMillis] before each.
+     *
+     * Does nothing unless USD is the display or secondary currency. Returns the number of requests made, so 0 means
+     * every range is covered.
+     */
+    fun backfillLinkedCoinUsdHistory(
+        fetch: (url: String) -> String,
+        baseUrl: String = DefiLlamaPrices.BASE_URL,
+        maxRequests: Int = 40,
+        intervalMillis: Long = 1_000L,
+        pause: (Long) -> Unit = {},
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        if (!linkedUsdWanted()) return 0
+        val firstMoved = mutableMapOf<AssetId, Long>()
+        ledger().activities.forEach { entry ->
+            entry.activity.movements.forEach { movement ->
+                val asset = movement.amount.assetId
+                firstMoved[asset] = minOf(firstMoved[asset] ?: Long.MAX_VALUE, entry.activity.occurredAtEpochMillis)
+            }
+        }
+        val hidden = hiddenAmong(firstMoved.keys)
+        val links = assetLinks.links().filterKeys { it in firstMoved && it !in hidden }
+        val held = heldAssets()
+        val coins =
+            links.values
+                .distinct()
+                .sortedWith(compareBy<String>({ coin -> links.none { (asset, linked) -> linked == coin && asset in held } }, { it }))
+        val firstByCoin = coins.associateWith { coin -> links.filterValues { it == coin }.keys.minOf { firstMoved.getValue(it) } }
+        var requests = 0
+        for (period in DefiLlamaPrices.Period.entries) {
+            for (coin in coins) {
+                while (true) {
+                    val now = now()
+                    val step = period.stepMillis
+                    val start =
+                        maxOf(
+                            firstByCoin.getValue(coin) - step,
+                            if (period == DefiLlamaPrices.Period.HOURLY) now - LINKED_HOURLY_DAYS * 86_400_000L else 0L,
+                            0L,
+                        )
+                    val marker = "linked_usd_history:$coin:${period.query}"
+                    val covered =
+                        marketFeeds
+                            .deviceSetting(marker)
+                            ?.split(':')
+                            ?.mapNotNull { it.toLongOrNull() }
+                            ?.takeIf { it.size == 2 }
+                    val chunk = DefiLlamaPrices.MAX_POINTS * step
+                    val (from, to) =
+                        when {
+                            covered == null -> maxOf(start, now - chunk) to now
+                            now - covered[1] > LINKED_HISTORY_EXTEND_AFTER_MILLIS -> covered[1] to minOf(now, covered[1] + chunk)
+                            covered[0] > start -> maxOf(start, covered[0] - chunk) to covered[0]
+                            else -> break
+                        }
+                    if (requests >= maxRequests) return requests
+                    requests++
+                    pause(intervalMillis)
+                    val span = ((to - from + step - 1) / step).toInt().coerceIn(1, DefiLlamaPrices.MAX_POINTS)
+                    val points =
+                        DefiLlamaPrices
+                            .parseChart(
+                                fetch(DefiLlamaPrices.chartUrl(baseUrl, coin, from, span, period)),
+                            )[coin]
+                            .orEmpty()
+                    // Unchanged points are not recorded twice, so a range fetched again after an interruption adds nothing.
+                    market.recordChangedProviderPrices(linkedUsdPrices(links, coin, points, now()))
+                    // A range with no prices (before the coin existed, or unknown to DefiLlama) still counts as covered.
+                    marketFeeds.putDeviceSetting(marker, "${minOf(from, covered?.get(0) ?: from)}:${maxOf(to, covered?.get(1) ?: to)}")
+                }
+            }
+        }
+        return requests
+    }
+
+    /** Held, shown EVM assets by their linked CoinGecko coin. */
+    private fun shownLinks(): Map<AssetId, String> {
+        val held = heldAssets()
+        val hidden = hiddenAmong(held)
+        return assetLinks.links().filterKeys { it in held && it !in hidden }
+    }
+
+    /**
+     * Fills the price history of linked coins the ledger has moved from CoinGecko's `/market_chart`, once per coin and
+     * currency other than USD (see [backfillLinkedCoinUsdHistory]), so the portfolio chart can value them before the
+     * address was tracked. The keyless API reaches back one year. Every coin first gets a year of daily prices, which
+     * keeps each chart point within the one-day price age; then 90 days of hourly prices. Makes at most [maxRequests]
+     * requests per call, calling [pause] with [intervalMillis] before each so a paced transport accepts it; the rest
+     * follow on later calls. Returns the number of prices recorded.
+     */
+    fun backfillLinkedCoinHistory(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+        maxRequests: Int = 12,
+        intervalMillis: Long = 6_100L,
+        pause: (Long) -> Unit = {},
+    ): Int {
+        require(marketDataConsent()) { "Market data consent required" }
+        // Every linked asset the ledger has moved, not only today's holdings: a coin sold since still values past points.
+        val moved =
+            ledger()
+                .activities
+                .flatMap { entry -> entry.activity.movements.map { it.amount.assetId } }
+                .toSet()
+        val hidden = hiddenAmong(moved)
+        val links = assetLinks.links().filterKeys { it in moved && it !in hidden }
+        val currencies = coingeckoLinkedCurrencies()
+        // Coins held now come first: they carry today's value, and the free API allows only a few requests a minute.
+        val held = heldAssets()
+        val coins =
+            links.values
+                .distinct()
+                .sortedWith(compareBy<String>({ coin -> links.none { (asset, linked) -> linked == coin && asset in held } }, { it }))
+        var requests = 0
+        var recorded = 0
+        for (days in LINKED_HISTORY_DAYS) {
+            for (coin in coins) {
+                for (quote in currencies) {
+                    val marker = "linked_history:$coin:${quote.value}:$days"
+                    if (marketFeeds.deviceSetting(marker) != null) continue
+                    if (requests++ >= maxRequests) return recorded
+                    pause(intervalMillis)
+                    val url = "$baseUrl/coins/$coin/market_chart?vs_currency=${quote.value.lowercase()}&days=$days"
+                    val points = CoingeckoPrices.parseChart(transport(url, coingeckoApiKey()))
+                    val observed = now()
+                    val prices =
+                        points.filter { (at, _) -> at in 1..observed }.flatMap { (at, value) ->
+                            links.filterValues { it == coin }.keys.map { asset ->
+                                PriceObservation(
+                                    "coingecko:${asset.value}:${quote.value}:$at",
+                                    io.polion.core.model
+                                        .Price(asset, quote, value),
+                                    ProviderId(CoingeckoPrices.PROVIDER_ID),
+                                    at,
+                                    observed,
+                                )
+                            }
+                        }
+                    // Unchanged points are not recorded twice, so a range fetched again after an interruption adds nothing.
+                    market.recordChangedProviderPrices(prices)
+                    marketFeeds.putDeviceSetting(marker, observed.toString())
+                    recorded += prices.size
+                }
+            }
+        }
+        return recorded
+    }
+
+    /**
+     * Fetches logo URLs for held linked coins with one `/coins/markets` request by coin ID, when a coin has none saved
+     * yet or the saved set is older than a week.
+     */
+    fun refreshLinkedCoinLogos(
+        transport: (url: String, apiKey: String?) -> String,
+        baseUrl: String = "https://api.coingecko.com/api/v3",
+    ) {
+        require(marketDataConsent()) { "Market data consent required" }
+        val coins =
+            shownLinks()
+                .values
+                .distinct()
+                .sorted()
+                .take(CoingeckoMarkets.MARKET_SIZE)
+        val saved = linkedCoinLogos()
+        val fetchedAt = marketFeeds.deviceSetting("linked_coin_logos_at")?.toLongOrNull() ?: 0L
+        if (coins.isEmpty() || (coins.all { it in saved } && now() - fetchedAt < LINKED_LOGO_MAX_AGE_MILLIS)) return
+        val url =
+            "$baseUrl/coins/markets?vs_currency=usd&ids=${coins.joinToString(",")}&per_page=${CoingeckoMarkets.MARKET_SIZE}&page=1" +
+                "&sparkline=false"
+        val logos =
+            CoingeckoMarkets.parseMarkets(transport(url, coingeckoApiKey())).mapNotNull { coin ->
+                coin.image?.let {
+                    coin.coinId to
+                        it
+                }
+            }
+        db.transaction {
+            marketFeeds.putDeviceSetting(
+                "linked_coin_logos",
+                kotlinx.serialization.json
+                    .JsonObject((saved + logos).mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) })
+                    .toString(),
+            )
+            marketFeeds.putDeviceSetting("linked_coin_logos_at", now().toString())
+        }
+    }
+
+    private fun linkedCoinLogos(): Map<String, String> =
+        marketFeeds
+            .deviceSetting("linked_coin_logos")
+            ?.let { saved ->
+                runCatching {
+                    Json
+                        .parseToJsonElement(saved)
+                        .jsonObject
+                        .mapNotNull { (coin, url) ->
+                            CoingeckoMarkets.logoUrl((url as? kotlinx.serialization.json.JsonPrimitive)?.content)?.let { coin to it }
+                        }.toMap()
+                }.getOrNull()
+            }.orEmpty()
+
+    /** Logo URLs for linked EVM assets, from their coin's saved logo or the cached market feeds. */
+    private fun linkedAssetLogos(feedLogos: Map<String, String>): Map<AssetId, String> {
+        val saved = linkedCoinLogos()
+        return assetLinks.links().mapNotNull { (asset, coin) -> (saved[coin] ?: feedLogos[coin])?.let { asset to it } }.toMap()
+    }
+
+    /** Links registered EVM native and token assets to CoinGecko coins from the cached catalog. Links never change once set. */
+    fun linkEvmAssets(): Int {
+        val catalog = marketFeeds.catalog()?.second ?: return 0
+        val linked = assetLinks.links()
+        var count = 0
+        db.transaction {
+            market.assetIds().filter { it.value.startsWith("eip155:") && it !in linked }.forEach { asset ->
+                val chain =
+                    io.polion.core.evm.EvmAssets
+                        .chainOf(asset) ?: return@forEach
+                val coin =
+                    when {
+                        asset.value.endsWith("/native") -> catalog.nativeCoin(chain)
+                        asset.value.contains("/erc20:") -> catalog.tokenCoin(chain, asset.value.substringAfter("/erc20:"))
+                        else -> null
+                    }
+                if (coin != null) {
+                    assetLinks.link(asset, coin)
+                    count++
+                }
+            }
+        }
+        return count
     }
 
     /** Match the current activity's raw source IDs; manual records have no inferred network. */
@@ -1266,7 +1766,7 @@ class PortfolioApplication(
         registry: SourceRegistry,
         options: SourceRefreshOptions = SourceRefreshOptions(),
     ): List<SourceRefreshOutcome> {
-        val missing = trackedNetworks().filter { registry.forNetwork(it) == null }
+        val missing = trackedNetworks().filter { registry.forNetwork(it) == null && it !in options.withoutConsent }
         return registry.connectors.map { it.refresh(this, options) } +
             missing.map { SourceRefreshOutcome("none", emptyList(), listOf("No connector is available for ${it.value}.")) }
     }
@@ -1323,6 +1823,424 @@ class PortfolioApplication(
         db.transaction { activitiesToSave.filter { activities.currentById(it.id) != it }.forEach(activities::saveInTransaction) }
         invalidate()
         return jobs.map { orchestrator.status(it)?.state ?: JobState.FAILED }
+    }
+
+    /** Payments, transactions and token listings recovered beyond Alchemy's lists; see [io.polion.core.evm.EvmConnector]. */
+    fun evmRecovered(): io.polion.core.evm.EvmRecoveredRepository = evmRecovered
+
+    /** The application clock, for connectors that time their own lookups. */
+    fun clockMillis(): Long = now()
+
+    /** The optional 1inch API key that recovers contract payments Alchemy does not list; a device setting, not part of backups. */
+    fun oneInchApiKey(): String? = marketFeeds.deviceSetting("oneinch_api_key")
+
+    fun setOneInchApiKey(key: String?) {
+        val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{16,200}"))) { "That does not look like a 1inch API key" }
+        marketFeeds.putDeviceSetting("oneinch_api_key", trimmed)
+    }
+
+    /** The Alchemy API key for EVM history; a device setting, not part of backups. */
+    fun alchemyApiKey(): String? = marketFeeds.deviceSetting("alchemy_api_key")
+
+    fun setAlchemyApiKey(key: String?) {
+        val trimmed = key?.trim()?.takeIf { it.isNotEmpty() }
+        require(trimmed == null || trimmed.matches(Regex("[A-Za-z0-9_-]{16,100}"))) { "That does not look like an Alchemy API key" }
+        marketFeeds.putDeviceSetting("alchemy_api_key", trimmed)
+    }
+
+    /** EVM chains whose history Alchemy serves, named from CoinGecko's catalog when it is cached. */
+    fun evmChainChoices(): List<io.polion.core.market.EvmPlatform> {
+        val catalog = marketFeeds.catalog()?.second
+        return io.polion.core.evm.Alchemy.NETWORKS
+            .map { network ->
+                catalog?.platform(network.chainId) ?: io.polion.core.market
+                    .EvmPlatform(network.slug, network.chainId, network.name, null)
+            }.sortedBy { it.name.lowercase() }
+    }
+
+    /** EVM addresses are sent to Alchemy only after this consent. */
+    fun evmConsent(): Boolean = setting("evm_consent") == "true"
+
+    fun setEvmConsent(accepted: Boolean) = putSetting("evm_consent", accepted.toString())
+
+    /** Enabled EVM address targets with their accounts. */
+    fun evmTargets(): List<Pair<AccountId, String>> =
+        ownership
+            .load()
+            .targets
+            .filter { it.enabled && it.identity.networkId == io.polion.core.evm.EVM_FAMILY && it.identity.kind == "address" }
+            .map { it.accountId to it.identity.canonicalKey }
+
+    fun evmChainStates(address: String? = null): List<io.polion.core.evm.EvmChainState> = evmChains.states(address)
+
+    fun addEvmChains(
+        address: String,
+        chains: Collection<Long>,
+    ) = evmChains.addChains(
+        io.polion.core.evm
+            .evmAddress(address),
+        chains,
+    )
+
+    /** Whether [address] should be checked for chains it has started to use: never checked yet, or not for a week. */
+    fun evmDiscoveryDue(address: String): Boolean =
+        setting("evm_discovered:$address")?.toLongOrNull()?.let { now() - it >= 7 * 86_400_000L } ?: true
+
+    fun recordEvmDiscovery(address: String) = putSetting("evm_discovered:$address", now().toString())
+
+    fun recordEvmCoverage(
+        address: String,
+        chainId: Long,
+        coverage: String?,
+    ) = evmChains.recordCoverage(address, chainId, coverage)
+
+    fun recordEvmChainError(
+        address: String,
+        chainId: Long,
+        message: String,
+    ) = evmChains.recordError(address, chainId, message)
+
+    /**
+     * Applies the complete history of [address] on one chain in one transaction: registers the assets it uses (native
+     * coins named from CoinGecko's catalog), records each transaction group as a raw provider record, saves changed
+     * activities, and supersedes activities the provider no longer reports (for example after a reorganisation).
+     */
+    fun applyEvmChainHistory(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        groups: List<io.polion.core.evm.EvmTransactionGroup>,
+        head: String,
+        withdrawals: List<io.polion.core.evm.EvmWithdrawal> = emptyList(),
+    ): Int {
+        require(evmConsent()) { "EVM consent required" }
+        require(evmTargets().any { it.first == account && it.second == address }) { "Unknown EVM address" }
+        val retrieved = now()
+        val catalog = marketFeeds.catalog()?.second
+        var saved = 0
+        db.transaction {
+            val known = market.assetIds().toSet()
+            groups.flatMap(io.polion.core.evm.EvmDecoder::assets).distinctBy { it.definition.id }.forEach { info ->
+                if (info.definition.id !in known) {
+                    val metadata =
+                        if (info.definition.identity.kind == io.polion.core.market.AssetKind.NATIVE) {
+                            catalog?.nativeLabel(chainId)?.let { (symbol, name) -> info.metadata.copy(symbol = symbol, name = name) }
+                                ?: info.metadata.copy(symbol = "COIN", name = "Native coin (chain $chainId)")
+                        } else {
+                            info.metadata
+                        }
+                    market.registerAssetInTransaction(info.definition, metadata)
+                }
+            }
+            val ids = mutableSetOf<ActivityId>()
+            groups.forEach { group ->
+                val payload = group.canonical()
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            "eip155:$chainId:${group.hash}",
+                            "eip155:$chainId",
+                            group.hash,
+                            "eip155:$chainId",
+                            "alchemy",
+                            Instant.fromEpochMilliseconds(retrieved).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val activity =
+                    io.polion.core.evm.EvmDecoder
+                        .decode(group, address, account, source) ?: return@forEach
+                ids += activity.id
+                if (activities.currentById(activity.id) != activity) {
+                    activities.saveInTransaction(activity)
+                    saved++
+                }
+            }
+            withdrawals.forEach { withdrawal ->
+                val payload =
+                    "evm-1|$chainId|withdrawal|${withdrawal.index}|${withdrawal.blockNumber}|${withdrawal.receiver}|${withdrawal.amount}"
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            "eip155:$chainId:withdrawal-${withdrawal.index}",
+                            "eip155:$chainId",
+                            "withdrawal-${withdrawal.index}",
+                            "eip155:$chainId",
+                            "alchemy",
+                            Instant.fromEpochMilliseconds(retrieved).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val activity =
+                    io.polion.core.evm.EvmDecoder
+                        .decodeWithdrawal(chainId, withdrawal, address, account, source) ?: return@forEach
+                ids += activity.id
+                if (activities.currentById(activity.id) != activity) {
+                    activities.saveInTransaction(activity)
+                    saved++
+                }
+            }
+            val prefix = "eip155:$chainId:"
+            activities
+                .current()
+                .filter { it.id.value.startsWith(prefix) && it.id.value.endsWith(":$address") && it.id !in ids }
+                .filter {
+                    it.status == io.polion.core.ledger.ActivityStatus.CONFIRMED ||
+                        it.status == io.polion.core.ledger.ActivityStatus.PENDING
+                }.forEach { activities.saveInTransaction(it.copy(status = io.polion.core.ledger.ActivityStatus.SUPERSEDED)) }
+            evmChains.recordSuccess(address, chainId, head, retrieved)
+        }
+        invalidate()
+        linkEvmAssets()
+        return saved
+    }
+
+    /** Whether [account] holds a rebasing token on [chainId], so its balance is read even when no transfer is new. */
+    fun holdsRebasing(
+        account: AccountId,
+        chainId: Long,
+    ): Boolean {
+        heldAssets()
+        return holdings
+            .current(BalanceCoverage.UNKNOWN, now())
+            .quantities
+            .any { (key, units) ->
+                key.account == account &&
+                    key.asset in EvmAssets.REBASING &&
+                    EvmAssets.chainOf(key.asset) == chainId &&
+                    units.sign != 0
+            }
+    }
+
+    /**
+     * Brings rebasing tokens ([EvmAssets.REBASING]) on one chain to the provider's balance, which changes without
+     * transfers. Each difference is one activity at the time of the check: a reward when a yield token grows, otherwise
+     * an adjustment. Only tokens the provider lists are compared. Returns the number of activities recorded.
+     */
+    fun reconcileRebasingBalances(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        tokens: List<io.polion.core.evm.EvmTokenBalance>,
+    ): Int {
+        require(evmConsent()) { "EVM consent required" }
+        heldAssets()
+        val ledger =
+            holdings
+                .current(BalanceCoverage.UNKNOWN, now())
+                .quantities
+                .filterKeys { it.account == account }
+                .mapKeys { it.key.asset }
+        val provider =
+            tokens
+                .filter { it.standard == EvmTokenStandard.ERC20 }
+                .associate { EvmAssets.token(chainId, it.contract) to it.value }
+        val at = now()
+        var saved = 0
+        db.transaction {
+            EvmAssets.REBASING.filterKeys { EvmAssets.chainOf(it) == chainId && it in provider }.forEach { (asset, yields) ->
+                val difference = provider.getValue(asset) - (ledger[asset] ?: io.polion.core.model.ExactInteger.ZERO)
+                if (difference.sign == 0) return@forEach
+                val contract = asset.value.substringAfter("/erc20:")
+                val id = "evm-rebase:$chainId:$contract:$address:$at"
+                val payload = "evm-rebase-1|$chainId|$contract|$address|$at|$difference"
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            id,
+                            "eip155:$chainId",
+                            "rebase-$contract-$at",
+                            "eip155:$chainId",
+                            "alchemy",
+                            Instant.fromEpochMilliseconds(at).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val reward = yields && difference.sign > 0
+                activities.saveInTransaction(
+                    Activity(
+                        ActivityId(id),
+                        at,
+                        "evm-rebase:$chainId:${at.toString().padStart(20, '0')}:$contract",
+                        if (reward) ActivityKind.REWARD else ActivityKind.OTHER,
+                        ActivityStatus.CONFIRMED,
+                        listOf(
+                            io.polion.core.ledger.Movement(
+                                io.polion.core.model
+                                    .EventId("$id:balance"),
+                                account,
+                                io.polion.core.model
+                                    .AtomicAmount(asset, difference),
+                                if (reward) io.polion.core.ledger.MovementRole.REWARD else io.polion.core.ledger.MovementRole.TRANSFER,
+                            ),
+                        ),
+                        setOf(source),
+                        io.polion.core.evm.EvmDecoder.VERSION,
+                    ),
+                )
+                saved++
+            }
+        }
+        if (saved > 0) invalidate()
+        return saved
+    }
+
+    /**
+     * Brings the native coin on one chain to the provider's [balance] when the transfer list misses movements: payments
+     * made by contracts on chains where none are listed, fees of unlisted transactions, or staking withdrawals. The
+     * adjustments are derived again on every call and replace the previous ones:
+     * - wherever the running balance would fall below zero, the missing amount is an inflow 1 ms before that activity,
+     *   the latest moment it can have arrived;
+     * - the remaining difference follows 1 ms after the chain's last activity.
+     * Returns the number of adjustments.
+     */
+    fun reconcileNativeBalance(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        balance: io.polion.core.model.ExactInteger,
+    ): Int {
+        require(evmConsent()) { "EVM consent required" }
+        val native = EvmAssets.native(chainId)
+        val prefix = "evm-adjust:$chainId:$address:"
+        val zero = io.polion.core.model.ExactInteger.ZERO
+        val history =
+            ledger()
+                .activities
+                .map { it.activity }
+                .filter { it.status == ActivityStatus.CONFIRMED && !it.id.value.startsWith(prefix) }
+                .mapNotNull { activity ->
+                    activity.movements
+                        .filter { it.accountId == account && it.amount.assetId == native }
+                        .takeIf { it.isNotEmpty() }
+                        ?.fold(zero) { sum, movement -> sum + movement.amount.atomicUnits }
+                        ?.let { activity.occurredAtEpochMillis to it }
+                }.sortedBy { it.first }
+        val adjustments = mutableListOf<Pair<Long, io.polion.core.model.ExactInteger>>()
+        var running = zero
+        history.forEach { (at, change) ->
+            running += change
+            if (running.sign < 0) {
+                adjustments += (at - 1) to -running
+                running = zero
+            }
+        }
+        val rest = balance - running
+        if (rest.sign != 0) adjustments += ((history.lastOrNull()?.first ?: now()) + 1) to rest
+        val wanted =
+            adjustments.mapIndexed { index, (at, amount) ->
+                val id = "$prefix$at:$index"
+                Activity(
+                    ActivityId(id),
+                    at,
+                    "evm-adjust:$chainId:${at.toString().padStart(20, '0')}:$index",
+                    ActivityKind.OTHER,
+                    ActivityStatus.CONFIRMED,
+                    listOf(
+                        io.polion.core.ledger.Movement(
+                            io.polion.core.model
+                                .EventId("$id:native"),
+                            account,
+                            io.polion.core.model
+                                .AtomicAmount(native, amount),
+                            io.polion.core.ledger.MovementRole.TRANSFER,
+                        ),
+                    ),
+                    emptySet(),
+                    null,
+                    manual = true,
+                ) to "evm-adjust-1|$chainId|$address|$at|$amount"
+            }
+        var changed = 0
+        db.transaction {
+            val wantedIds = wanted.map { it.first.id }.toSet()
+            activities
+                .current()
+                .filter { it.id.value.startsWith(prefix) && it.id !in wantedIds && it.status == ActivityStatus.CONFIRMED }
+                .forEach {
+                    activities.saveInTransaction(it.copy(status = ActivityStatus.SUPERSEDED))
+                    changed++
+                }
+            wanted.forEach { (activity, payload) ->
+                val source =
+                    store.ingestInTransaction(
+                        io.polion.core.storage.RawObservation(
+                            activity.id.value,
+                            "eip155:$chainId",
+                            activity.id.value.removePrefix("evm-adjust:"),
+                            "eip155:$chainId",
+                            "alchemy",
+                            Instant.fromEpochMilliseconds(now()).toString(),
+                            payload,
+                            io.polion.core.evm.EvmDecoder.VERSION,
+                            sha256(payload),
+                            "address=$address",
+                        ),
+                    )
+                val sourced = activity.copy(sources = setOf(source), decoderVersion = io.polion.core.evm.EvmDecoder.VERSION, manual = false)
+                if (activities.currentById(sourced.id) != sourced) {
+                    activities.saveInTransaction(sourced)
+                    changed++
+                }
+            }
+        }
+        if (changed > 0) invalidate()
+        return wanted.size
+    }
+
+    /**
+     * Compares this address's ledger balances on one chain with the provider's: the native balance and every token
+     * balance it lists. Returns and records the differences, or null when everything matches.
+     */
+    fun checkEvmBalances(
+        account: AccountId,
+        address: String,
+        chainId: Long,
+        native: io.polion.core.model.ExactInteger,
+        tokens: List<io.polion.core.evm.EvmTokenBalance>,
+    ): String? {
+        val hidden = hiddenAmong(heldAssets())
+        val ledger =
+            holdings
+                .current(BalanceCoverage.UNKNOWN, now())
+                .quantities
+                .filterKeys { it.account == account && EvmAssets.chainOf(it.asset) == chainId }
+                .mapKeys { it.key.asset }
+        val provider =
+            mapOf(EvmAssets.native(chainId) to native) +
+                tokens.filter { it.standard != EvmTokenStandard.NATIVE }.associate { token ->
+                    val asset =
+                        if (token.standard == EvmTokenStandard.ERC20) {
+                            EvmAssets.token(chainId, token.contract)
+                        } else {
+                            EvmAssets.nft(chainId, token.contract, token.tokenId ?: io.polion.core.model.ExactInteger.ZERO)
+                        }
+                    asset to token.value
+                }
+        val differences =
+            (ledger.keys + provider.keys)
+                .sortedBy { it.value }
+                .mapNotNull { asset ->
+                    val mine = ledger[asset] ?: io.polion.core.model.ExactInteger.ZERO
+                    val theirs = provider[asset] ?: io.polion.core.model.ExactInteger.ZERO
+                    // Only the native coin and listed tokens count; hidden assets (mostly spam, whose events need not add up)
+                    // are not compared.
+                    val compared = asset !in hidden && (asset in provider || asset.value.endsWith("/native"))
+                    if (mine == theirs || !compared) null else "${asset.value}: ledger $mine, provider $theirs"
+                }.joinToString("; ")
+                .ifEmpty { null }
+        evmChains.recordBalanceDifference(address, chainId, differences)
+        return differences
     }
 
     /**
@@ -2151,7 +3069,11 @@ class PortfolioApplication(
     /** Saved provider quotes remain selectable offline, independently of permission for new requests. */
     private fun pricePolicy(current: Boolean = false) =
         PricePolicy(
-            listOf(ProviderId(KrakenPrices.PROVIDER_ID), ProviderId(CoingeckoPrices.PROVIDER_ID)),
+            listOf(
+                ProviderId(KrakenPrices.PROVIDER_ID),
+                ProviderId(DefiLlamaPrices.PROVIDER_ID),
+                ProviderId(CoingeckoPrices.PROVIDER_ID),
+            ),
             if (current) 7_200_000L else 86_400_000L,
             preferLatest = true,
         )
@@ -2276,6 +3198,12 @@ class PortfolioApplication(
             market.providerMappings(ProviderId(CoingeckoPrices.PROVIDER_ID)).let { mapped ->
                 ids.associateWith { id -> if (id == "bitcoin") BITCOIN_ASSET else mapped[id] ?: AssetId("coingecko:$id") }
             },
+            linkedAssetLogos(
+                (
+                    markets?.items.orEmpty().mapNotNull { coin -> coin.image?.let { coin.coinId to it } } +
+                        trending?.items.orEmpty().mapNotNull { coin -> coin.image?.let { coin.coinId to it } }
+                ).toMap(),
+            ),
         )
     }
 
@@ -2385,7 +3313,7 @@ class PortfolioApplication(
 
     /** The CoinGecko coin ID for a portfolio or market asset, or null when it has none. */
     fun marketCoinId(asset: AssetId): String? =
-        when {
+        assetLinks.coinOf(asset) ?: when {
             asset == BITCOIN_ASSET -> "bitcoin"
             asset.value.startsWith("coingecko:") -> asset.value.removePrefix("coingecko:")
             else ->
@@ -2755,8 +3683,17 @@ class PortfolioApplication(
         // Series callers pass prices and metadata resolved in bulk; the results are the same as the per-asset queries.
         priceAt: ((AssetId) -> PriceResult?)? = null,
         metadataAt: ((AssetId) -> AssetMetadata?)? = null,
-    ): List<AssetValuation> =
-        balance.quantities.entries
+        // Hidden assets (unknown tokens, NFTs) stay in the ledger but out of values and totals unless asked for.
+        hidden: Boolean = false,
+    ): List<AssetValuation> {
+        val hiddenSet =
+            hiddenAmong(
+                balance.quantities.keys
+                    .map { it.asset }
+                    .toSet(),
+            )
+        return balance.quantities.entries
+            .filter { (it.key.asset in hiddenSet) == hidden }
             .groupBy { it.key.asset }
             .map { (asset, rows) ->
                 val units = rows.fold(io.polion.core.model.ExactInteger.ZERO) { sum, row -> sum + row.value }
@@ -2793,6 +3730,7 @@ class PortfolioApplication(
                     result?.observation,
                 )
             }.sortedBy { it.asset.value }
+    }
 
     fun accountOverview(portfolio: PortfolioId? = null): List<AccountOverview> {
         ensureDefaultAssets()
@@ -2922,6 +3860,16 @@ class PortfolioApplication(
     private fun normalizeTarget(value: TrackingTarget): TrackingTarget =
         if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "address") {
             value.copy(identity = value.identity.copy(canonicalKey = bitcoinMainnetAddress(value.identity.canonicalKey)))
+        } else if (value.identity.networkId == io.polion.core.evm.EVM_FAMILY) {
+            require(value.identity.kind == "address" && value.role == TargetRole.LEAF) { "Track an EVM address as one address" }
+            value.copy(
+                identity =
+                    value.identity.copy(
+                        canonicalKey =
+                            io.polion.core.evm
+                                .evmAddress(value.identity.canonicalKey),
+                    ),
+            )
         } else if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "wallet") {
             require(value.role == TargetRole.WALLET && value.walletId == null) { "Invalid wallet target" }
             value.copy(identity = value.identity.copy(canonicalKey = bitcoinWallet(value.identity.canonicalKey).canonical))

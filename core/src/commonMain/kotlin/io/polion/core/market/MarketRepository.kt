@@ -68,7 +68,13 @@ class MarketRepository(
     fun registerAsset(
         definition: AssetDefinition,
         metadata: AssetMetadata,
-    ) = db.transaction {
+    ) = db.transaction { registerAssetInTransaction(definition, metadata) }
+
+    /** [registerAsset] for callers that already hold the database transaction. */
+    fun registerAssetInTransaction(
+        definition: AssetDefinition,
+        metadata: AssetMetadata,
+    ) {
         val identity = definition.identity
         val values =
             listOf(

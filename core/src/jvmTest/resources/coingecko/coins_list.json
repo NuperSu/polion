@@ -1,0 +1,104 @@
+[
+{
+"id": "binancecoin",
+"symbol": "bnb",
+"name": "BNB",
+"platforms": {
+"ethereum": "0xb8c77482e45f1f44de1745f52c74426c631bdd52"
+}
+},
+{
+"id": "dai",
+"symbol": "dai",
+"name": "Dai",
+"platforms": {
+"ethereum": "0x6b175474e89094c44da98b954eedeac495271d0f"
+}
+},
+{
+"id": "ethereum",
+"symbol": "eth",
+"name": "Ethereum",
+"platforms": {}
+},
+{
+"id": "polygon-ecosystem-token",
+"symbol": "pol",
+"name": "POL (ex-MATIC)",
+"platforms": {
+"ethereum": "0x455e53cbb86018ac2b8092fdcd39d8444affc3f6",
+"polygon-pos": "0x0000000000000000000000000000000000001010"
+}
+},
+{
+"id": "tether",
+"symbol": "usdt",
+"name": "Tether",
+"platforms": {
+"ethereum": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+"celo": "0x48065fbbe25f71c9282ddf5e1cd6d6a887483d5e",
+"klay-token": "0xd077a400968890eacc75cdc901f0356c943e4fdb",
+"solana": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+"the-open-network": "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+"tron": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+"avalanche": "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7",
+"aptos": "0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b",
+"kava": "0x919c1c267bc06a7039e03fcc2ef738525769109c",
+"tezos": "KT1XnTn74bUtxHfDtBmm2bGZAQfhPbvKWR8o",
+"near-protocol": "usdt.tether-token.near"
+}
+},
+{
+"id": "usd-coin",
+"symbol": "usdc",
+"name": "USDC",
+"platforms": {
+"ethereum": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+"starknet": "0x033068f6539f8e6e6b131e6b2b814e6c34a5224bc66947c47dab9dfee93b35fb",
+"plasma": "0x2d661c89d812261039af9764eceaaee884f5f67f",
+"xrp": "5553444300000000000000000000000000000000.rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE",
+"arc": "0x3600000000000000000000000000000000000000",
+"sonic": "0x29219dd400f2bf60e5a23d13be72b486d4038894",
+"algorand": "31566704",
+"hedera-hashgraph": "0.0.456858",
+"pharos": "0xc879c018db60520f4355c26ed1a6d572cdac1815",
+"avalanche": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+"hyperliquid": "0x6d1e7cde53ba9467b783cb7c530ce054",
+"injective": "0xa00c59ff5a080d2b954d0c75e46e22a0c371235a",
+"xdc-network": "0xfa2958cb79b0491cc627c1557f441ef849ca8eb1",
+"sei-v2": "0xe15fc38f6d8c56af07bbcbe3baf5708a2bf42392",
+"optimistic-ethereum": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+"arbitrum-one": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+"monad": "0x754704bc059f8c67012fed69bc8a327a5aafb603",
+"zksync": "0x1d17cbcf0d6d143135ae902365d2e5e2a16538d4",
+"cronos": "0x3d7f2c478aafdb65542bcb44bceec05849999d2d",
+"x-layer": "0xb6ceceab302e2e4948951ee7843fc24e92933061",
+"morph-l2": "0xcfb1186f4e93d60e60a8bdd997427d1f33bc372b",
+"polkadot": "1337",
+"polygon-pos": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
+"base": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+"aptos": "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b",
+"plume-network": "0x222365ef19f7947e5484218551b56bb3965aa7af",
+"stellar": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+"sui": "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+"solana": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+"ink": "0x2d270e6886d130d724215a266106e6832161eaed",
+"unichain": "0x078d782b760474a361dda0af3839290b0ef57ad6",
+"hyperevm": "0xb88339cb7199b77e23db6e890353e22632ba630f",
+"world-chain": "0x79a02482a880bce3f13e09da970dc34db4cd24d1",
+"near-protocol": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+"celo": "0xceba9300f2b948710d2653dd7b07f33a8b32118c"
+}
+},
+{
+"id": "weth",
+"symbol": "weth",
+"name": "WETH",
+"platforms": {
+"ethereum": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+"tron": "THb4CqiFdwNHsWsQCs4JhzwjMWys4aqCbF",
+"terra-2": "ibc/BC8A77AFBD872FDC32A348D3FB10CC09277C266CFE52081DE341C7EC6752E674",
+"stable": "0x783129e4d7ba0af0c896c239e57c06df379aae8c"
+}
+}
+]

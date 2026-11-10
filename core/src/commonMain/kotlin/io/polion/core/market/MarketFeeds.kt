@@ -350,6 +350,28 @@ class MarketFeedRepository(
             )
         }
 
+    /** The CoinGecko chain and contract catalog cached on this device, with when it was fetched. */
+    fun catalog(): Pair<Long, CoingeckoCatalog>? {
+        val row =
+            db.query("SELECT observed_at, payload FROM $FEED_TABLE WHERE feed='evm-catalog' AND currency='-'").singleOrNull() ?: return null
+        val observed = row[0]!!.toLong()
+        cachedCatalog?.takeIf { it.first == observed }?.let { return it }
+        return (observed to CoingeckoCatalog.decode(row[1]!!)).also { cachedCatalog = it }
+    }
+
+    fun saveCatalog(
+        catalog: CoingeckoCatalog,
+        observedAtMillis: Long,
+    ) {
+        db.execute(
+            "INSERT OR REPLACE INTO $FEED_TABLE VALUES ('evm-catalog', '-', ?, ?)",
+            listOf(observedAtMillis.toString(), catalog.encode()),
+        )
+        cachedCatalog = observedAtMillis to catalog
+    }
+
+    private var cachedCatalog: Pair<Long, CoingeckoCatalog>? = null
+
     private fun save(
         feed: String,
         value: MarketFeed<*>,

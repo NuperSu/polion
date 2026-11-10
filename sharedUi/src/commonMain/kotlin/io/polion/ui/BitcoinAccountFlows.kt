@@ -11,11 +11,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -31,7 +29,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -100,7 +97,8 @@ internal fun BitcoinConnectDialog(
     var label by rememberSaveable { mutableStateOf("") }
     var expression by rememberSaveable { mutableStateOf("") }
     var endpoint by rememberSaveable { mutableStateOf(data.sourceEndpoint) }
-    var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
+    // Connecting is consent: the dialog states what the provider receives.
+    val consent = true
     var portfolio by rememberSaveable { mutableStateOf(initialPortfolio?.value.orEmpty()) }
     var account by rememberSaveable { mutableStateOf("") }
     var owner by rememberSaveable { mutableStateOf("") }
@@ -147,7 +145,6 @@ internal fun BitcoinConnectDialog(
             account.isEmpty() && data.ownership.owners.isNotEmpty() && ownerChoice == null ->
                 "No owner in this portfolio can hold the wallet. Choose another portfolio."
             endpoint.isBlank() -> "Enter the HTTPS provider endpoint."
-            !consent -> "Tick the consent box to allow queries to this provider."
             else -> null
         }
 
@@ -286,14 +283,14 @@ internal fun BitcoinConnectDialog(
         }
         OutlinedTextField(endpoint, {
             endpoint = it
-            consent = false
         }, enabled = editable, label = {
             Text("Bitcoin provider (HTTPS Esplora endpoint)")
         }, modifier = Modifier.fillMaxWidth().testTag("connect-endpoint"))
-        Row(Modifier.toggleable(value = consent, enabled = editable, role = Role.Checkbox) { consent = it }.testTag("connect-consent")) {
-            Checkbox(checked = consent, onCheckedChange = null, enabled = editable)
-            Text("Allow public address and transaction queries to this provider.", Modifier.weight(1f))
-        }
+        Text(
+            "The provider receives these addresses and your IP address to read their history.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (wallet == null) {
             blocker?.let { Text(it, modifier = Modifier.testTag("connect-blocker")) }
         } else {
@@ -336,7 +333,8 @@ internal fun BitcoinHistoryDialog(
 ) {
     val scope = rememberCoroutineScope()
     var endpoint by rememberSaveable { mutableStateOf(data.sourceEndpoint) }
-    var consent by rememberSaveable { mutableStateOf(data.sourceConsent) }
+    // Connecting is consent: the dialog states what the provider receives.
+    val consent = true
     var recovery by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -385,14 +383,14 @@ internal fun BitcoinHistoryDialog(
     AccountFlowDialog("Wallet history", busy, close) {
         OutlinedTextField(endpoint, {
             endpoint = it
-            consent = false
         }, enabled = !busy && !running, label = {
             Text("Bitcoin provider (HTTPS Esplora endpoint)")
         }, modifier = Modifier.fillMaxWidth().testTag("history-endpoint"))
-        Row(Modifier.toggleable(value = consent, enabled = !busy, role = Role.Checkbox) { consent = it }.testTag("history-consent")) {
-            Checkbox(checked = consent, onCheckedChange = null, enabled = !busy)
-            Text("Allow public address and transaction queries to this provider.", Modifier.weight(1f))
-        }
+        Text(
+            "The provider receives these addresses and your IP address to read their history.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text(
             "Refresh scans active watched addresses and may fetch saved history again. Saved holdings stay visible while work runs. Pull-to-refresh updates prices only.",
         )

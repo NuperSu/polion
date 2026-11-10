@@ -233,7 +233,10 @@ private fun Product(
     val presenter = rememberProductPresenter(app, host)
     var manualAsset by remember { mutableStateOf<AssetId?>(null) }
     var advancedMode by rememberSaveable { mutableStateOf(false) }
+    // Connect Wallet asks which kind of source to track, then opens the Bitcoin or the EVM flow.
+    var connectChooser by rememberSaveable { mutableStateOf(false) }
     var modelConnect by rememberSaveable { mutableStateOf(false) }
+    var modelEvmConnect by rememberSaveable { mutableStateOf(false) }
     var modelHistory by rememberSaveable { mutableStateOf(false) }
     val sourceFlowState = rememberSaveableStateHolder()
     var modelAdd by rememberSaveable { mutableStateOf(false) }
@@ -278,12 +281,16 @@ private fun Product(
     var generalPreferences by remember(app) { mutableStateOf(GeneralPreferences()) }
     var biometric by remember(host) { mutableStateOf(host.biometricUnlock()) }
     var hasCoingeckoKey by remember(app) { mutableStateOf(false) }
+    var hasAlchemyKey by remember(app) { mutableStateOf(false) }
+    var hasOneInchKey by remember(app) { mutableStateOf(false) }
     var lockDelay by remember(host) { mutableStateOf(host.lockDelayMillis) }
     LaunchedEffect(app, dashboardRevision, revision) {
         assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
         marketFavorites = withContext(host.dispatcher) { app.marketFavorites() }
         generalPreferences = withContext(host.dispatcher) { app.generalPreferences() }
         hasCoingeckoKey = withContext(host.dispatcher) { app.coingeckoApiKey() != null }
+        hasAlchemyKey = withContext(host.dispatcher) { app.alchemyApiKey() != null }
+        hasOneInchKey = withContext(host.dispatcher) { app.oneInchApiKey() != null }
         biometric = host.biometricUnlock()
     }
     // The saved landing page applies once per launch, and only if nothing has navigated away from Main yet.
@@ -531,6 +538,8 @@ private fun Product(
                 Text(
                     "Main shows the top 250 coins by market cap, trending coins and daily movers from CoinGecko, with their " +
                         "logos. CoinGecko receives your display currency and IP address; no wallet data is sent. " +
+                        "US dollar prices of coins on EVM chains come from DefiLlama, which receives those coins and " +
+                        "your IP address. " +
                         "Without an API key, CoinGecko allows a few requests per minute; you can add a free key in " +
                         "Settings › API Keys.",
                 )
@@ -585,6 +594,10 @@ private fun Product(
                 dialog = null
                 csvImport = true
             },
+            onEvm = {
+                dialog = null
+                modelEvmConnect = true
+            },
             onDismiss = { dialog = null },
         )
     }
@@ -632,7 +645,9 @@ private fun Product(
     val modalOpen =
         dialog != null ||
             modelAdd ||
+            connectChooser ||
             modelConnect ||
+            modelEvmConnect ||
             modelHistory ||
             selectedActivity != null ||
             addressWallet != null ||
@@ -775,8 +790,9 @@ private fun Product(
                         },
                         onRefreshDetails = { showPriceRefreshDetails("Price refresh has not run.") },
                         onSyncDetails = { modelHistory = true },
-                        onConnectBitcoin = { modelConnect = true },
+                        onConnectBitcoin = { connectChooser = true },
                         onAccountChanged = { execute("Account updated; saved history retained") {} },
+                        onAssetChanged = { message -> execute(message) {} },
                         onAccountTool = { tool ->
                             dialog =
                                 when (tool) {
@@ -823,7 +839,7 @@ private fun Product(
                                             host.saveFile("polion-activities.csv", app.exportCsv().encodeToByteArray()) { message = it }
                                         }
                                     },
-                                    onConnect = { modelConnect = true },
+                                    onConnect = { connectChooser = true },
                                     onLockNow = host::lock,
                                     onRemoveLock = {
                                         host.removeLockPassword {
@@ -850,6 +866,22 @@ private fun Product(
                                             },
                                         ) { app.setCoingeckoApiKey(key) }
                                     },
+                                    onAlchemyKey = { key ->
+                                        val problem = withContext(host.dispatcher) { saveAlchemyKey(app, key) }
+                                        if (problem == null) {
+                                            hasAlchemyKey = key != null
+                                            presenter.notify(if (key == null) "Alchemy key removed" else "Alchemy key saved")
+                                        }
+                                        problem
+                                    },
+                                    onOneInchKey = { key ->
+                                        val problem = withContext(host.dispatcher) { saveOneInchKey(app, key) }
+                                        if (problem == null) {
+                                            hasOneInchKey = key != null
+                                            presenter.notify(if (key == null) "1inch key removed" else "1inch key saved")
+                                        }
+                                        problem
+                                    },
                                     onBiometric = { enabled ->
                                         host.setBiometricUnlock(enabled) { result ->
                                             biometric = host.biometricUnlock()
@@ -858,7 +890,15 @@ private fun Product(
                                     },
                                 ),
                                 general = generalPreferences,
-                                device = SettingsDevice(host.defaultDeviceName, biometric, hasCoingeckoKey, lockDelay),
+                                device =
+                                    SettingsDevice(
+                                        host.defaultDeviceName,
+                                        biometric,
+                                        hasCoingeckoKey,
+                                        lockDelay,
+                                        hasAlchemyKey = hasAlchemyKey,
+                                        hasOneInchKey = hasOneInchKey,
+                                    ),
                                 notifications = { NotificationSettingsSection(app, host) },
                                 csvImports = { CsvImportHistorySection(app, host, onChanged = { revision++ }) },
                             ) {
@@ -870,7 +910,7 @@ private fun Product(
                                         selectedPortfolio,
                                         dashboardRevision + revision,
                                         syncStatus,
-                                        onConnect = { modelConnect = true },
+                                        onConnect = { connectChooser = true },
                                         onHistory = { modelHistory = true },
                                         onAdvanced = openAdvanced,
                                         onChanged = { execute("Account updated; saved history retained") {} },
@@ -1635,6 +1675,36 @@ private fun Product(
                     }
                 }
             }
+            if (connectChooser && snapshot != null) {
+                WalletKindDialog(
+                    onBitcoin = {
+                        connectChooser = false
+                        modelConnect = true
+                    },
+                    onEvm = {
+                        connectChooser = false
+                        modelEvmConnect = true
+                    },
+                    onDismiss = { connectChooser = false },
+                )
+            }
+            if (modelEvmConnect && snapshot != null) {
+                sourceFlowState.SaveableStateProvider("evm-connect") {
+                    EvmConnectDialog(
+                        app,
+                        host,
+                        snapshot!!,
+                        selectedPortfolio,
+                        close = { modelEvmConnect = false },
+                        onSaved = {
+                            sourceFlowState.removeState("evm-connect")
+                            execute("EVM address saved") {}
+                        },
+                        notify = { presenter.notify(it) },
+                        syncStatus = syncStatus,
+                    )
+                }
+            }
             if (modelConnect && snapshot != null) {
                 sourceFlowState.SaveableStateProvider("bitcoin-connect") {
                     BitcoinConnectDialog(
@@ -1681,7 +1751,7 @@ private fun Product(
                         onClose = { modelAdd = false },
                         onWallet = {
                             modelAdd = false
-                            modelConnect = true
+                            connectChooser = true
                         },
                         onImport = {
                             modelAdd = false

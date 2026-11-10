@@ -37,7 +37,7 @@ class PacedEsploraTransportTest {
         repeat(2) { assertEquals("ok", paced.get("/blocks/tip/hash")) }
         clock.now += 3_000
         paced.get("/blocks/tip/hash")
-        assertEquals(listOf(0L, 1_000L, 4_000L), attempts)
+        assertEquals(listOf(0L, 250L, 3_250L), attempts)
         assertTrue(clock.sleeps.all { it in 1..100 })
     }
 

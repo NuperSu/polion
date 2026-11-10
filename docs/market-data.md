@@ -14,7 +14,7 @@ Code: `core/…/market/MarketFeeds.kt` (parsing and cache), `PortfolioApplicatio
   - Trending is refetched at most every 10 minutes.
   - An HTTP 429 pauses every feed request for one minute, and the saved lists stay on screen.
 - **API key.** An optional CoinGecko Demo key (Settings › API Keys › External services) is sent as `x-cg-demo-api-key` for feeds and price history. It is kept in `device_settings`, which is not part of backups.
-- **Consent.** CoinGecko receives the display currency and the device's IP address, and no wallet data. Market requests need market-data consent: the "Load market data" prompt on Main, or turning on Auto-sync. Consent is stored in `application_settings` and therefore backed up.
+- **Consent.** CoinGecko receives the display currency and the device's IP address, and no wallet data. DefiLlama, which prices coins on EVM chains in USD, receives those coin IDs and the IP address. Market requests need market-data consent: the "Load market data" prompt on Main, or turning on Auto-sync. Consent is stored in `application_settings` and therefore backed up.
 - **Attribution.** "Data by CoinGecko" appears under the Main sections.
 
 ## Identity and caching

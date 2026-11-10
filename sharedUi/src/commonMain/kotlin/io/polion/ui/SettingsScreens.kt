@@ -56,6 +56,10 @@ internal class SettingsActions(
     val onBiometric: (Boolean) -> Unit = {},
     /** Null removes the key. */
     val onCoingeckoKey: (String?) -> Unit = {},
+    /** Null removes the key. Returns the rejection message, or null when the key was saved or removed. */
+    val onAlchemyKey: suspend (String?) -> String? = { null },
+    /** Null removes the key. Returns the rejection message, or null when the key was saved or removed. */
+    val onOneInchKey: suspend (String?) -> String? = { null },
     val onLockDelay: (Long) -> Unit = {},
 )
 
@@ -65,6 +69,8 @@ internal data class SettingsDevice(
     val biometric: BiometricUnlock = BiometricUnlock.UNSUPPORTED,
     val hasCoingeckoKey: Boolean = false,
     val lockDelayMillis: Long = 0L,
+    val hasAlchemyKey: Boolean = false,
+    val hasOneInchKey: Boolean = false,
 )
 
 private fun lockDelayLabel(millis: Long) =
@@ -257,6 +263,32 @@ internal fun ColumnScope.ProductSettings(
                         }
                     },
                 )
+            }
+            var editingAlchemy by remember { mutableStateOf(false) }
+            SettingsValueRow(
+                "Alchemy",
+                if (device.hasAlchemyKey) "Set" else "Not set",
+                tag = "settings-alchemy-key",
+            ) { editingAlchemy = true }
+            SettingsNote(ALCHEMY_KEY_HELP)
+            if (editingAlchemy) {
+                AlchemyKeyDialog(device.hasAlchemyKey, actions.onAlchemyKey) { editingAlchemy = false }
+            }
+            var editingOneInch by remember { mutableStateOf(false) }
+            SettingsValueRow(
+                "1inch",
+                if (device.hasOneInchKey) "Set" else "Not set",
+                tag = "settings-oneinch-key",
+            ) { editingOneInch = true }
+            SettingsNote(ONE_INCH_KEY_HELP)
+            if (editingOneInch) {
+                AlchemyKeyDialog(
+                    device.hasOneInchKey,
+                    actions.onOneInchKey,
+                    "1inch",
+                    ONE_INCH_KEY_HELP,
+                    "oneinch",
+                ) { editingOneInch = false }
             }
         }
         "security" -> {

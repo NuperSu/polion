@@ -55,9 +55,10 @@ class SyncServiceProbe : BitcoinRefreshService() {
         walletId: String?,
         verifyOrder: Boolean,
         recoverHistory: Boolean,
+        evmOnly: Boolean,
         onProgress: (String) -> Unit,
     ): SyncStatus {
-        check(!verifyOrder && !recoverHistory)
+        check(!verifyOrder && !recoverHistory && !evmOnly)
         val key = walletId ?: "history"
         scenario.started += key
         val (started, release) =

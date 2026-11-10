@@ -57,7 +57,9 @@ internal val helpTopics =
                     "blockstream.info, with mempool.space used only while blockstream.info is unavailable; a provider you " +
                     "set yourself is never replaced by another. Kraken receives Bitcoin price requests and your IP " +
                     "address. CoinGecko receives your display currency and IP address when market lists or price history " +
-                    "load, and its image server sends coin logos. Wallet addresses go only to the wallet providers.",
+                    "load, and its image server sends coin logos. DefiLlama receives the coins you hold on EVM chains, for their " +
+                    "US dollar prices, and your IP address. Wallet addresses go only to the wallet providers: Alchemy, and " +
+                    "1inch when you add its key.",
             ),
         ),
         HelpTopic(

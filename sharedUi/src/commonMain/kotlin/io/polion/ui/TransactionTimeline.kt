@@ -240,6 +240,8 @@ internal fun transactionKind(
     val a = entry.activity
     val legs = a.movements.filter { it.accountId in accounts && it.amount.assetId == asset && it.role != MovementRole.FEE }
     if (legs.isEmpty()) return "Fee"
+    // Balance corrections derived from the provider's balance, not transactions it listed.
+    if (a.id.value.startsWith("evm-adjust:") || (a.id.value.startsWith("evm-rebase:") && a.kind != ActivityKind.REWARD)) return "Adjustment"
     return when (a.kind) {
         ActivityKind.TRADE ->
             if (legs

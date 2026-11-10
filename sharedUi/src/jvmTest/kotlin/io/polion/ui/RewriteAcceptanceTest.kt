@@ -109,16 +109,17 @@ class RewriteAcceptanceTest {
                         capture("coin-transactions-scrolled")
                         onNodeWithTag("detail-add-transaction").performScrollTo().performClick()
                         capture("coin-manual-transaction")
-                        onNodeWithText("Close").performClick()
+                        onNodeWithText("Close").performScrollTo().performClick()
                         onNodeWithText("Bitcoin").performClick()
                         onNodeWithTag("detail-Alerts").performScrollTo().performClick()
                         onNodeWithText(
                             "Price alerts are not available yet. Saved prices and manual observations are available in General.",
-                        ).assertIsDisplayed()
+                        ).performScrollTo()
+                            .assertIsDisplayed()
                         capture("coin-alerts")
                         onNodeWithTag("detail-Order book").performScrollTo().performClick()
                         capture("coin-order-book")
-                        onNodeWithText("Close").performClick()
+                        onNodeWithText("Close").performScrollTo().performClick()
                         onNodeWithTag("destination-REPORTS").performClick()
                         capture("insights")
                         onNodeWithTag("page-content").performScrollToNode(hasText("Asset allocation"))
@@ -339,7 +340,7 @@ class RewriteAcceptanceTest {
                     assertEquals(false, app.automaticPortfolioPriceConsent())
                     onNodeWithTag("automatic-portfolio-price-consent").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { app.automaticPortfolioPriceConsent() }
-                    onNodeWithText("Close").performClick()
+                    onNodeWithText("Close").performScrollTo().performClick()
                     onNodeWithText("↻").performClick()
                     waitUntil(timeoutMillis = 10_000) { host.refreshCalls == 1 }
                     assertEquals(setOf(AssetId("USD"), AssetId("EUR")), app.automaticPriceCurrencies().toSet())
@@ -367,7 +368,7 @@ class RewriteAcceptanceTest {
                     assertEquals(0, host.refreshCalls)
                     onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { app.automaticPriceConsent() }
-                    onNodeWithText("Close").performClick()
+                    onNodeWithText("Close").performScrollTo().performClick()
                     onNodeWithText("↻").performClick()
                     waitUntil(timeoutMillis = 10_000) { host.refreshCalls == 1 }
                     onNodeWithText("Queued").assertIsNotEnabled()

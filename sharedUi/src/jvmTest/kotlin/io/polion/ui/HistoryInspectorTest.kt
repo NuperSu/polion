@@ -23,7 +23,7 @@ import kotlin.test.assertNull
 @OptIn(ExperimentalTestApi::class)
 class HistoryInspectorTest {
     @Test
-    fun zeroHoldingsDoNotRequirePricesButNonzeroHoldingsDo() {
+    fun totalsLeaveOutUnpricedHoldingsAndAreUnavailableOnlyWhenNoneIsPriced() {
         val btc = AssetId("BTC")
         val zero = AssetValuation(btc, AtomicAmount(btc, ExactInteger.ZERO), null, PriceStatus.MISSING, null, null)
         val active = zero.copy(amount = AtomicAmount(btc, ExactInteger.parse("1")))
@@ -32,8 +32,19 @@ class HistoryInspectorTest {
         assertEquals(ExactDecimal.parse("4"), historyTotal(HistoryPoint(0, listOf(zero, priced))))
         assertNull(historyTotal(HistoryPoint(0, listOf(zero, active))))
         assertNull(historyTotal(HistoryPoint(0, listOf(zero, priced.copy(priceStatus = PriceStatus.STALE)))))
+        val eth = AssetId("ETH")
+        val unpricedEth = active.copy(asset = eth, amount = AtomicAmount(eth, ExactInteger.parse("1")))
+        val partial = HistoryPoint(0, listOf(priced, unpricedEth))
+        assertEquals(ExactDecimal.parse("4"), historyTotal(partial))
+        assertEquals(1, historyUnpriced(partial))
         runDesktopComposeUiTest(width = 360, height = 300) {
-            setContent { PolionTheme(AppearanceTheme.DARK) { HistoryInspector(listOf(HistoryPoint(0, listOf(zero))), AssetId("USD")) } }
+            setContent {
+                PolionTheme(
+                    AppearanceTheme.DARK,
+                ) { HistoryInspector(listOf(HistoryPoint(0, listOf(zero)), partial), AssetId("USD")) }
+            }
+            onNodeWithText("1970-01-01 00:00 UTC · 4 USD · 1 asset has no price").assertIsDisplayed()
+            onNodeWithTag("history-previous").performClick()
             onNodeWithText("1970-01-01 00:00 UTC · 0 USD").assertIsDisplayed()
         }
     }

@@ -8,12 +8,19 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import io.polion.core.ApplicationInfo
 import io.polion.core.alerts.NotificationMessage
+import io.polion.core.application.BitcoinConnector
 import io.polion.core.application.PortfolioApplication
+import io.polion.core.application.SourceConnector
+import io.polion.core.application.SourceRefreshOptions
+import io.polion.core.application.SourceRegistry
 import io.polion.core.bitcoin.BitcoinProviderException
 import io.polion.core.bitcoin.BitcoinProviderFailure
 import io.polion.core.bitcoin.EsploraTransport
+import io.polion.core.evm.EVM_MANIFEST
+import io.polion.core.evm.EvmConnector
 import io.polion.core.model.TrackingTargetId
 import io.polion.core.storage.JvmSqliteDatabase
+import io.polion.core.sync.JobState
 import io.polion.ui.MARKET_SCHEDULED_AGE_MILLIS
 import io.polion.ui.OrderBookResult
 import io.polion.ui.PRICE_REFRESH_INTERVAL_MILLIS
@@ -100,6 +107,15 @@ const val DEFAULT_LOCK_DELAY_MILLIS = 300_000L
 private const val NOTIFICATION_FIRST_CHECK_MILLIS = 30_000L
 private const val NOTIFICATION_INTERVAL_MILLIS = 300_000L
 
+/** CoinGecko linked-coin history requests (currencies other than USD) per backfill run, spaced past its transport's 6-second pacing. */
+private const val LINKED_HISTORY_REQUESTS_PER_RUN = 24
+private const val LINKED_HISTORY_INTERVAL_MILLIS = 6_100L
+private const val LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS = 61_000L
+
+/** DefiLlama USD history requests per backfill run, one a second: enough for a few years of thirty coins. */
+private const val LINKED_USD_HISTORY_REQUESTS_PER_RUN = 600
+private const val LINKED_USD_HISTORY_INTERVAL_MILLIS = 1_000L
+
 private const val MARKET_PAUSED_MESSAGE = "Market data is paused while data is restored."
 
 internal class DesktopHost(
@@ -113,6 +129,10 @@ internal class DesktopHost(
     override val dispatcher: CoroutineDispatcher = executor.asCoroutineDispatcher()
     private val unlockExecutor = Executors.newSingleThreadExecutor()
     private val priceExecutor = Executors.newSingleThreadScheduledExecutor()
+
+    /** Linked-coin history backfills run here, one at a time, so they never hold up a refresh's result. */
+    private val historyExecutor = Executors.newSingleThreadExecutor()
+    private val historyBackfillQueued = AtomicBoolean(false)
     private val manualPricePending = AtomicBoolean(false)
     override val priceRefreshStatus = MutableStateFlow(io.polion.ui.PriceRefreshPhase.IDLE)
     private var automaticPriceTask: java.util.concurrent.ScheduledFuture<*>? = null
@@ -122,6 +142,7 @@ internal class DesktopHost(
     internal val priceReplacementInProgress: Boolean get() = priceRestorePaused
     private val syncQueue = BitcoinSyncQueue()
     private val priceTransport = DesktopCoingeckoTransport()
+    private val defiLlamaTransport = DefiLlamaTransport()
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
     override val hasLock: Boolean get() = lockStore.hasLock
@@ -512,43 +533,88 @@ internal class DesktopHost(
 
     override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)
 
+    override fun refreshEvm(onResult: (String) -> Unit) = refresh(false, onResult, evmOnly = true)
+
     private fun refresh(
         recoverHistory: Boolean,
         onResult: (String) -> Unit,
+        evmOnly: Boolean = false,
     ) {
         runSync(
             SyncStatus(SyncPhase.SYNCING, if (recoverHistory) "Recovering full Bitcoin history…" else "Fetching public history…"),
             onResult,
         ) { application ->
             runCatching {
-                val endpoint = application.sourceEndpoint()
+                // Each source refreshes only with its own consent; with neither, nothing is fetched.
+                val bitcoinOn = application.sourceConsent() && !evmOnly
+                val evmOn = application.evmConsent() && application.evmTargets().isNotEmpty()
+                if (!bitcoinOn && !evmOn) return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                 // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
-                val bitcoin =
-                    io.polion.core.application.BitcoinConnector(bitcoinTransport(application, endpoint), endpoint) { progress ->
-                        syncStatus.value =
-                            SyncStatus(
-                                SyncPhase.SYNCING,
-                                when (progress.phase) {
-                                    "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                                    "verify" -> "Checking chain consistency…"
-                                    "apply" -> "Applying verified history…"
-                                    else ->
-                                        "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
-                                            "${progress.pages} pages · ${progress.transactions} transactions"
+                val connectors = mutableListOf<SourceConnector>()
+                if (bitcoinOn) {
+                    val endpoint = application.sourceEndpoint()
+                    connectors +=
+                        BitcoinConnector(bitcoinTransport(application, endpoint), endpoint) { progress ->
+                            syncStatus.value =
+                                SyncStatus(
+                                    SyncPhase.SYNCING,
+                                    "Bitcoin · " +
+                                        when (progress.phase) {
+                                            "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
+                                            "verify" -> "Checking chain consistency…"
+                                            "apply" -> "Applying verified history…"
+                                            else ->
+                                                "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
+                                                    "${progress.pages} pages · ${progress.transactions} transactions"
+                                        },
+                                )
+                        }
+                }
+                if (evmOn) {
+                    val oneInch =
+                        application.oneInchApiKey()?.let {
+                            OneInchTransport(
+                                apiKey = { application.oneInchApiKey() },
+                                beforeRequest = {
+                                    check(
+                                        !closing.get() && application.evmConsent(),
+                                    ) { "EVM refresh was cancelled. Retry if needed." }
                                 },
                             )
-                    }
+                        }
+                    connectors += EvmConnector(alchemyTransport(application)::post, oneInch?.let { it::get })
+                }
                 val outcomes =
                     application.refreshSources(
-                        io.polion.core.application
-                            .SourceRegistry(listOf(bitcoin)),
-                        io.polion.core.application
-                            .SourceRefreshOptions(recoverHistory = recoverHistory),
+                        SourceRegistry(connectors),
+                        SourceRefreshOptions(
+                            recoverHistory = recoverHistory,
+                            onProgress = { syncStatus.value = SyncStatus(SyncPhase.SYNCING, "EVM · $it") },
+                            withoutConsent =
+                                setOfNotNull(
+                                    io.polion.core.bitcoin.BITCOIN_MAINNET
+                                        .takeIf { !application.sourceConsent() },
+                                    io.polion.core.evm.EVM_FAMILY
+                                        .takeIf { !application.evmConsent() },
+                                ),
+                        ),
                     )
                 val states = outcomes.flatMap { it.jobs }
                 val discoveryNotes = outcomes.flatMap { it.notes }
+                // Once a chain has refreshed, new tokens are linked to coins and priced.
+                if (outcomes.any { it.connector == EVM_MANIFEST.id && it.jobs.contains(JobState.COMPLETED) }) {
+                    refreshEvmCatalogAndPrices(application)
+                }
                 when {
-                    states.isEmpty() -> SyncStatus(SyncPhase.IDLE, "Add a public address to sync")
+                    states.isEmpty() ->
+                        SyncStatus(
+                            SyncPhase.IDLE,
+                            if (bitcoinOn) {
+                                "Add a public address to sync"
+                            } else {
+                                discoveryNotes.joinToString(" ").ifEmpty { "Add a public address to sync" }
+                            },
+                        )
                     states.any {
                         it != io.polion.core.sync.JobState.COMPLETED
                     } -> SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "History is incomplete; retry.")
@@ -570,6 +636,98 @@ internal class DesktopHost(
                 )
             }
         }
+    }
+
+    /** Alchemy requests for EVM history; a refresh stops at its next request once the app closes or EVM consent is withdrawn. */
+    private fun alchemyTransport(application: PortfolioApplication): AlchemyTransport =
+        AlchemyTransport(
+            apiKey = { application.alchemyApiKey() },
+            beforeRequest = { check(!closing.get() && application.evmConsent()) { "EVM refresh was cancelled. Retry if needed." } },
+        )
+
+    /**
+     * Refreshes the CoinGecko chain catalog, then linked-coin prices (USD from DefiLlama, other currencies from
+     * CoinGecko), logos and missing price history. Each step is isolated, so a failure leaves the caller's refresh
+     * successful. Does nothing without market data consent.
+     */
+    private fun refreshEvmCatalogAndPrices(application: PortfolioApplication) {
+        if (!application.marketDataConsent()) return
+        runCatching { application.refreshEvmCatalog(priceTransport::feed) }
+        runCatching { application.refreshLinkedCoinUsdPrices(defiLlamaTransport::get) }
+        runCatching { application.refreshLinkedCoinPrices(priceTransport::feed) }
+        runCatching { application.refreshLinkedCoinLogos(priceTransport::feed) }
+        backfillLinkedCoinHistory()
+    }
+
+    /**
+     * Fills missing linked-coin price history in the background: USD from DefiLlama, then other currencies from
+     * CoinGecko. Later calls while one is queued do nothing.
+     */
+    private fun backfillLinkedCoinHistory() {
+        if (closing.get() || !historyBackfillQueued.compareAndSet(false, true)) return
+        runCatching {
+            historyExecutor.execute {
+                historyBackfillQueued.set(false)
+                // An interrupted pause (the app closing) ends the run.
+                val usd =
+                    runCatching {
+                        backfillSteps(LINKED_USD_HISTORY_REQUESTS_PER_RUN, LINKED_USD_HISTORY_INTERVAL_MILLIS) { application ->
+                            application.backfillLinkedCoinUsdHistory(defiLlamaTransport::get, maxRequests = 1)
+                        }
+                    }.getOrDefault(true)
+                val other =
+                    !closing.get() &&
+                        runCatching {
+                            backfillSteps(LINKED_HISTORY_REQUESTS_PER_RUN, LINKED_HISTORY_INTERVAL_MILLIS) { application ->
+                                application.backfillLinkedCoinHistory(
+                                    { url, key -> priceTransport.get(url, key.orEmpty()) },
+                                    maxRequests = 1,
+                                )
+                            }
+                        }.getOrDefault(true)
+                if (usd || other) dataRevision.update { it + 1 }
+            }
+        }.onFailure { historyBackfillQueued.set(false) }
+    }
+
+    /**
+     * Runs [step] up to [steps] times, [intervalMillis] apart, until it reports no work. Each step and its write run under
+     * the price gate on a fresh connection, so a restore never meets an open connection; the pauses run outside it. A
+     * rate limit is waited out twice at most; any other failure ends the run. Returns whether any step did work.
+     */
+    private fun backfillSteps(
+        steps: Int,
+        intervalMillis: Long,
+        step: (PortfolioApplication) -> Int,
+    ): Boolean {
+        var changed = false
+        var rateLimits = 0
+        repeat(steps) {
+            Thread.sleep(intervalMillis)
+            val done =
+                try {
+                    synchronized(priceGate) {
+                        if (closing.get() || priceRestorePaused) return changed
+                        JvmSqliteDatabase(file.toString()).use { connection ->
+                            val application = PortfolioApplication(connection, System::currentTimeMillis)
+                            if (!application.marketDataConsent()) return changed
+                            step(application)
+                        }
+                    }
+                } catch (failure: Exception) {
+                    if (failure is InterruptedException) throw failure
+                    val limited =
+                        (failure as? io.polion.core.market.CoingeckoProviderException)?.failure ==
+                            io.polion.core.market.CoingeckoProviderFailure.RATE_LIMITED ||
+                            (failure as? io.polion.core.market.DefiLlamaException)?.rateLimited == true
+                    if (!limited || ++rateLimits > 2) return changed
+                    Thread.sleep(LINKED_HISTORY_RATE_LIMIT_WAIT_MILLIS)
+                    return@repeat
+                }
+            if (done == 0) return changed
+            changed = true
+        }
+        return changed
     }
 
     override fun refreshPreferences(): io.polion.ui.RefreshPreferences =
@@ -648,12 +806,10 @@ internal class DesktopHost(
                         } else {
                             runCatching {
                                 JvmSqliteDatabase(file.toString()).use { connection ->
-                                    marketRefreshMessage(
-                                        PortfolioApplication(
-                                            connection,
-                                            System::currentTimeMillis,
-                                        ).refreshMarketFeeds(priceTransport::feed, maxAgeMillis),
-                                    )
+                                    val application = PortfolioApplication(connection, System::currentTimeMillis)
+                                    val message = marketRefreshMessage(application.refreshMarketFeeds(priceTransport::feed, maxAgeMillis))
+                                    refreshEvmCatalogAndPrices(application)
+                                    message
                                 }
                             }.getOrElse { "Could not refresh market data." }
                         }
@@ -663,6 +819,35 @@ internal class DesktopHost(
             }
         } catch (_: java.util.concurrent.RejectedExecutionException) {
             onResult("Could not schedule a market refresh.")
+        }
+    }
+
+    /** Loads the CoinGecko chain catalog on the market worker, under the same pause and closing guards as market refreshes. */
+    override fun refreshEvmCatalog(onResult: (String?) -> Unit) {
+        if (closing.get()) {
+            onResult("The app is closing.")
+            return
+        }
+        try {
+            priceExecutor.execute {
+                val message =
+                    synchronized(priceGate) {
+                        if (priceRestorePaused || closing.get()) {
+                            MARKET_PAUSED_MESSAGE
+                        } else {
+                            runCatching {
+                                JvmSqliteDatabase(file.toString()).use { connection ->
+                                    PortfolioApplication(connection, System::currentTimeMillis).refreshEvmCatalog(priceTransport::feed)
+                                }
+                                null
+                            }.getOrElse { "Could not load the chain list from CoinGecko." }
+                        }
+                    }
+                dataRevision.update { it + 1 }
+                SwingUtilities.invokeLater { onResult(message) }
+            }
+        } catch (_: RejectedExecutionException) {
+            onResult("Could not schedule a chain list refresh.")
         }
     }
 
@@ -811,6 +996,7 @@ internal class DesktopHost(
                             // Market lists ride on the same schedule; a failure here never fails the price refresh.
                             if (application.marketDataConsent()) {
                                 runCatching { application.refreshMarketFeeds(priceTransport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
+                                refreshEvmCatalogAndPrices(application)
                             }
                         } catch (failure: Exception) {
                             if (!closing.get() &&
@@ -938,6 +1124,7 @@ internal class DesktopHost(
         automaticPriceTask?.cancel(false)
         synchronized(hostLock) { notificationTask?.cancel(false) }
         priceExecutor.shutdownNow()
+        historyExecutor.shutdownNow()
         syncQueue.shutdown()
         executor.execute {
             // The network worker must finish cancellation and release SQLite before either connection closes.

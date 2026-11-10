@@ -23,13 +23,22 @@ import io.polion.core.model.AssetId
 import io.polion.core.model.ExactDecimal
 import kotlin.time.Instant
 
-/** Historical chart totals require a fresh price for every nonzero holding at the sampled time. */
+/**
+ * Historical chart total: the sum of nonzero holdings with a fresh price at the sampled time. Holdings without one are
+ * left out (see [historyUnpriced]), so an asset whose history is not known yet does not blank the rest; the total is
+ * unavailable only when no holding has a fresh price.
+ */
 internal fun historyTotal(point: HistoryPoint): ExactDecimal? {
     if (point.valuations.isEmpty()) return null
     val holdings = point.valuations.filter { it.amount.atomicUnits.sign != 0 }
-    if (holdings.any { it.value == null || it.priceStatus != PriceStatus.FRESH }) return null
-    return holdings.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + requireNotNull(valuation.value) }
+    val priced = holdings.filter { it.value != null && it.priceStatus == PriceStatus.FRESH }
+    if (holdings.isNotEmpty() && priced.isEmpty()) return null
+    return priced.fold(ExactDecimal.parse("0")) { sum, valuation -> sum + requireNotNull(valuation.value) }
 }
+
+/** Nonzero holdings left out of [historyTotal] because they have no fresh price at the sampled time. */
+internal fun historyUnpriced(point: HistoryPoint): Int =
+    point.valuations.count { it.amount.atomicUnits.sign != 0 && (it.value == null || it.priceStatus != PriceStatus.FRESH) }
 
 @Composable
 internal fun HistoryInspector(
@@ -73,8 +82,17 @@ internal fun HistoryInspector(
             } else {
                 "Value unavailable"
             }
+        val unpriced = historyUnpriced(point)
+        val partial =
+            if (unpriced == 1) {
+                " · 1 asset has no price"
+            } else if (unpriced > 1) {
+                " · $unpriced assets have no price"
+            } else {
+                ""
+            }
         Text(
-            if (value == null) "$timestamp UTC · $unavailable" else "$timestamp UTC · $value ${currency.value}",
+            if (value == null) "$timestamp UTC · $unavailable" else "$timestamp UTC · $value ${currency.value}$partial",
             color = tint,
             fontSize = 12.sp,
             modifier = Modifier.testTag("history-point"),
