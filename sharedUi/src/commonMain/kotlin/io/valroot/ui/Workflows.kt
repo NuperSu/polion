@@ -1234,14 +1234,30 @@ private fun FormDialog(
     )
 }
 
+/**
+ * Keyboard settings for passwords and API keys: the keyboard treats the field as a password, so it neither suggests nor
+ * learns what is typed.
+ */
+internal val SecretKeyboard =
+    androidx.compose.foundation.text.KeyboardOptions(
+        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+        autoCorrectEnabled = false,
+    )
+
 @Composable private fun SecretField(
     label: String,
     value: String,
     change: (String) -> Unit,
 ) {
-    OutlinedTextField(value, change, label = {
-        Text(label, fontSize = 12.sp)
-    }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
+    OutlinedTextField(
+        value,
+        change,
+        label = { Text(label, fontSize = 12.sp) },
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = SecretKeyboard,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
 }
 
 @Composable internal fun <T> Choice(

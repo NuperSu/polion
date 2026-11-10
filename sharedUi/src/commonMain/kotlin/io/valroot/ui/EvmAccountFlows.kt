@@ -177,6 +177,7 @@ internal fun AlchemyKeyDialog(
                     isError = error != null,
                     label = { Text("$name API key") },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = SecretKeyboard,
                     modifier = Modifier.fillMaxWidth().testTag("$tag-key-field"),
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("$tag-key-error")) }

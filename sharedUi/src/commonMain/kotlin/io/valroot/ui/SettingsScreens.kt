@@ -242,6 +242,7 @@ internal fun ColumnScope.ProductSettings(
                             visualTransformation =
                                 androidx.compose.ui.text.input
                                     .PasswordVisualTransformation(),
+                            keyboardOptions = SecretKeyboard,
                             modifier = Modifier.testTag("settings-coingecko-key-field"),
                         )
                     },
