@@ -23,15 +23,15 @@ class OnboardingEngineTest {
     fun emptyInstallCanFinishOfflineWithoutCreatingRecordsOrConsent() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            assertEquals(OnboardingState(), app.onboardingState())
-            repeat(3) { app.updateOnboarding(OnboardingAction.Next) }
-            assertTrue(app.updateOnboarding(OnboardingAction.Complete).completed)
-            assertTrue(PortfolioApplication(db) { 1000L }.onboardingState()!!.completed)
+            assertEquals(OnboardingState(), app.settings.onboarding())
+            repeat(3) { app.settings.updateOnboarding(OnboardingAction.Next) }
+            assertTrue(app.settings.updateOnboarding(OnboardingAction.Complete).completed)
+            assertTrue(PortfolioApplication(db) { 1000L }.settings.onboarding()!!.completed)
             listOf("owners", "accounts", "portfolios", "targets", "ledger_activities").forEach {
                 assertTrue(db.query("SELECT * FROM $it").isEmpty())
             }
-            assertFalse(app.sourceConsent())
-            assertFalse(app.priceSourceConsent())
+            assertFalse(app.sources.consent())
+            assertFalse(app.prices.sourceConsent())
         }
     }
 
@@ -39,22 +39,25 @@ class OnboardingEngineTest {
     fun answersStepAndPresentationSurviveReopenSkipResumeBackAndRestart() {
         JvmSqliteDatabase(":memory:").use { db ->
             var app = PortfolioApplication(db) { 1000L }
-            app.updateOnboarding(OnboardingAction.SetPresentation(OnboardingPresentation.ASSISTED))
-            app.updateOnboarding(OnboardingAction.Next)
-            app.updateOnboarding(OnboardingAction.ToggleGoal(OnboardingGoal.LONG_TERM_HOLDER))
-            app.updateOnboarding(OnboardingAction.Next)
-            app.updateOnboarding(OnboardingAction.ToggleSource("bitcoin-public-wallet"))
-            val skipped = app.updateOnboarding(OnboardingAction.Skip)
+            app.settings.updateOnboarding(OnboardingAction.SetPresentation(OnboardingPresentation.ASSISTED))
+            app.settings.updateOnboarding(OnboardingAction.Next)
+            app.settings.updateOnboarding(OnboardingAction.ToggleGoal(OnboardingGoal.LONG_TERM_HOLDER))
+            app.settings.updateOnboarding(OnboardingAction.Next)
+            app.settings.updateOnboarding(OnboardingAction.ToggleSource("bitcoin-public-wallet"))
+            val skipped = app.settings.updateOnboarding(OnboardingAction.Skip)
             app = PortfolioApplication(db) { 1000L }
-            assertEquals(skipped, app.onboardingState())
-            val resumed = app.updateOnboarding(OnboardingAction.Resume)
+            assertEquals(skipped, app.settings.onboarding())
+            val resumed = app.settings.updateOnboarding(OnboardingAction.Resume)
             assertFalse(resumed.skipped)
             assertEquals(OnboardingStep.SOURCES, resumed.step)
             assertEquals(setOf(OnboardingGoal.LONG_TERM_HOLDER), resumed.goals)
             assertEquals(setOf("bitcoin-public-wallet"), resumed.sourceIds)
             assertEquals(OnboardingPresentation.ASSISTED, resumed.presentation)
-            assertEquals(OnboardingStep.GOALS, app.updateOnboarding(OnboardingAction.Back).step)
-            assertEquals(OnboardingState(presentation = OnboardingPresentation.ASSISTED), app.updateOnboarding(OnboardingAction.Restart))
+            assertEquals(OnboardingStep.GOALS, app.settings.updateOnboarding(OnboardingAction.Back).step)
+            assertEquals(
+                OnboardingState(presentation = OnboardingPresentation.ASSISTED),
+                app.settings.updateOnboarding(OnboardingAction.Restart),
+            )
         }
     }
 
@@ -77,11 +80,11 @@ class OnboardingEngineTest {
     fun populatedInstallEntersPortfolioUntilExplicitRestart() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            app.saveOwner(Owner(OwnerId("personal"), "Personal"))
-            assertNull(app.onboardingState())
+            app.accounts.saveOwner(Owner(OwnerId("personal"), "Personal"))
+            assertNull(app.settings.onboarding())
             assertTrue(db.query("SELECT * FROM application_settings").isEmpty())
-            assertEquals(OnboardingState(), app.updateOnboarding(OnboardingAction.Restart))
-            assertEquals(OnboardingState(), PortfolioApplication(db) { 1000L }.onboardingState())
+            assertEquals(OnboardingState(), app.settings.updateOnboarding(OnboardingAction.Restart))
+            assertEquals(OnboardingState(), PortfolioApplication(db) { 1000L }.settings.onboarding())
         }
     }
 
@@ -95,17 +98,17 @@ class OnboardingEngineTest {
             }
             for (malformed in listOf("{broken", "{}", "[]", "null")) {
                 save(malformed)
-                assertEquals(OnboardingState(), app.onboardingState())
+                assertEquals(OnboardingState(), app.settings.onboarding())
             }
             val future = "{\"version\":2,\"new-field\":\"keep\"}"
             save(future)
-            assertNull(app.onboardingState())
-            assertFails { app.updateOnboarding(OnboardingAction.Next) }
+            assertNull(app.settings.onboarding())
+            assertFails { app.settings.updateOnboarding(OnboardingAction.Next) }
             assertEquals(
                 future,
                 db.query("SELECT value FROM application_settings WHERE key=?", listOf(OnboardingRepository.KEY)).single().single(),
             )
-            assertEquals(OnboardingState(), app.updateOnboarding(OnboardingAction.Restart))
+            assertEquals(OnboardingState(), app.settings.updateOnboarding(OnboardingAction.Restart))
         }
     }
 
@@ -122,14 +125,14 @@ class OnboardingEngineTest {
                 )
             for (saved in states) {
                 db.execute("INSERT OR REPLACE INTO application_settings VALUES (?, ?)", listOf(OnboardingRepository.KEY, saved))
-                assertNull(app.onboardingState())
-                assertFails { app.updateOnboarding(OnboardingAction.Resume) }
-                assertFails { app.updateOnboarding(OnboardingAction.Next) }
+                assertNull(app.settings.onboarding())
+                assertFails { app.settings.updateOnboarding(OnboardingAction.Resume) }
+                assertFails { app.settings.updateOnboarding(OnboardingAction.Next) }
                 assertEquals(
                     saved,
                     db.query("SELECT value FROM application_settings WHERE key=?", listOf(OnboardingRepository.KEY)).single().single(),
                 )
-                assertEquals(OnboardingState(), app.updateOnboarding(OnboardingAction.Restart))
+                assertEquals(OnboardingState(), app.settings.updateOnboarding(OnboardingAction.Restart))
             }
         }
     }
@@ -138,15 +141,15 @@ class OnboardingEngineTest {
     fun backupRestoresPartialSetupAndWipeStartsFresh() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            app.updateOnboarding(OnboardingAction.Next)
-            val expected = app.updateOnboarding(OnboardingAction.ToggleGoal(OnboardingGoal.OTHER))
+            app.settings.updateOnboarding(OnboardingAction.Next)
+            val expected = app.settings.updateOnboarding(OnboardingAction.ToggleGoal(OnboardingGoal.OTHER))
             val backup = PortableBackup.discover(db)
             JvmSqliteDatabase(":memory:").use { staging ->
                 val restored = PortfolioApplication(staging) { 1000L }
                 backup.restoreToStaging(staging, backup.export(db))
-                assertEquals(expected, restored.onboardingState())
-                restored.wipe()
-                assertEquals(OnboardingState(), restored.onboardingState())
+                assertEquals(expected, restored.settings.onboarding())
+                restored.backup.wipe()
+                assertEquals(OnboardingState(), restored.settings.onboarding())
             }
         }
     }

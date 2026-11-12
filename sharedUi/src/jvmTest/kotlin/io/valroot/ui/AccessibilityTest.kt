@@ -37,8 +37,8 @@ class AccessibilityTest {
                 JvmSqliteDatabase(":memory:").use { db ->
                     ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                         val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                        app.updateOnboarding(OnboardingAction.Skip)
-                        app.seedDemo()
+                        app.settings.updateOnboarding(OnboardingAction.Skip)
+                        app.demo.seed()
                         runDesktopComposeUiTest(width = width, height = height) {
                             setContent {
                                 val density = LocalDensity.current

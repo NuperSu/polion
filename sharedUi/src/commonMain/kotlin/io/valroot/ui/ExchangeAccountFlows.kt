@@ -155,14 +155,15 @@ internal fun ExchangeConnectDialog(
                 val problem =
                     withContext(host.dispatcher) {
                         if (app
-                                .exchangeTargets(
+                                .exchanges
+                                .targets(
                                     kind,
                                 ).any { it.second == info.uid }
                         ) {
                             return@withContext "This ${kind.label} account is already tracked."
                         }
-                        if (data.ownership.owners.isEmpty()) app.saveOwner(Owner(ownerId, "Personal"))
-                        app.saveAccountAndTarget(
+                        if (data.ownership.owners.isEmpty()) app.accounts.saveOwner(Owner(ownerId, "Personal"))
+                        app.accounts.saveAccountAndTarget(
                             Account(accountId, ownerId, title, AccountKind.ACCOUNT),
                             TrackingTarget(
                                 TrackingTargetId("${kind.id}-$suffix"),
@@ -172,10 +173,10 @@ internal fun ExchangeConnectDialog(
                                 title,
                             ),
                         )
-                        app.setExchangeKey(kind, accountId, key.trim(), secret.trim())
+                        app.exchanges.setKey(kind, accountId, key.trim(), secret.trim())
                         selectedPortfolio
                             ?.takeIf { it.accountIds.isNotEmpty() }
-                            ?.let { app.savePortfolio(it.copy(accountIds = it.accountIds + accountId)) }
+                            ?.let { app.accounts.savePortfolio(it.copy(accountIds = it.accountIds + accountId)) }
                         null
                     }
                 if (problem != null) {
@@ -255,9 +256,17 @@ internal fun ExchangeAccountDetails(
     var pairs by remember(account) { mutableStateOf<List<String>>(emptyList()) }
     var addingPair by remember(account) { mutableStateOf(false) }
     LaunchedEffect(account, revision) {
-        if (kind.readsPerSymbol) pairs = withContext(host.dispatcher) { app.exchangePairs(account).keys.sorted() }
+        if (kind.readsPerSymbol) {
+            pairs =
+                withContext(host.dispatcher) {
+                    app.exchanges
+                        .pairs(account)
+                        .keys
+                        .sorted()
+                }
+        }
         withContext(host.dispatcher) {
-            Triple(app.exchangeStatus(account), app.hasExchangeKey(kind, account), app.unresolvedExchangeCoins(kind.id))
+            Triple(app.exchanges.status(account), app.exchanges.hasKey(kind, account), app.exchanges.unresolvedCoins(kind.id))
         }.let { (loaded, key, coins) ->
             status = loaded
             hasKey = key
@@ -316,7 +325,7 @@ internal fun ExchangeAccountDetails(
         AddPairDialog(close = { addingPair = false }) { base, quote ->
             addingPair = false
             scope.launch {
-                withContext(host.dispatcher) { app.addExchangePair(account, base, quote) }
+                withContext(host.dispatcher) { app.exchanges.addPair(account, base, quote) }
                 onChanged()
                 host.refreshWithoutBitcoin {}
             }
@@ -337,9 +346,9 @@ internal fun ExchangeAccountDetails(
                     if (coin ==
                         null
                     ) {
-                        app.markExchangeCoinUnlisted(kind.id, symbol)
+                        app.exchanges.markCoinUnlisted(kind.id, symbol)
                     } else {
-                        app.chooseExchangeCoin(kind.id, symbol, coin)
+                        app.exchanges.chooseCoin(kind.id, symbol, coin)
                     }
                 }
                 onChanged()
@@ -374,11 +383,17 @@ private fun ExchangeKeyDialog(
             scope.launch {
                 try {
                     val info = withContext(host.dispatcher) { host.exchangeKeyInfo(kind, key.trim(), secret.trim()) }
-                    val uid = withContext(host.dispatcher) { app.exchangeTargets(kind).firstOrNull { it.first == account }?.second }
+                    val uid =
+                        withContext(host.dispatcher) {
+                            app.exchanges
+                                .targets(kind)
+                                .firstOrNull { it.first == account }
+                                ?.second
+                        }
                     error =
                         keyProblem(info) ?: if (info.uid != uid) "This key belongs to another ${kind.label} account." else null
                     if (error == null) {
-                        withContext(host.dispatcher) { app.setExchangeKey(kind, account, key.trim(), secret.trim()) }
+                        withContext(host.dispatcher) { app.exchanges.setKey(kind, account, key.trim(), secret.trim()) }
                         onSaved()
                     }
                 } catch (cancelled: CancellationException) {

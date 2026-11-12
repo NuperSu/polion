@@ -49,19 +49,33 @@ class AccountingScopeTest {
                     TargetRole.LEAF,
                     "Watch",
                 )
-            app.saveTarget(target)
-            assertNull(app.sourceScanJobs(target.id).single().job)
+            app.accounts.saveTarget(target)
+            assertNull(
+                app.sources
+                    .scanJobs(target.id)
+                    .single()
+                    .job,
+            )
             db.execute(
                 "INSERT INTO sync_jobs VALUES (?, 'esplora:fixture', ?, ?, NULL, NULL, ?, 0, 0, 0, 0, ?, ?, NULL, ?, NULL)",
                 listOf("bitcoin-1-${sha256(address).take(16)}", "bitcoin-mainnet", first.value, "COMPLETED", "2", "COMPLETE", "provider"),
             )
-            val job = app.sourceScanJobs(target.id).single().job!!
+            val job =
+                app.sources
+                    .scanJobs(target.id)
+                    .single()
+                    .job!!
             assertEquals("COMPLETED", job.state)
             assertEquals(2, job.pages)
             assertEquals("COMPLETE", job.coverage)
             assertEquals("provider", job.provider)
             db.execute("UPDATE sync_jobs SET account=?", listOf(second.value))
-            assertNull(app.sourceScanJobs(target.id).single().job)
+            assertNull(
+                app.sources
+                    .scanJobs(target.id)
+                    .single()
+                    .job,
+            )
         }
     }
 
@@ -87,15 +101,15 @@ class AccountingScopeTest {
                 )
             }
             ActivityRepository(db).save(activity("own", 1, listOf(movement("own", first, "1")), false, "decoder"))
-            val record = app.activitySourceEvidence(ActivityId("own"), selected)!!.single()
+            val record = app.sources.evidence(ActivityId("own"), selected)!!.single()
             assertEquals("bitcoin-mainnet", record.network)
             assertEquals(10, record.observations.size)
             assertEquals("2024-01-11T00:00:00Z", record.observations.first().retrievedAt)
             assertEquals("provider", record.observations.first().source)
             assertEquals(sha256(payload), record.observations.first().checksum)
             assertTrue(record.hasMoreObservations)
-            app.savePortfolio(Portfolio(PortfolioId("other-scope"), "Other", "USD", accountIds = setOf(second)))
-            assertNull(app.activitySourceEvidence(ActivityId("own"), PortfolioId("other-scope")))
+            app.accounts.savePortfolio(Portfolio(PortfolioId("other-scope"), "Other", "USD", accountIds = setOf(second)))
+            assertNull(app.sources.evidence(ActivityId("own"), PortfolioId("other-scope")))
         }
     }
 
@@ -104,10 +118,22 @@ class AccountingScopeTest {
             val app = setup(db)
             buy(app, "own", first, "USD")
             buy(app, "other", second, "USD")
-            assertEquals(ActivityId("own"), app.effectiveActivity(ActivityId("own"), selected)?.activity?.id)
-            assertNull(app.effectiveActivity(ActivityId("other"), selected))
-            assertEquals(ActivityId("other"), app.effectiveActivity(ActivityId("other"))?.activity?.id)
-            assertNull(app.effectiveActivity(ActivityId("missing"), selected))
+            assertEquals(
+                ActivityId("own"),
+                app.accounting
+                    .effectiveActivity(ActivityId("own"), selected)
+                    ?.activity
+                    ?.id,
+            )
+            assertNull(app.accounting.effectiveActivity(ActivityId("other"), selected))
+            assertEquals(
+                ActivityId("other"),
+                app.accounting
+                    .effectiveActivity(ActivityId("other"))
+                    ?.activity
+                    ?.id,
+            )
+            assertNull(app.accounting.effectiveActivity(ActivityId("missing"), selected))
         }
     }
 
@@ -126,7 +152,7 @@ class AccountingScopeTest {
                 if (otherQuote == "invalid") {
                     db.execute("UPDATE accounting_treatments SET quote_asset=NULL WHERE activity_id='other'")
                 }
-                val view = app.accountingReport(selected)
+                val view = app.accounting.report(selected)
                 assertEquals(
                     Rational.of("10"),
                     view.report.lots
@@ -139,7 +165,8 @@ class AccountingScopeTest {
                 assertEquals(
                     Rational.of("10"),
                     app
-                        .accountingReport()
+                        .accounting
+                        .report()
                         .report.lots
                         .single { it.account == first }
                         .basis,
@@ -153,8 +180,8 @@ class AccountingScopeTest {
             val app = setup(db)
             buy(app, "own", first, "USD")
             transfer(app, first, destination)
-            app.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
-            val view = app.accountingReport(selected)
+            app.accounts.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
+            val view = app.accounting.report(selected)
             val lot = view.report.lots.single()
             assertEquals(destination, lot.account)
             assertEquals(Rational.of("10"), lot.basis)
@@ -169,8 +196,8 @@ class AccountingScopeTest {
                 val app = setup(db)
                 buy(app, "source", first, sourceQuote)
                 transfer(app, first, destination)
-                app.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
-                val view = app.accountingReport(selected)
+                app.accounts.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
+                val view = app.accounting.report(selected)
                 if (sourceQuote == null) {
                     // Missing treatments drop the dependent inventory: no lot is invented.
                     assertEquals(listOf(ActivityId("source")), view.missingTreatments)
@@ -200,9 +227,9 @@ class AccountingScopeTest {
                 movement("unrelated", first, "1").copy(
                     amount = AtomicAmount(AssetId("token:other"), ExactInteger.parse("1")),
                 )
-            app.saveManualActivity(activity("unrelated", 3, listOf(unrelated)))
-            app.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
-            val view = app.accountingReport(selected)
+            app.transactions.saveManualActivity(activity("unrelated", 3, listOf(unrelated)))
+            app.accounts.savePortfolio(Portfolio(selected, "Destination", "USD", accountIds = setOf(destination)))
+            val view = app.accounting.report(selected)
             assertEquals(
                 Rational.of("10"),
                 view.report.lots
@@ -219,7 +246,7 @@ class AccountingScopeTest {
             val app = setup(db)
             buy(app, "own", first, "USD")
             transfer(app, first, first)
-            val view = app.accountingReport(selected)
+            val view = app.accounting.report(selected)
             assertEquals(listOf(ActivityId("transfer")), view.invalidTreatments)
             assertTrue(view.report.lots.isEmpty())
             assertTrue(view.report.disposals.isEmpty())
@@ -232,8 +259,8 @@ class AccountingScopeTest {
             buy(app, "own", first, "USD")
             ActivityRepository(db).save(activity("other", 2, listOf(movement("other", second, "1")), false, "bitcoin-v1"))
             app.reload()
-            app.saveTreatments(ActivityId("other"), listOf(Treatment.Acquire(EventId("other"), quote("USD"))))
-            val view = app.accountingReport(selected)
+            app.accounting.saveTreatments(ActivityId("other"), listOf(Treatment.Acquire(EventId("other"), quote("USD"))))
+            val view = app.accounting.report(selected)
             assertEquals(
                 Rational.of("10"),
                 view.report.lots
@@ -241,7 +268,7 @@ class AccountingScopeTest {
                     .basis,
             )
             assertTrue(view.orderingUncertain.isEmpty())
-            val all = app.accountingReport()
+            val all = app.accounting.report()
             assertEquals(
                 Rational.of("10"),
                 all.report.lots
@@ -257,7 +284,7 @@ class AccountingScopeTest {
             val app = setup(db)
             buy(app, "own", first, "USD")
             transfer(app, first, second)
-            val view = app.accountingReport()
+            val view = app.accounting.report()
             assertEquals(listOf(ActivityId("transfer")), view.invalidTreatments)
             assertTrue(view.report.lots.isEmpty())
             assertTrue(view.report.disposals.isEmpty())
@@ -268,12 +295,12 @@ class AccountingScopeTest {
         val app = PortfolioApplication(db) { 1000L }
         val owner = OwnerId("first-owner")
         val other = OwnerId("second-owner")
-        app.saveOwner(Owner(owner, "First owner"))
-        app.saveOwner(Owner(other, "Second owner"))
-        app.saveAccount(Account(first, owner, "First", AccountKind.ACCOUNT))
-        app.saveAccount(Account(destination, owner, "Destination", AccountKind.ACCOUNT))
-        app.saveAccount(Account(second, other, "Second", AccountKind.ACCOUNT))
-        app.savePortfolio(Portfolio(selected, "First", "USD", ownerIds = setOf(owner)))
+        app.accounts.saveOwner(Owner(owner, "First owner"))
+        app.accounts.saveOwner(Owner(other, "Second owner"))
+        app.accounts.saveAccount(Account(first, owner, "First", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(destination, owner, "Destination", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(second, other, "Second", AccountKind.ACCOUNT))
+        app.accounts.savePortfolio(Portfolio(selected, "First", "USD", ownerIds = setOf(owner)))
         return app
     }
 
@@ -283,8 +310,8 @@ class AccountingScopeTest {
         account: AccountId,
         currency: String?,
     ) {
-        app.saveManualActivity(activity(id, 1, listOf(movement(id, account, "1"))))
-        if (currency != null) app.saveTreatments(ActivityId(id), listOf(Treatment.Acquire(EventId(id), quote(currency))))
+        app.transactions.saveManualActivity(activity(id, 1, listOf(movement(id, account, "1"))))
+        if (currency != null) app.accounting.saveTreatments(ActivityId(id), listOf(Treatment.Acquire(EventId(id), quote(currency))))
     }
 
     private fun transfer(
@@ -292,8 +319,8 @@ class AccountingScopeTest {
         from: AccountId,
         to: AccountId,
     ) {
-        app.saveManualActivity(activity("transfer", 2, listOf(movement("out", from, "-1"), movement("in", to, "1"))))
-        app.saveTreatments(ActivityId("transfer"), listOf(Treatment.InternalTransfer(EventId("out"), EventId("in"))))
+        app.transactions.saveManualActivity(activity("transfer", 2, listOf(movement("out", from, "-1"), movement("in", to, "1"))))
+        app.accounting.saveTreatments(ActivityId("transfer"), listOf(Treatment.InternalTransfer(EventId("out"), EventId("in"))))
     }
 
     private fun quote(currency: String) = QuoteValue(AssetId(currency), Rational.of("10"))

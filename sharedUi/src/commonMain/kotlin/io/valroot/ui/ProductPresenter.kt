@@ -362,11 +362,19 @@ internal fun rememberProductPresenter(
                             applicationQueries(app),
                             host.dispatcher,
                             scope,
-                            now = app::evaluationTimeMillis,
+                            now = app.analytics::evaluationTimeMillis,
                         )
                     },
                 ),
-        ) { ProductPresenter(ProductPresentation(), applicationQueries(app), host.dispatcher, scope, now = app::evaluationTimeMillis) }
+        ) {
+            ProductPresenter(
+                ProductPresentation(),
+                applicationQueries(app),
+                host.dispatcher,
+                scope,
+                now = app.analytics::evaluationTimeMillis,
+            )
+        }
     val hostRevision by host.dataRevision.collectAsState()
     val state = presenter.state
     val filter = state.requestedFilter()
@@ -397,11 +405,11 @@ private fun applicationQueries(app: PortfolioApplication): ProductQueries =
         override fun history(
             times: List<Long>,
             portfolio: PortfolioId?,
-        ) = app.historySeries(times, portfolio)
+        ) = app.analytics.historySeries(times, portfolio)
 
-        override fun firstHistoryActivity(portfolio: PortfolioId?) = app.firstHistoryActivity(portfolio)
+        override fun firstHistoryActivity(portfolio: PortfolioId?) = app.analytics.firstHistoryActivity(portfolio)
 
-        override fun currency(portfolio: PortfolioId?) = app.displayCurrency(portfolio)
+        override fun currency(portfolio: PortfolioId?) = app.assets.displayCurrency(portfolio)
     }
 
 /** Charts depend on the data revision as well, so a cached range is reused for at most five minutes. */

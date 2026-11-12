@@ -181,7 +181,7 @@ internal fun BitcoinConnectDialog(
                             "Select an owner in this portfolio"
                         }
                         // A retried import of an undiscovered wallet returns the existing wallet ID.
-                        app.saveBitcoinWallet(
+                        app.bitcoinWallets.save(
                             TrackingTarget(
                                 id,
                                 accountId,
@@ -355,7 +355,7 @@ internal fun BitcoinHistoryDialog(
                 }
                 val scheduled =
                     withContext(host.dispatcher) {
-                        app.configureBitcoinSource(endpoint.trim(), consent)
+                        app.bitcoin.configureSource(endpoint.trim(), consent)
                         runCatching { host.updateRefreshPreferences(host.refreshPreferences()) }.isSuccess
                     }
                 onSaved()

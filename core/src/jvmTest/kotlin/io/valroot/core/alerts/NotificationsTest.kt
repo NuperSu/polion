@@ -74,7 +74,7 @@ class NotificationsTest {
     private fun refresh(
         app: PortfolioApplication,
         payload: String,
-    ) = app.refreshMarketFeeds({ url, _ -> if (url.contains("/coins/markets")) payload else """{"coins":[]}""" })
+    ) = app.market.refreshFeeds({ url, _ -> if (url.contains("/coins/markets")) payload else """{"coins":[]}""" })
 
     @Test fun alertsAreDeliveredOncePerEventAcrossRestarts() {
         val file = Files.createTempFile("valroot-alerts", ".sqlite")
@@ -82,33 +82,44 @@ class NotificationsTest {
         try {
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { now }
-                app.setMarketDataConsent(true)
-                assertFails { app.savePriceAlert("bitcoin", AlertCondition.ABOVE, d("100000")) }
+                app.market.setConsent(true)
+                assertFails { app.notifications.saveAlert("bitcoin", AlertCondition.ABOVE, d("100000")) }
                 refresh(app, markets("90000"))
-                assertFails { app.savePriceAlert("unknown-coin", AlertCondition.ABOVE, d("1")) }
-                assertFails { app.savePriceAlert("bitcoin", AlertCondition.ABOVE, d("0")) }
-                app.savePriceAlert("bitcoin", AlertCondition.ABOVE, d("100000"))
-                assertTrue(app.notificationsActive())
-                assertTrue(app.evaluateNotifications("2027-01-15", 12).isEmpty())
+                assertFails { app.notifications.saveAlert("unknown-coin", AlertCondition.ABOVE, d("1")) }
+                assertFails { app.notifications.saveAlert("bitcoin", AlertCondition.ABOVE, d("0")) }
+                app.notifications.saveAlert("bitcoin", AlertCondition.ABOVE, d("100000"))
+                assertTrue(app.notifications.active())
+                assertTrue(app.notifications.evaluate("2027-01-15", 12).isEmpty())
                 now += 120_000
                 refresh(app, markets("100500"))
-                val first = app.evaluateNotifications("2027-01-15", 12)
+                val first = app.notifications.evaluate("2027-01-15", 12)
                 assertEquals(listOf("BTC is above 100,000.00 USD"), first.map { it.title })
-                assertTrue(app.evaluateNotifications("2027-01-15", 12).isEmpty())
+                assertTrue(app.notifications.evaluate("2027-01-15", 12).isEmpty())
             }
             // A new process reads the same snapshot and the recorded state: nothing is delivered again.
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { now }
-                assertTrue(app.evaluateNotifications("2027-01-15", 12).isEmpty())
-                assertEquals(1, app.notificationHistory().size)
+                assertTrue(app.notifications.evaluate("2027-01-15", 12).isEmpty())
+                assertEquals(1, app.notifications.history().size)
                 // A list older than an hour is never evaluated.
                 now += 120_000
                 refresh(app, markets("90000"))
                 now += AlertRules.MAX_PRICE_AGE_MILLIS + 1
-                assertTrue(app.evaluateNotifications("2027-01-15", 12).isEmpty())
-                assertFalse(app.priceAlerts().single().armed)
-                app.setPriceAlertEnabled(app.priceAlerts().single().id, false)
-                assertFalse(app.notificationsActive())
+                assertTrue(app.notifications.evaluate("2027-01-15", 12).isEmpty())
+                assertFalse(
+                    app.notifications
+                        .alerts()
+                        .single()
+                        .armed,
+                )
+                app.notifications.setAlertEnabled(
+                    app.notifications
+                        .alerts()
+                        .single()
+                        .id,
+                    false,
+                )
+                assertFalse(app.notifications.active())
             }
         } finally {
             Files.deleteIfExists(file)
@@ -119,22 +130,30 @@ class NotificationsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val now = start
             val app = PortfolioApplication(db) { now }
-            app.setMarketDataConsent(true)
-            app.setMarketFavorites(setOf(io.valroot.core.bitcoin.BITCOIN_ASSET))
+            app.market.setConsent(true)
+            app.market.setFavorites(setOf(io.valroot.core.bitcoin.BITCOIN_ASSET))
             refresh(app, markets("100000", change = -12.3, athAt = start - 3_600_000))
-            assertTrue(app.evaluateNotifications("2027-01-15", 12).isEmpty())
-            app.setNotificationPreferences(NotificationPreferences(dailyUpdate = true, priceMoves = true, highsAndLows = true))
-            assertTrue(app.evaluateNotifications("2027-01-15", 8).none { it.kind == NotificationKind.DAILY_UPDATE })
+            assertTrue(app.notifications.evaluate("2027-01-15", 12).isEmpty())
+            app.notifications.setPreferences(NotificationPreferences(dailyUpdate = true, priceMoves = true, highsAndLows = true))
+            assertTrue(app.notifications.evaluate("2027-01-15", 8).none { it.kind == NotificationKind.DAILY_UPDATE })
             assertTrue(
-                app.notificationHistory().map { it.kind }.containsAll(listOf(NotificationKind.PRICE_MOVE, NotificationKind.ALL_TIME_HIGH)),
+                app.notifications.history().map { it.kind }.containsAll(
+                    listOf(NotificationKind.PRICE_MOVE, NotificationKind.ALL_TIME_HIGH),
+                ),
             )
-            val later = app.evaluateNotifications("2027-01-15", 9)
+            val later = app.notifications.evaluate("2027-01-15", 9)
             assertEquals(listOf(NotificationKind.DAILY_UPDATE), later.map { it.kind })
-            assertTrue(app.evaluateNotifications("2027-01-15", 10).isEmpty())
-            assertEquals("BTC is down 12.3% in 24 hours", app.notificationHistory().first { it.kind == NotificationKind.PRICE_MOVE }.title)
+            assertTrue(app.notifications.evaluate("2027-01-15", 10).isEmpty())
+            assertEquals(
+                "BTC is down 12.3% in 24 hours",
+                app.notifications
+                    .history()
+                    .first { it.kind == NotificationKind.PRICE_MOVE }
+                    .title,
+            )
             // The next day's update hides amounts when amounts are hidden.
-            app.setHideAmounts(true)
-            val next = app.evaluateNotifications("2027-01-16", 9).single { it.kind == NotificationKind.DAILY_UPDATE }
+            app.settings.setHideAmounts(true)
+            val next = app.notifications.evaluate("2027-01-16", 9).single { it.kind == NotificationKind.DAILY_UPDATE }
             assertFalse(next.body.contains("worth"))
             assertTrue(CoingeckoMarkets.parseMarkets(markets("1", athAt = 5)).single().allTimeHighAtMillis == 5L)
         }

@@ -119,9 +119,9 @@ class CoinAlertsOrderBookTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.setMarketDataConsent(true)
-                app.refreshMarketFeeds({ url, _ -> bitcoinFeeds(url) })
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.market.setConsent(true)
+                app.market.refreshFeeds({ url, _ -> bitcoinFeeds(url) })
                 var notified = 0
                 val host =
                     object : PlatformActions by delegate {
@@ -142,28 +142,42 @@ class CoinAlertsOrderBookTest {
                     onNodeWithText("Enter a number, like 100000 or 2.5.").assertIsDisplayed()
                     onNodeWithTag("alert-threshold").performTextInput("100000")
                     onNodeWithTag("alert-save").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.priceAlerts("bitcoin").size == 1 }
-                    val alert = app.priceAlerts("bitcoin").single()
+                    waitUntil(timeoutMillis = 10_000) { app.notifications.alerts("bitcoin").size == 1 }
+                    val alert = app.notifications.alerts("bitcoin").single()
                     assertEquals(AlertCondition.ABOVE, alert.condition)
                     assertEquals(ExactDecimal.parse("100000"), alert.threshold)
                     onNodeWithText("Above 100,000.00 USD").assertIsDisplayed()
 
                     onNodeWithTag("alert-switch-${alert.id}").performClick()
-                    waitUntil(timeoutMillis = 10_000) { !app.priceAlerts("bitcoin").single().enabled }
+                    waitUntil(timeoutMillis = 10_000) {
+                        !app.notifications
+                            .alerts("bitcoin")
+                            .single()
+                            .enabled
+                    }
                     onNodeWithTag("alert-editor").assertDoesNotExist()
 
                     onNodeWithTag("alert-row-${alert.id}").performClick()
                     onNodeWithTag("alert-threshold").performTextReplacement("120000")
                     onNodeWithTag("alert-save").performClick()
                     waitUntil(timeoutMillis = 10_000) {
-                        app.priceAlerts("bitcoin").single().threshold == ExactDecimal.parse("120000")
+                        app.notifications
+                            .alerts("bitcoin")
+                            .single()
+                            .threshold == ExactDecimal.parse("120000")
                     }
                     onNodeWithText("Above 120,000.00 USD").assertIsDisplayed()
-                    assertTrue(!app.priceAlerts("bitcoin").single().enabled, "Editing keeps the switch state")
+                    assertTrue(
+                        !app.notifications
+                            .alerts("bitcoin")
+                            .single()
+                            .enabled,
+                        "Editing keeps the switch state",
+                    )
 
                     onNodeWithTag("alert-row-${alert.id}").performClick()
                     onNodeWithTag("alert-delete").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.priceAlerts("bitcoin").isEmpty() }
+                    waitUntil(timeoutMillis = 10_000) { app.notifications.alerts("bitcoin").isEmpty() }
                     onNodeWithText("Above 120,000.00 USD").assertDoesNotExist()
                     // Save, toggle, edit and delete each tell the host once.
                     assertEquals(4, notified)
@@ -176,9 +190,9 @@ class CoinAlertsOrderBookTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.setMarketDataConsent(true)
-                app.refreshMarketFeeds({ url, _ -> bitcoinFeeds(url) })
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.market.setConsent(true)
+                app.market.refreshFeeds({ url, _ -> bitcoinFeeds(url) })
                 var next: OrderBookResult = OrderBookResult.Loaded(book("89999.90", "90000.10"))
                 var requests = 0
                 val host =
@@ -206,7 +220,7 @@ class CoinAlertsOrderBookTest {
                     assertEquals(0, requests, "No order book is requested before consent")
                     onNodeWithTag("order-consent").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("order-row-0").fetchSemanticsNodes().isNotEmpty() }
-                    assertTrue(app.orderBookConsent())
+                    assertTrue(app.market.orderBookConsent())
                     onNodeWithText("Kraken · XBT/USD · updated", substring = true).assertIsDisplayed()
                     onNodeWithTag("order-row-0").assertExists()
                     onNodeWithText("89999.9").assertIsDisplayed()

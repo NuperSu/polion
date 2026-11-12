@@ -45,7 +45,7 @@ internal fun HiddenAssetsDialog(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(app) {
-        choices = withContext(host.dispatcher) { app.evmChainChoices() }
+        choices = withContext(host.dispatcher) { app.evm.chainChoices() }
     }
 
     fun setShown(
@@ -56,7 +56,7 @@ internal fun HiddenAssetsDialog(
         error = null
         scope.launch {
             try {
-                withContext(host.dispatcher) { app.setAssetShown(asset, shown) }
+                withContext(host.dispatcher) { app.assets.setShown(asset, shown) }
                 onChanged(if (shown) "Token shown" else "Token hidden")
             } catch (cancelled: CancellationException) {
                 throw cancelled

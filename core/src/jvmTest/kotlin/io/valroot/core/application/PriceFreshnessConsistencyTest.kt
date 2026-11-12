@@ -39,17 +39,17 @@ class PriceFreshnessConsistencyTest {
             val app = PortfolioApplication(db) { now }
             val owner = OwnerId("owner")
             val account = AccountId("account")
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(BITCOIN_ASSET, AssetIdentity(AssetKind.NATIVE, BITCOIN_MAINNET, "BTC")),
                 AssetMetadata("BTC", "Bitcoin", 8, 0),
             )
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(AssetId("USD"), AssetIdentity(AssetKind.FIAT, null, "USD")),
                 AssetMetadata("USD", "US dollar", 2, 0),
             )
-            app.saveOwner(Owner(owner, "Owner"))
-            app.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
-            app.saveManualActivity(
+            app.accounts.saveOwner(Owner(owner, "Owner"))
+            app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
+            app.transactions.saveManualActivity(
                 Activity(
                     ActivityId("deposit"),
                     1000L,
@@ -87,7 +87,11 @@ class PriceFreshnessConsistencyTest {
                     .valuations
                     .single { it.asset == BITCOIN_ASSET }
                     .priceStatus
-            val history = app.history(now).single { it.asset == BITCOIN_ASSET }.priceStatus
+            val history =
+                app.analytics
+                    .history(now)
+                    .single { it.asset == BITCOIN_ASSET }
+                    .priceStatus
 
             assertEquals(PriceStatus.STALE, dashboard)
             assertEquals(dashboard, history)

@@ -167,7 +167,7 @@ internal fun WalletDialog(
                         scope.launch {
                             runCatching {
                                 withContext(host.dispatcher) {
-                                    app.saveBitcoinWallet(
+                                    app.bitcoinWallets.save(
                                         TrackingTarget(
                                             id,
                                             selected,

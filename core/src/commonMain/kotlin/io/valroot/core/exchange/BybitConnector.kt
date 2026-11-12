@@ -58,19 +58,19 @@ class BybitConnector(
     ): SourceRefreshOutcome {
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
-        app.exchangeTargets(ExchangeKind.BYBIT).forEach { (account, uid) ->
-            if (!app.hasExchangeKey(ExchangeKind.BYBIT, account)) {
+        app.exchanges.targets(ExchangeKind.BYBIT).forEach { (account, uid) ->
+            if (!app.exchanges.hasKey(ExchangeKind.BYBIT, account)) {
                 notes += "A Bybit account needs its API key again"
                 return@forEach
             }
             options.onProgress("Bybit")
             jobs +=
                 try {
-                    if (options.recoverHistory) app.forgetExchangeHistory(account)
+                    if (options.recoverHistory) app.exchanges.forgetHistory(account)
                     sync(app, account, uid, options)?.let { notes += it }
                     JobState.COMPLETED
                 } catch (failure: Exception) {
-                    app.recordExchangeError(account, message(failure))
+                    app.exchanges.recordError(account, message(failure))
                     JobState.FAILED
                 }
         }
@@ -102,7 +102,7 @@ class BybitConnector(
                 BybitStream(BybitDecoder.DEPOSITS, Bybit.RECORD_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 12),
                 BybitStream(BybitDecoder.WITHDRAWALS, Bybit.RECORD_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 12),
             )
-        val states = app.exchangeStreams(account)
+        val states = app.exchanges.streams(account)
         var unfinished = false
         streams.forEach { stream ->
             options.onProgress("Bybit · ${STREAM_LABELS.getValue(stream.name)}")
@@ -116,7 +116,7 @@ class BybitConnector(
                     return@forEach
                 }
                 state = state.copy(toMillis = to)
-                app.saveExchangeStream(account, state)
+                app.exchanges.saveStream(account, state)
                 from = to
             }
             // Back towards the account's start.
@@ -136,7 +136,7 @@ class BybitConnector(
                         // Bybit refuses windows older than it keeps: the history ends here.
                         if (refused.rateLimited || refused.invalidKey || refused.clockSkew) throw refused
                         state = state.copy(complete = true)
-                        app.saveExchangeStream(account, state)
+                        app.exchanges.saveStream(account, state)
                         break
                     }
                 val empty = if (found == 0) state.emptyWindows + 1 else 0
@@ -146,20 +146,20 @@ class BybitConnector(
                         emptyWindows = empty,
                         complete = start <= limit || (stream.stopAfterEmpty != null && empty >= stream.stopAfterEmpty),
                     )
-                app.saveExchangeStream(account, state)
+                app.exchanges.saveStream(account, state)
             }
             if (!state.complete) unfinished = true
         }
         readConverts(app, account, uid, budget)
         // Symbols not matched to a coin yet: Bybit's token contracts let CoinGecko's contract map name the coin.
         val held = balances.filter { it.amount.coefficient.sign != 0 }.map { it.coin }
-        val unmatched = app.unmatchedExchangeSymbols(BYBIT_EXCHANGE, app.exchangeRowSymbols(ExchangeKind.BYBIT, account) + held)
+        val unmatched = app.exchanges.unmatchedSymbols(BYBIT_EXCHANGE, app.exchanges.rowSymbols(ExchangeKind.BYBIT, account) + held)
         val contracts = mutableMapOf<String, List<ExchangeContract>>()
         unmatched.sorted().take(MAX_COIN_LOOKUPS).forEach { symbol ->
             if (budget.left > 0) contracts += Bybit.parseCoinContracts(budget.send(Bybit.coin(symbol)))
         }
-        val covered = app.exchangeStreams(account).filterKeys { it == BybitDecoder.LOG || it == BybitDecoder.FUNDING }
-        app.applyBybitHistory(
+        val covered = app.exchanges.streams(account).filterKeys { it == BybitDecoder.LOG || it == BybitDecoder.FUNDING }
+        app.exchanges.applyBybitHistory(
             account,
             uid,
             balances,
@@ -214,7 +214,7 @@ class BybitConnector(
             count += page.size
             cursor = next.takeIf { page.isNotEmpty() && it != cursor }
         } while (cursor != null)
-        app.saveExchangeRows(ExchangeKind.BYBIT, account, uid, rows, BybitDecoder.VERSION)
+        app.exchanges.saveRows(ExchangeKind.BYBIT, account, uid, rows, BybitDecoder.VERSION)
         return count
     }
 
@@ -225,11 +225,11 @@ class BybitConnector(
         uid: String,
         budget: Budget,
     ) {
-        val known = app.exchangeRowKeys(account, BybitDecoder.CONVERTS)
+        val known = app.exchanges.rowKeys(account, BybitDecoder.CONVERTS)
         var page = 1
         while (page <= MAX_CONVERT_PAGES && budget.left > 0) {
             val converts = Bybit.parseConverts(budget.send(Bybit.converts(page)))
-            app.saveExchangeRows(
+            app.exchanges.saveRows(
                 ExchangeKind.BYBIT,
                 account,
                 uid,

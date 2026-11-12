@@ -77,12 +77,12 @@ class ScopedCsvExportTest {
             }
             save("a", "source-a")
             save("b", "source-b")
-            app.saveManualActivity(activity("manual", ActivityKind.DEPOSIT, listOf(movement("manual", first, btc, "1"))))
+            app.transactions.saveManualActivity(activity("manual", ActivityKind.DEPOSIT, listOf(movement("manual", first, btc, "1"))))
             val filter = ActivityFilter(portfolio = selected, network = "network-a", includeNetworkChoices = true)
             val result = app.snapshot(filter)
             assertEquals(listOf("network-a", "network-b"), result.activityNetworks)
             assertEquals(listOf("a"), result.activities.map { it.activity.id.value })
-            assertEquals(listOf("a"), rows(app.exportCsv(filter)).map { it[0] })
+            assertEquals(listOf("a"), rows(app.csv.export(filter)).map { it[0] })
             assertEquals(3, app.snapshot(ActivityFilter(portfolio = selected)).activityTotal)
             save("a", "source-b")
             app.reload()
@@ -101,15 +101,15 @@ class ScopedCsvExportTest {
     @Test fun statusFilterMatchesSnapshotAndExportAcrossPages() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)
-            app.saveManualActivity(activity("confirmed", ActivityKind.DEPOSIT, listOf(movement("confirmed", first, btc, "5"))))
-            app.saveManualActivity(
+            app.transactions.saveManualActivity(activity("confirmed", ActivityKind.DEPOSIT, listOf(movement("confirmed", first, btc, "5"))))
+            app.transactions.saveManualActivity(
                 activity(
                     "pending-1",
                     ActivityKind.DEPOSIT,
                     listOf(movement("pending-1", first, btc, "2")),
                 ).copy(status = ActivityStatus.PENDING),
             )
-            app.saveManualActivity(
+            app.transactions.saveManualActivity(
                 activity(
                     "pending-2",
                     ActivityKind.DEPOSIT,
@@ -126,7 +126,7 @@ class ScopedCsvExportTest {
                     .single()
                     .activity.status,
             )
-            assertEquals(setOf("pending-1", "pending-2"), rows(app.exportCsv(filter)).map { it[0] }.toSet())
+            assertEquals(setOf("pending-1", "pending-2"), rows(app.csv.export(filter)).map { it[0] }.toSet())
             assertEquals(1, app.snapshot(ActivityFilter(portfolio = selected, status = ActivityStatus.CONFIRMED)).activityTotal)
         }
     }
@@ -142,7 +142,7 @@ class ScopedCsvExportTest {
     @Test fun selectedPortfolioExportsOnlyItsLegOfCrossScopeTransfer() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)
-            app.saveManualActivity(
+            app.transactions.saveManualActivity(
                 activity(
                     "cross-scope",
                     ActivityKind.TRANSFER,
@@ -154,7 +154,7 @@ class ScopedCsvExportTest {
                 ),
             )
 
-            val selectedCsv = app.exportCsv(ActivityFilter(portfolio = selected))
+            val selectedCsv = app.csv.export(ActivityFilter(portfolio = selected))
             val row = rows(selectedCsv).single()
             assertEquals("cross-scope", row[0])
             assertEquals(first.value, row[4])
@@ -164,15 +164,15 @@ class ScopedCsvExportTest {
             assertFalse(selectedCsv.contains(foreign.value))
             assertFalse(selectedCsv.contains(otherAsset.value))
             assertFalse(selectedCsv.contains("987654321"))
-            assertEquals(foreign.value, rows(app.exportCsv(ActivityFilter(portfolio = otherPortfolio))).single()[4])
-            assertTrue(rows(app.exportCsv(ActivityFilter(portfolio = selected, account = foreign))).isEmpty())
+            assertEquals(foreign.value, rows(app.csv.export(ActivityFilter(portfolio = otherPortfolio))).single()[4])
+            assertTrue(rows(app.csv.export(ActivityFilter(portfolio = selected, account = foreign))).isEmpty())
         }
     }
 
     @Test fun accountAssetKindAndSearchFiltersSelectMatchingMovements() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)
-            app.saveManualActivity(
+            app.transactions.saveManualActivity(
                 activity(
                     "mixed-transfer",
                     ActivityKind.TRANSFER,
@@ -183,24 +183,26 @@ class ScopedCsvExportTest {
                     ),
                 ),
             )
-            app.saveOverlay(ActivityOverlay(ActivityId("mixed-transfer"), label = "Chosen transfer", note = "Receipt needle"))
-            app.saveManualActivity(activity("deposit", ActivityKind.DEPOSIT, listOf(movement("deposit", first, btc, "11"))))
+            app.transactions.saveOverlay(ActivityOverlay(ActivityId("mixed-transfer"), label = "Chosen transfer", note = "Receipt needle"))
+            app.transactions.saveManualActivity(activity("deposit", ActivityKind.DEPOSIT, listOf(movement("deposit", first, btc, "11"))))
 
-            assertEquals(3, rows(app.exportCsv(ActivityFilter(account = first))).size)
-            assertEquals(setOf(first.value), rows(app.exportCsv(ActivityFilter(account = first))).map { it[4] }.toSet())
-            assertEquals(1, rows(app.exportCsv(ActivityFilter(asset = otherAsset))).size)
-            assertEquals(3, rows(app.exportCsv(ActivityFilter(kind = ActivityKind.TRANSFER))).size)
-            assertEquals(3, rows(app.exportCsv(ActivityFilter(search = "cHoSeN"))).size)
-            assertEquals(3, rows(app.exportCsv(ActivityFilter(search = "NEEDLE"))).size)
+            assertEquals(3, rows(app.csv.export(ActivityFilter(account = first))).size)
+            assertEquals(setOf(first.value), rows(app.csv.export(ActivityFilter(account = first))).map { it[4] }.toSet())
+            assertEquals(1, rows(app.csv.export(ActivityFilter(asset = otherAsset))).size)
+            assertEquals(3, rows(app.csv.export(ActivityFilter(kind = ActivityKind.TRANSFER))).size)
+            assertEquals(3, rows(app.csv.export(ActivityFilter(search = "cHoSeN"))).size)
+            assertEquals(3, rows(app.csv.export(ActivityFilter(search = "NEEDLE"))).size)
             val combined =
                 rows(
-                    app.exportCsv(
+                    app.csv.export(
                         ActivityFilter(portfolio = selected, account = first, asset = btc, kind = ActivityKind.TRANSFER, search = "needle"),
                     ),
                 ).single()
             assertEquals(listOf("mixed-transfer", first.value, btc.value, "-7"), listOf(combined[0], combined[4], combined[5], combined[6]))
-            assertTrue(rows(app.exportCsv(ActivityFilter(search = "absent"))).isEmpty())
-            assertTrue(rows(app.exportCsv(ActivityFilter(portfolio = selected, asset = otherAsset, kind = ActivityKind.DEPOSIT))).isEmpty())
+            assertTrue(rows(app.csv.export(ActivityFilter(search = "absent"))).isEmpty())
+            assertTrue(
+                rows(app.csv.export(ActivityFilter(portfolio = selected, asset = otherAsset, kind = ActivityKind.DEPOSIT))).isEmpty(),
+            )
         }
     }
 
@@ -209,28 +211,30 @@ class ScopedCsvExportTest {
             val app = fixture(db)
             repeat(60) { index ->
                 val id = "match-$index"
-                app.saveManualActivity(activity(id, ActivityKind.DEPOSIT, listOf(movement(id, first, btc, "1"))))
+                app.transactions.saveManualActivity(activity(id, ActivityKind.DEPOSIT, listOf(movement(id, first, btc, "1"))))
             }
-            app.saveManualActivity(activity("archived", ActivityKind.DEPOSIT, listOf(movement("archived", sibling, btc, "999"))))
-            app.archiveAccount(sibling)
+            app.transactions.saveManualActivity(
+                activity("archived", ActivityKind.DEPOSIT, listOf(movement("archived", sibling, btc, "999"))),
+            )
+            app.accounts.archiveAccount(sibling)
             val filter = ActivityFilter(portfolio = selected, search = "match-", offset = 55, limit = 1)
 
             assertEquals(1, app.snapshot(filter).activities.size)
-            val exported = rows(app.exportCsv(filter))
+            val exported = rows(app.csv.export(filter))
             assertEquals((0 until 60).map { "match-$it" }.toSet(), exported.map { it[0] }.toSet())
             assertEquals(60, exported.size)
-            assertFalse(app.exportCsv().contains("archived"))
-            assertTrue(rows(app.exportCsv(ActivityFilter(account = sibling))).isEmpty())
+            assertFalse(app.csv.export().contains("archived"))
+            assertTrue(rows(app.csv.export(ActivityFilter(account = sibling))).isEmpty())
         }
     }
 
     @Test fun scopedExportEscapesFormulaTextAndPreservesSignedAmounts() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)
-            app.saveManualActivity(activity("formula", ActivityKind.PAYMENT, listOf(movement("formula", first, btc, "-7"))))
-            app.saveOverlay(ActivityOverlay(ActivityId("formula"), label = "  =2+2", note = "@formula,\"quoted\""))
+            app.transactions.saveManualActivity(activity("formula", ActivityKind.PAYMENT, listOf(movement("formula", first, btc, "-7"))))
+            app.transactions.saveOverlay(ActivityOverlay(ActivityId("formula"), label = "  =2+2", note = "@formula,\"quoted\""))
 
-            val csv = app.exportCsv(ActivityFilter(portfolio = selected, search = "=2+2"))
+            val csv = app.csv.export(ActivityFilter(portfolio = selected, search = "=2+2"))
             assertTrue(csv.contains("\"'  =2+2\""))
             assertTrue(csv.contains("\"'@formula,\"\"quoted\"\"\""))
             assertTrue(csv.contains("\"-7\""))
@@ -242,13 +246,13 @@ class ScopedCsvExportTest {
         val app = PortfolioApplication(db) { 1000L }
         val owner = OwnerId("first-owner")
         val otherOwner = OwnerId("other-owner")
-        app.saveOwner(Owner(owner, "First owner"))
-        app.saveOwner(Owner(otherOwner, "Other owner"))
-        app.saveAccount(Account(first, owner, "First", AccountKind.ACCOUNT))
-        app.saveAccount(Account(sibling, owner, "Sibling", AccountKind.ACCOUNT))
-        app.saveAccount(Account(foreign, otherOwner, "Foreign", AccountKind.ACCOUNT))
-        app.savePortfolio(Portfolio(selected, "Selected", "USD", ownerIds = setOf(owner), accountIds = setOf(first)))
-        app.savePortfolio(Portfolio(otherPortfolio, "Other", "USD", ownerIds = setOf(otherOwner)))
+        app.accounts.saveOwner(Owner(owner, "First owner"))
+        app.accounts.saveOwner(Owner(otherOwner, "Other owner"))
+        app.accounts.saveAccount(Account(first, owner, "First", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(sibling, owner, "Sibling", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(foreign, otherOwner, "Foreign", AccountKind.ACCOUNT))
+        app.accounts.savePortfolio(Portfolio(selected, "Selected", "USD", ownerIds = setOf(owner), accountIds = setOf(first)))
+        app.accounts.savePortfolio(Portfolio(otherPortfolio, "Other", "USD", ownerIds = setOf(otherOwner)))
         return app
     }
 

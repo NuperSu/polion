@@ -1,6 +1,6 @@
 # EVM addresses (Ethereum and other chains)
 
-Code: `core/…/evm/` (identity, Alchemy client, decoder, connector, chain state), `core/…/market/CoingeckoCatalog.kt` and `AssetLinkRepository.kt`, and in `PortfolioApplication`: `applyEvmChainHistory`, `checkEvmBalances`, `refreshEvmCatalog`, `refreshLinkedCoinPrices`, `refreshLinkedCoinUsdPrices`, `backfillLinkedCoinUsdHistory`; `core/…/market/DefiLlamaPrices.kt`, `core/…/evm/OneInch.kt` and `EvmRecoveredRepository.kt`. Hosts: `AlchemyTransport`, `OneInchTransport` and `DefiLlamaTransport` in `androidApp` and `desktopApp`. Tests: `EvmIdentityTest`, `AlchemyTest`, `EvmConnectorTest`, `OneInchTransportTest`, `EvmAssetsApplicationTest`, `CoingeckoCatalogTest`, `AlchemyTransportTest`, `EvmUiTest`.
+Code: `core/…/evm/` (identity, Alchemy client, decoder, connector, chain state), `core/…/market/CoingeckoCatalog.kt` and `AssetLinkRepository.kt`, and in `EvmService` (`app.evm`) and `LinkedCoinService` (`app.linkedCoins`): `applyChainHistory`, `checkBalances`, `refreshCatalog`, `refreshPrices`, `refreshUsdPrices`, `backfillUsdHistory`; `core/…/market/DefiLlamaPrices.kt`, `core/…/evm/OneInch.kt` and `EvmRecoveredRepository.kt`. Hosts: `AlchemyTransport`, `OneInchTransport` and `DefiLlamaTransport` in `androidApp` and `desktopApp`. Tests: `EvmIdentityTest`, `AlchemyTest`, `EvmConnectorTest`, `OneInchTransportTest`, `EvmAssetsApplicationTest`, `CoingeckoCatalogTest`, `AlchemyTransportTest`, `EvmUiTest`.
 
 ## Tracking an address
 

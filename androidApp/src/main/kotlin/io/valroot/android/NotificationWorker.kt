@@ -79,7 +79,7 @@ class NotificationWorker(
  */
 internal fun checkPriceAlerts(context: Context): List<NotificationMessage> =
     AndroidSqliteDatabase(context.applicationContext.getDatabasePath("portfolio.sqlite").path).use { db ->
-        PortfolioApplication(db, System::currentTimeMillis).runNotificationCheck(
+        PortfolioApplication(db, System::currentTimeMillis).notifications.runCheck(
             MarketFeedRefresher.transport::feed,
             LocalDate.now().toString(),
             LocalTime.now().hour,

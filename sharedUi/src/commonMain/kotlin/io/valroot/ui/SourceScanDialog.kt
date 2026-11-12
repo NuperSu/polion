@@ -40,7 +40,7 @@ internal fun SourceScanDialog(
     var error by remember(target.id) { mutableStateOf(false) }
     LaunchedEffect(app, target.id) {
         try {
-            rows = withContext(host.dispatcher) { app.sourceScanJobs(target.id) }
+            rows = withContext(host.dispatcher) { app.sources.scanJobs(target.id) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

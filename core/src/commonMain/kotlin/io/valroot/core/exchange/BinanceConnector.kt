@@ -55,19 +55,19 @@ class BinanceConnector(
     ): SourceRefreshOutcome {
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
-        app.exchangeTargets(ExchangeKind.BINANCE).forEach { (account, uid) ->
-            if (!app.hasExchangeKey(ExchangeKind.BINANCE, account)) {
+        app.exchanges.targets(ExchangeKind.BINANCE).forEach { (account, uid) ->
+            if (!app.exchanges.hasKey(ExchangeKind.BINANCE, account)) {
                 notes += "A Binance account needs its API key again"
                 return@forEach
             }
             options.onProgress("Binance")
             jobs +=
                 try {
-                    if (options.recoverHistory) app.forgetExchangeHistory(account)
+                    if (options.recoverHistory) app.exchanges.forgetHistory(account)
                     sync(app, account, uid, options)?.let { notes += it }
                     JobState.COMPLETED
                 } catch (failure: Exception) {
-                    app.recordExchangeError(account, message(failure))
+                    app.exchanges.recordError(account, message(failure))
                     JobState.FAILED
                 }
         }
@@ -90,7 +90,7 @@ class BinanceConnector(
         val now = app.clockMillis()
         val balances = balances(budget, spot)
 
-        fun save(rows: List<ExchangeRow>) = app.saveExchangeRows(ExchangeKind.BINANCE, account, uid, rows, BinanceDecoder.VERSION)
+        fun save(rows: List<ExchangeRow>) = app.exchanges.saveRows(ExchangeKind.BINANCE, account, uid, rows, BinanceDecoder.VERSION)
         var unfinished = false
         STREAMS.forEach { stream ->
             options.onProgress("Binance · ${stream.name}")
@@ -105,15 +105,15 @@ class BinanceConnector(
         }
 
         options.onProgress("Binance · trades")
-        val pairs = if (budget.left > 0) readTrades(app, account, balances, now, budget, ::save) else app.exchangePairs(account)
+        val pairs = if (budget.left > 0) readTrades(app, account, balances, now, budget, ::save) else app.exchanges.pairs(account)
         if (pairs == null) unfinished = true
 
         // Symbols not matched to a coin yet: Binance's token contracts let CoinGecko's contract map name the coin.
-        val known = pairs ?: app.exchangePairs(account)
+        val known = pairs ?: app.exchanges.pairs(account)
         val unmatched =
-            app.unmatchedExchangeSymbols(
+            app.exchanges.unmatchedSymbols(
                 ExchangeKind.BINANCE.id,
-                app.exchangeRowSymbols(ExchangeKind.BINANCE, account) + balances.keys,
+                app.exchanges.rowSymbols(ExchangeKind.BINANCE, account) + balances.keys,
             )
         val contracts =
             if (unmatched.isNotEmpty() &&
@@ -123,8 +123,12 @@ class BinanceConnector(
             } else {
                 emptyMap()
             }
-        app.applyBinanceHistory(account, uid, balances, now, known, contracts)
-        app.saveExchangeCursor(account, BALANCES_CURSOR, balances.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" })
+        app.exchanges.applyBinanceHistory(account, uid, balances, now, known, contracts)
+        app.exchanges.saveCursor(
+            account,
+            BALANCES_CURSOR,
+            balances.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" },
+        )
         return if (unfinished) "Older Binance history is still being read; it continues with the next refresh" else null
     }
 
@@ -171,14 +175,14 @@ class BinanceConnector(
         budget: Budget,
         save: (List<ExchangeRow>) -> Unit,
     ): Boolean {
-        var state = app.exchangeStreams(account)[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
+        var state = app.exchanges.streams(account)[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
         var from = maxOf(state.fromMillis, state.toMillis - Binance.DAY_MILLIS)
         while (from < now) {
             if (budget.left <= 0) return false
             val to = minOf(from + stream.windowMillis, now)
             save(stream.read(budget::send, from, to))
             state = state.copy(toMillis = to)
-            app.saveExchangeStream(account, state)
+            app.exchanges.saveStream(account, state)
             from = to
         }
         val limit = maxOf(stream.oldest(now), Binance.LAUNCH_MILLIS)
@@ -192,7 +196,7 @@ class BinanceConnector(
                     // Binance refuses windows older than it keeps: the history ends here.
                     if (refused.rateLimited || refused.invalidKey || refused.clockSkew) throw refused
                     state = state.copy(complete = true)
-                    app.saveExchangeStream(account, state)
+                    app.exchanges.saveStream(account, state)
                     break
                 }
             val empty = if (found == 0) state.emptyWindows + 1 else 0
@@ -202,7 +206,7 @@ class BinanceConnector(
                     emptyWindows = empty,
                     complete = start <= limit || (stream.stopAfterEmpty != null && empty >= stream.stopAfterEmpty),
                 )
-            app.saveExchangeStream(account, state)
+            app.exchanges.saveStream(account, state)
         }
         return true
     }
@@ -220,10 +224,13 @@ class BinanceConnector(
         save: (List<ExchangeRow>) -> Unit,
     ): Map<String, Pair<String, String>>? {
         val listed = Binance.parseSymbols(budget.send(Binance.tickers()))
-        val cursors = app.exchangeCursors(account)
+        val cursors = app.exchanges.cursors(account)
         val coins =
-            app.exchangeRowSymbols(ExchangeKind.BINANCE, account) + balances.keys +
-                app.exchangePairs(account).values.flatMap { listOf(it.first, it.second) }
+            app.exchanges.rowSymbols(ExchangeKind.BINANCE, account) + balances.keys +
+                app.exchanges
+                    .pairs(account)
+                    .values
+                    .flatMap { listOf(it.first, it.second) }
         val candidates = mutableMapOf<String, Pair<String, String>>()
         coins.forEach { base ->
             (coins + QUOTES).forEach { quote ->
@@ -241,7 +248,7 @@ class BinanceConnector(
                 .mapNotNull { entry -> entry.split('=').takeIf { it.size == 2 }?.let { it[0] to it[1] } }
                 .toMap()
         val changed = (balances.keys + previous.keys).filter { previous[it] != balances[it]?.toString() }.toSet()
-        candidates.forEach { (symbol, pair) -> app.saveExchangeCursor(account, PAIR + symbol, "${pair.first}/${pair.second}") }
+        candidates.forEach { (symbol, pair) -> app.exchanges.saveCursor(account, PAIR + symbol, "${pair.first}/${pair.second}") }
         for ((symbol, pair) in candidates.entries.sortedBy { it.key }) {
             val cursor = cursors[TRADE_CURSOR + symbol]?.split('|')
             val nextId = cursor?.getOrNull(0)?.toLongOrNull() ?: 0L
@@ -254,7 +261,7 @@ class BinanceConnector(
                 val trades = Binance.parseTrades(budget.send(Binance.trades(symbol, fromId)))
                 save(trades.map { ExchangeRow(BinanceDecoder.TRADES, "$symbol:${it.id}", it.atMillis, it.raw, "") })
                 trades.maxOfOrNull { it.id }?.let { fromId = it + 1 }
-                app.saveExchangeCursor(
+                app.exchanges.saveCursor(
                     account,
                     TRADE_CURSOR + symbol,
                     "$fromId|${if (trades.size < Binance.TRADE_PAGE) now else checked ?: 0}",
@@ -262,7 +269,7 @@ class BinanceConnector(
                 if (trades.size < Binance.TRADE_PAGE) break
             }
         }
-        return app.exchangePairs(account)
+        return app.exchanges.pairs(account)
     }
 
     private fun message(failure: Exception): String =

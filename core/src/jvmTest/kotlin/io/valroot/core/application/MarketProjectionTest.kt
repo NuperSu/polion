@@ -27,7 +27,7 @@ class MarketProjectionTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
             val before = app.snapshot()
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(coin, AssetIdentity(AssetKind.CUSTOM, null, "saved-coin")),
                 AssetMetadata("COIN", "Saved coin", 8, 0),
             )
@@ -52,17 +52,17 @@ class MarketProjectionTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
             app.snapshot()
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(coin, AssetIdentity(AssetKind.CUSTOM, null, "saved-coin")),
                 AssetMetadata("COIN", "Saved coin", 8, 0),
             )
             val repository = MarketRepository(db)
             repository.recordPrice(provider("first", "1.000000000000000001", 100))
-            app.recordManualPrice(
+            app.prices.recordManual(
                 PriceObservation("manual", Price(coin, usd, ExactDecimal.parse("2.000000000000000002")), null, 200, 200, true),
             )
             repository.recordPrice(provider("latest", "3.000000000000000003", 300))
-            val points = app.priceSeries(coin, usd, listOf(0, 100, 200, 300))
+            val points = app.analytics.priceSeries(coin, usd, listOf(0, 100, 200, 300))
             assertNull(points[0].price)
             assertEquals(PriceStatus.MISSING, points[0].priceStatus)
             assertEquals(
@@ -77,9 +77,9 @@ class MarketProjectionTest {
             // A newer automatic observation replaces the older manual override.
             assertEquals("latest", points[3].price?.id)
             now = 400
-            assertEquals(1, app.useProviderPrices(coin, usd))
+            assertEquals(1, app.prices.useProvider(coin, usd))
             // The withdrawal takes effect at 400, so history before it still uses the manual observation.
-            assertEquals(listOf("manual", "latest"), app.priceSeries(coin, usd, listOf(250, 300)).map { it.price?.id })
+            assertEquals(listOf("manual", "latest"), app.analytics.priceSeries(coin, usd, listOf(250, 300)).map { it.price?.id })
             assertTrue(app.snapshot().valuations.isEmpty())
             assertTrue(app.snapshot().activities.isEmpty())
         }
@@ -90,7 +90,7 @@ class MarketProjectionTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
             app.snapshot()
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(coin, AssetIdentity(AssetKind.CUSTOM, null, "saved-coin")),
                 AssetMetadata("COIN", "Saved coin", 8, 0),
             )
@@ -98,7 +98,7 @@ class MarketProjectionTest {
             repository.recordPrice(provider("future", "1", 2000))
             repository.recordPrice(provider("unsupported", "2", 100).copy(providerId = ProviderId("unknown")))
             val eur = AssetId("EUR")
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(eur, AssetIdentity(AssetKind.FIAT, null, "EUR")),
                 AssetMetadata("EUR", "Euro", 2, 0),
             )

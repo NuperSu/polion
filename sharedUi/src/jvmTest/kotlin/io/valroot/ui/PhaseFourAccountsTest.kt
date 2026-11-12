@@ -79,7 +79,7 @@ class PhaseFourAccountsTest {
                         onNodeWithTag("connect-confirm").assertIsNotEnabled()
                         host.syncStatus.value = SyncStatus(SyncPhase.SUCCESS, "Wallet discovery complete", SyncOperation.DISCOVERY)
                         waitUntil(timeoutMillis = 10000) { closed }
-                        val summary = app.accountOverview().single()
+                        val summary = app.analytics.accountOverview().single()
                         assertEquals(
                             "addr(1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa)",
                             summary.sources
@@ -98,11 +98,11 @@ class PhaseFourAccountsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.seedDemo()
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.setSourceConsent(true)
+                app.demo.seed()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.sources.setConsent(true)
                 val host = Host(delegate)
-                val before = app.exportCsv()
+                val before = app.csv.export()
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
@@ -157,7 +157,7 @@ class PhaseFourAccountsTest {
                     onNodeWithTag("history-recovery-confirm").performClick()
                     waitUntil(timeoutMillis = 10000) { host.recovery == 1 }
                     assertEquals(0, host.history)
-                    assertEquals(before, app.exportCsv())
+                    assertEquals(before, app.csv.export())
                 }
             }
         }
@@ -195,7 +195,7 @@ class PhaseFourAccountsTest {
                     onNodeWithTag("history-refresh").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10000) { host.history == 1 }
                     assertEquals(0, host.recovery)
-                    assertTrue(app.sourceConsent())
+                    assertTrue(app.sources.consent())
                 }
             }
         }
@@ -204,17 +204,17 @@ class PhaseFourAccountsTest {
     @Test fun schedulingConsentAndPreferencesSurviveBackupAndReopen() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            app.setRefreshPreferences(true, true)
-            app.setSourceConsent(true)
-            app.setAutomaticPriceConsent(true)
-            val backup = app.exportBackup("schedule-password".toCharArray())
+            app.settings.setRefreshPreferences(true, true)
+            app.sources.setConsent(true)
+            app.prices.setAutomaticConsent(true)
+            val backup = app.backup.export("schedule-password".toCharArray())
             JvmSqliteDatabase(":memory:").use { restored ->
-                app.restoreToStaging(restored, backup, "schedule-password".toCharArray())
+                app.backup.restoreToStaging(restored, backup, "schedule-password".toCharArray())
                 val copy = PortfolioApplication(restored) { 1000L }
-                val preferences = RefreshPreferences(copy.automaticRefreshPreference() == true, copy.wifiOnlyRefreshPreference())
+                val preferences = RefreshPreferences(copy.settings.automaticRefresh() == true, copy.settings.wifiOnlyRefresh())
                 assertEquals(
                     RefreshSchedulePlan(true, true, true),
-                    refreshSchedulePlan(preferences, copy.sourceConsent(), copy.automaticPriceConsent()),
+                    refreshSchedulePlan(preferences, copy.sources.consent(), copy.prices.automaticConsent()),
                 )
                 assertEquals(RefreshSchedulePlan(false, true, true), refreshSchedulePlan(preferences, false, true))
                 assertEquals(
@@ -254,7 +254,7 @@ class PhaseFourAccountsTest {
                     waitUntil(timeoutMillis = 10000) { host.discovery == 2 }
                     waitForIdle()
                     assertTrue(!closed)
-                    assertEquals(1, app.accountOverview().size)
+                    assertEquals(1, app.analytics.accountOverview().size)
                 }
             }
         }

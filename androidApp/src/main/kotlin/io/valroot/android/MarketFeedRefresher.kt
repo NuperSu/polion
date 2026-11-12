@@ -30,7 +30,7 @@ internal object MarketFeedRefresher {
                         runCatching {
                             AndroidSqliteDatabase(path).use { db ->
                                 val app = PortfolioApplication(db, System::currentTimeMillis)
-                                val result = marketRefreshMessage(app.refreshMarketFeeds(transport::feed, maxAgeMillis))
+                                val result = marketRefreshMessage(app.market.refreshFeeds(transport::feed, maxAgeMillis))
                                 refreshEvmCatalogAndPrices(app)
                                 result
                             }
@@ -58,7 +58,7 @@ internal object MarketFeedRefresher {
                         else ->
                             runCatching {
                                 AndroidSqliteDatabase(path).use { db ->
-                                    PortfolioApplication(db, System::currentTimeMillis).refreshEvmCatalog(transport::feed)
+                                    PortfolioApplication(db, System::currentTimeMillis).evm.refreshCatalog(transport::feed)
                                 }
                                 null
                             }.getOrElse { "Could not load the chain list from CoinGecko." }
@@ -71,7 +71,7 @@ internal object MarketFeedRefresher {
 
     /** Refreshes the CoinGecko catalog when it is due, so exchange symbols can be matched to coins. Never fails the caller. */
     fun refreshCatalog(app: PortfolioApplication) {
-        if (app.marketDataConsent()) runCatching { app.refreshEvmCatalog(transport::feed) }
+        if (app.market.consent()) runCatching { app.evm.refreshCatalog(transport::feed) }
     }
 
     /**
@@ -80,13 +80,13 @@ internal object MarketFeedRefresher {
      * nothing without market data consent.
      */
     fun refreshEvmCatalogAndPrices(app: PortfolioApplication) {
-        if (!app.marketDataConsent()) return
-        runCatching { app.refreshEvmCatalog(transport::feed) }
-        runCatching { app.refreshLinkedCoinUsdPrices(defiLlama::get) }
-        runCatching { app.refreshLinkedCoinPrices(transport::feed) }
-        runCatching { app.refreshLinkedCoinLogos(transport::feed) }
-        runCatching { app.backfillLinkedCoinUsdHistory(defiLlama::get, pause = Thread::sleep) }
-        runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
+        if (!app.market.consent()) return
+        runCatching { app.evm.refreshCatalog(transport::feed) }
+        runCatching { app.linkedCoins.refreshUsdPrices(defiLlama::get) }
+        runCatching { app.linkedCoins.refreshPrices(transport::feed) }
+        runCatching { app.linkedCoins.refreshLogos(transport::feed) }
+        runCatching { app.linkedCoins.backfillUsdHistory(defiLlama::get, pause = Thread::sleep) }
+        runCatching { app.linkedCoins.backfillHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
     }
 
     /**

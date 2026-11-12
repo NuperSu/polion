@@ -152,8 +152,8 @@ class BinanceConnectorTest {
     private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { now }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccountAndTarget(
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccountAndTarget(
             Account(account, OwnerId("owner"), "Binance", AccountKind.ACCOUNT),
             TrackingTarget(
                 TrackingTargetId("binance"),
@@ -163,7 +163,7 @@ class BinanceConnectorTest {
                 "Binance",
             ),
         )
-        app.setExchangeKey(ExchangeKind.BINANCE, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
+        app.exchanges.setKey(ExchangeKind.BINANCE, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
         return app
     }
 
@@ -198,7 +198,7 @@ class BinanceConnectorTest {
                     assertEquals(account, acct).let { binance.get(request) }
                 }.refresh(app, SourceRefreshOptions())
             assertEquals(listOf(JobState.COMPLETED), outcome.jobs)
-            assertNull(app.exchangeStatus(account).error)
+            assertNull(app.exchanges.status(account).error)
             assertEquals(emptyList(), outcome.notes)
 
             // Every wallet and Earn: Spot plus 50 USDT in Earn.
@@ -241,11 +241,16 @@ class BinanceConnectorTest {
                     ActivityId("binance:$uid:withdrawal:w1") to ExchangeTransfer("ETH", "0xbbb"),
                     ActivityId("binance:$uid:withdrawal:w2") to ExchangeTransfer("ETH", "0xccc"),
                 ),
-                app.exchangeTransfers(),
+                app.exchanges.transfers(),
             )
             // Symbols pairing the account's coins, as Binance lists them.
-            assertEquals(setOf("BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC"), app.exchangePairs(account).keys)
-            assertTrue(app.exchangeStreams(account).values.all { it.complete })
+            assertEquals(setOf("BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC"), app.exchanges.pairs(account).keys)
+            assertTrue(
+                app.exchanges
+                    .streams(account)
+                    .values
+                    .all { it.complete },
+            )
         }
     }
 
@@ -293,10 +298,10 @@ class BinanceConnectorTest {
             assertEquals(listOf(JobState.FAILED), connector.refresh(app, SourceRefreshOptions()).jobs)
             assertEquals(
                 "This API key can trade, transfer or withdraw; Valroot accepts only keys that can read",
-                app.exchangeStatus(account).error,
+                app.exchanges.status(account).error,
             )
             binance.readOnly = true
-            app.addExchangePair(account, "xyz", "usdt")
+            app.exchanges.addPair(account, "xyz", "usdt")
             connector.refresh(app, SourceRefreshOptions())
             assertTrue(binance.requests.any { it.path == "/api/v3/myTrades" && it.query.toMap()["symbol"] == "XYZUSDT" })
         }

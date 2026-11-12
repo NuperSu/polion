@@ -39,7 +39,7 @@ internal fun UtxoReviewDialog(
         loading = true
         failed = false
         try {
-            val loaded = withContext(host.dispatcher) { app.bitcoinUtxoReview(offset, 10, page?.snapshotId) }
+            val loaded = withContext(host.dispatcher) { app.bitcoin.utxoReview(offset, 10, page?.snapshotId) }
             page = loaded
             offset = loaded.offset
         } catch (_: Exception) {

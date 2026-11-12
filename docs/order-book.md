@@ -1,6 +1,6 @@
 # Order book
 
-Code: `core/…/market/KrakenOrderBook.kt`, `PortfolioApplication.krakenPair` / `orderBook`, `loadOrderBook` in `PlatformActions.kt`. Tests: `KrakenOrderBookTest`, `OrderBookApplicationTest`.
+Code: `core/…/market/KrakenOrderBook.kt`, `MarketService.krakenPair` / `orderBook` (`app.market`), `loadOrderBook` in `PlatformActions.kt`. Tests: `KrakenOrderBookTest`, `OrderBookApplicationTest`.
 
 ## Venue and pair
 

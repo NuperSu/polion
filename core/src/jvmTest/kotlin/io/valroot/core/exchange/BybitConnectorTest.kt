@@ -192,12 +192,12 @@ class BybitConnectorTest {
     private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { now }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccountAndTarget(
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccountAndTarget(
             Account(account, OwnerId("owner"), "Bybit", AccountKind.ACCOUNT),
             TrackingTarget(TrackingTargetId("bybit"), account, TargetIdentity(BYBIT_NETWORK, "uid", uid), TargetRole.LEAF, "Bybit"),
         )
-        app.setExchangeKey(ExchangeKind.BYBIT, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
+        app.exchanges.setKey(ExchangeKind.BYBIT, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
         return app
     }
 
@@ -227,7 +227,7 @@ class BybitConnectorTest {
                     assertEquals(account, acct).let { bybit.get(request) }
                 }.refresh(app, SourceRefreshOptions())
             assertEquals(listOf(JobState.COMPLETED), outcome.jobs)
-            assertNull(app.exchangeStatus(account).error)
+            assertNull(app.exchanges.status(account).error)
 
             // Holdings equal Bybit's: wallets plus Earn.
             assertEquals(mapOf("coin:bitcoin" to units("0.6"), "coin:tether" to units("1150")), balances(app))
@@ -277,13 +277,18 @@ class BybitConnectorTest {
                     ActivityId("bybit:$uid:funding:f0") to ExchangeTransfer("ETH", "0xabc"),
                     ActivityId("bybit:$uid:funding:f2") to ExchangeTransfer("ETH", "0xdef"),
                 ),
-                app.exchangeTransfers(),
+                app.exchanges.transfers(),
             )
             // The log is read back two years, the Funding history until Bybit refuses older windows, deposits and
             // withdrawals until a year without records.
-            assertTrue(app.exchangeStreams(account).values.all { it.complete })
+            assertTrue(
+                app.exchanges
+                    .streams(account)
+                    .values
+                    .all { it.complete },
+            )
             assertTrue(bybit.requests.size < BybitConnector.MAX_REQUESTS)
-            val funding = app.exchangeStreams(account).getValue(BybitDecoder.FUNDING)
+            val funding = app.exchanges.streams(account).getValue(BybitDecoder.FUNDING)
             assertTrue(funding.fromMillis <= now - 3 * 365 * Bybit.DAY_MILLIS + Bybit.LOG_WINDOW_MILLIS)
             assertTrue(bybit.requests.none { it.queryString.contains("SECRET") })
         }
@@ -333,13 +338,13 @@ class BybitConnectorTest {
             val bybit = FakeBybit().apply { readOnly = 0 }
             val connector = BybitConnector { _, request -> bybit.get(request) }
             assertEquals(listOf(JobState.FAILED), connector.refresh(app, SourceRefreshOptions()).jobs)
-            assertEquals("This API key can trade or withdraw; Valroot accepts only read-only keys", app.exchangeStatus(account).error)
+            assertEquals("This API key can trade or withdraw; Valroot accepts only read-only keys", app.exchanges.status(account).error)
             bybit.readOnly = 1
             bybit.keyUid = "2002"
             connector.refresh(app, SourceRefreshOptions())
-            assertEquals("This API key belongs to another Bybit account", app.exchangeStatus(account).error)
+            assertEquals("This API key belongs to another Bybit account", app.exchanges.status(account).error)
             assertEquals(2, bybit.requests.count { it.path == "/v5/user/query-api" })
-            app.setExchangeKey(ExchangeKind.BYBIT, account, null, null)
+            app.exchanges.setKey(ExchangeKind.BYBIT, account, null, null)
             val outcome = connector.refresh(app, SourceRefreshOptions())
             assertEquals(emptyList(), outcome.jobs)
             assertEquals(listOf("A Bybit account needs its API key again"), outcome.notes)
@@ -354,9 +359,9 @@ class BybitConnectorTest {
             bybit.funding += bybit.fundingRow("f5", "ZZZ", "I", "7", "7", at(7), "Airdrop", "Airdrop")
             bybit.fund["ZZZ"] = "7"
             BybitConnector { _, request -> bybit.get(request) }.refresh(app, SourceRefreshOptions())
-            assertEquals(setOf("ZZZ"), app.unresolvedExchangeCoins(BYBIT_EXCHANGE).keys)
+            assertEquals(setOf("ZZZ"), app.exchanges.unresolvedCoins(BYBIT_EXCHANGE).keys)
             assertTrue(balances(app).keys.none { it.contains("zzz") })
-            app.chooseExchangeCoin(BYBIT_EXCHANGE, "ZZZ", "zzz-coin")
+            app.exchanges.chooseCoin(BYBIT_EXCHANGE, "ZZZ", "zzz-coin")
             BybitConnector { _, request -> bybit.get(request) }.refresh(app, SourceRefreshOptions())
             assertEquals(units("7"), balances(app)["coin:zzz-coin"])
         }
@@ -366,14 +371,14 @@ class BybitConnectorTest {
     fun aWithdrawalIsSuggestedWithItsArrivalOnChainByTransaction() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
-            app.setMarketDataConsent(true)
+            app.market.setConsent(true)
 
             fun fixture(name: String) = requireNotNull(javaClass.getResource("/coingecko/$name")).readText()
             val contract = "0xdac17f958d2ee523a2206206994597c13d831ec7"
             val token =
                 io.valroot.core.evm.EvmAssets
                     .token(1, contract)
-            app.registerAsset(
+            app.assets.register(
                 io.valroot.core.market.AssetDefinition(
                     token,
                     io.valroot.core.market.AssetIdentity(
@@ -386,14 +391,14 @@ class BybitConnectorTest {
                 io.valroot.core.market
                     .AssetMetadata("USDT", "Tether", 6, 0),
             )
-            app.refreshEvmCatalog(
+            app.evm.refreshCatalog(
                 { url, _ -> if (url.contains("asset_platforms")) fixture("asset_platforms.json") else fixture("coins_list.json") },
             )
             BybitConnector { _, request -> FakeBybit().get(request) }.refresh(app, SourceRefreshOptions())
             val wallet = AccountId("wallet")
-            app.saveAccount(Account(wallet, OwnerId("owner"), "Wallet", AccountKind.WALLET))
+            app.accounts.saveAccount(Account(wallet, OwnerId("owner"), "Wallet", AccountKind.WALLET))
             // The arrival three hours later: outside the one-hour bonus, but the same transaction.
-            app.saveManualActivity(
+            app.transactions.saveManualActivity(
                 io.valroot.core.ledger.Activity(
                     ActivityId("eip155:1:0xdef:0x" + "1".repeat(40)),
                     at(7),
@@ -415,7 +420,7 @@ class BybitConnectorTest {
                     manual = true,
                 ),
             )
-            val candidate = app.reconciliationCandidates(Bybit.DAY_MILLIS).single()
+            val candidate = app.accounting.reconciliationCandidates(Bybit.DAY_MILLIS).single()
             assertEquals(
                 setOf("bybit:$uid:funding:f2", "eip155:1:0xdef:0x" + "1".repeat(40)),
                 setOf(candidate.first.value, candidate.second.value),

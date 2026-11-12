@@ -63,17 +63,17 @@ class ReliabilityInstrumentation : Instrumentation() {
                     for ((label, days, intervals) in listOf(Triple("1D", 1L, 96), Triple("1W", 7L, 84), Triple("1M", 30L, 90), Triple("1Y", 365L, 104))) {
                         val start = end - days * 86_400_000L
                         val times = (0..intervals).map { start + (end - start) / intervals * it }
-                        time("history$label.$round") { app.historySeries(times, null) }
+                        time("history$label.$round") { app.analytics.historySeries(times, null) }
                     }
                 }
-                time("currency") { app.displayCurrency(null) }
-                time("firstActivity") { app.firstHistoryActivity(null) }
+                time("currency") { app.assets.displayCurrency(null) }
+                time("firstActivity") { app.analytics.firstHistoryActivity(null) }
                 time("priceSeries97") {
-                    app.priceSeries(io.valroot.core.bitcoin.BITCOIN_ASSET, app.currency(), (0..96).map { end - 86_400_000L + 900_000L * it })
+                    app.analytics.priceSeries(io.valroot.core.bitcoin.BITCOIN_ASSET, app.assets.currency(), (0..96).map { end - 86_400_000L + 900_000L * it })
                 }
-                time("marketOverview") { app.marketOverview() }
-                time("marketOverviewAgain") { app.marketOverview() }
-                time("accountingReport") { app.accountingReport(null) }
+                time("marketOverview") { app.market.overview() }
+                time("marketOverviewAgain") { app.market.overview() }
+                time("accountingReport") { app.accounting.report(null) }
                 time("reload+snapshot") {
                     app.reload()
                     app.snapshot()
@@ -531,16 +531,16 @@ class ReliabilityInstrumentation : Instrumentation() {
                             AndroidSqliteDatabase(file.path).use { db ->
                                 db.query("PRAGMA journal_mode = $mode")
                                 val app = PortfolioApplication(db, System::currentTimeMillis)
-                                app.seedDemo()
+                                app.demo.seed()
                                 val canary = "PRIVATE_ANDROID_ERASURE_CANARY_"
-                                app.saveOverlay(
+                                app.transactions.saveOverlay(
                                     io.valroot.core.reconcile.ActivityOverlay(
                                         io.valroot.core.model
                                             .ActivityId("demo-deposit"),
                                         note = canary.repeat(1000),
                                     ),
                                 )
-                                app.wipe()
+                                app.backup.wipe()
                                 check(app.snapshot().activities.isEmpty())
                                 listOf("", "-journal", "-wal", "-shm").forEach { suffix ->
                                     val active = File(file.path + suffix)
@@ -563,14 +563,14 @@ class ReliabilityInstrumentation : Instrumentation() {
                                     """[${(current - 2 * hour) / 1000},"1","2","1","40000.12","1","1",1],""" +
                                     """[${(current - hour) / 1000},"1","2","1","41000.34","1","1",1],""" +
                                     """[${current / 1000},"1","2","1","99999","1","1",1]],"last":0}}"""
-                            app.setAutomaticPriceConsent(true)
-                            check(app.refreshAutomaticPrices({ payload }) == 2)
+                            app.prices.setAutomaticConsent(true)
+                            check(app.prices.refreshAutomatic({ payload }) == 2)
                             val prices = db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at")
                             check(prices == listOf(listOf((current - hour).toString(), "40000.12"), listOf(current.toString(), "41000.34")))
                             var calls = 0
                             check(
                                 runCatching {
-                                    app.refreshAutomaticPrices({ payload }) {
+                                    app.prices.refreshAutomatic({ payload }) {
                                         if (++calls ==
                                             3
                                         ) {
@@ -580,8 +580,8 @@ class ReliabilityInstrumentation : Instrumentation() {
                                 }.isFailure,
                             )
                             check(db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at") == prices)
-                            app.setAutomaticPriceConsent(false)
-                            check(runCatching { app.refreshAutomaticPrices({ error("must not fetch") }) }.isFailure)
+                            app.prices.setAutomaticConsent(false)
+                            check(runCatching { app.prices.refreshAutomatic({ error("must not fetch") }) }.isFailure)
                         }
                     }
                 },
@@ -591,9 +591,9 @@ class ReliabilityInstrumentation : Instrumentation() {
                             val at = System.currentTimeMillis()
                             val day = at / 86_400_000L * 86_400_000L
                             val app = PortfolioApplication(db) { at }
-                            app.setPriceSourceConsent(true)
+                            app.prices.setSourceConsent(true)
                             val result =
-                                app.fetchHistoricalPrice(
+                                app.prices.fetchHistorical(
                                     { """{"market_data":{"current_price":{"usd":42000.123456789}}}""" },
                                     io.valroot.core.model
                                         .AssetId("bitcoin:btc"),
@@ -608,7 +608,7 @@ class ReliabilityInstrumentation : Instrumentation() {
                                     ?.toString() == "42000.123456789",
                             )
                             check(db.query("SELECT COUNT(*) FROM market_prices").single().single() == "1")
-                            app.setPriceSourceConsent(false)
+                            app.prices.setSourceConsent(false)
                             check(db.query("SELECT COUNT(*) FROM market_prices").single().single() == "1")
                             val btc =
                                 io.valroot.core.model
@@ -616,7 +616,7 @@ class ReliabilityInstrumentation : Instrumentation() {
                             val usd =
                                 io.valroot.core.model
                                     .AssetId("USD")
-                            app.recordManualPrice(
+                            app.prices.recordManual(
                                 io.valroot.core.market.PriceObservation(
                                     "manual-fixture",
                                     io.valroot.core.model
@@ -632,7 +632,7 @@ class ReliabilityInstrumentation : Instrumentation() {
                                     true,
                                 ),
                             )
-                            check(app.useProviderPrices(btc, usd) == 1)
+                            check(app.prices.useProvider(btc, usd) == 1)
                             check(db.query("SELECT COUNT(*) FROM market_override_withdrawals").single().single() == "1")
                         }
                     }
@@ -641,16 +641,16 @@ class ReliabilityInstrumentation : Instrumentation() {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
                             val app = PortfolioApplication(db, System::currentTimeMillis)
-                            app.seedDemo()
+                            app.demo.seed()
                             check(app.snapshot().activityTotal == 4)
                             check(
                                 app
-                                    .historySeries(listOf(System.currentTimeMillis()))
+                                    .analytics.historySeries(listOf(System.currentTimeMillis()))
                                     .single()
                                     .valuations
                                     .isNotEmpty(),
                             )
-                            check(app.analytics(System.currentTimeMillis()).categories.isNotEmpty())
+                            check(app.analytics.report(System.currentTimeMillis()).categories.isNotEmpty())
                         }
                         AndroidSqliteDatabase(file.path).use { db ->
                             check(PortfolioApplication(db, System::currentTimeMillis).snapshot().activityTotal == 4)
@@ -662,13 +662,13 @@ class ReliabilityInstrumentation : Instrumentation() {
                         fixture { target ->
                             AndroidSqliteDatabase(source.path).use { sourceDb ->
                                 val app = PortfolioApplication(sourceDb, System::currentTimeMillis)
-                                app.seedDemo()
-                                val archive = app.exportBackup("fixture-password".toCharArray())
+                                app.demo.seed()
+                                val archive = app.backup.export("fixture-password".toCharArray())
                                 AndroidSqliteDatabase(target.path).use { targetDb ->
                                     val staging = PortfolioApplication(targetDb, System::currentTimeMillis)
-                                    check(runCatching { app.restoreToStaging(targetDb, archive, "wrong-password".toCharArray()) }.isFailure)
+                                    check(runCatching { app.backup.restoreToStaging(targetDb, archive, "wrong-password".toCharArray()) }.isFailure)
                                     check(targetDb.query("SELECT COUNT(*) FROM ledger_activities").single().single() == "0")
-                                    app.restoreToStaging(targetDb, archive, "fixture-password".toCharArray())
+                                    app.backup.restoreToStaging(targetDb, archive, "fixture-password".toCharArray())
                                     check(PortfolioApplication(targetDb, System::currentTimeMillis).snapshot().activityTotal == 4)
                                 }
                             }
@@ -679,7 +679,7 @@ class ReliabilityInstrumentation : Instrumentation() {
                     fixture { file ->
                         AndroidSqliteDatabase(file.path).use { db ->
                             val app = PortfolioApplication(db, System::currentTimeMillis)
-                            app.seedDemo()
+                            app.demo.seed()
                             val before = app.snapshot().ownership
                             val pages =
                                 db
@@ -688,7 +688,7 @@ class ReliabilityInstrumentation : Instrumentation() {
                                     .single()!!
                                     .toInt()
                             db.query("PRAGMA max_page_count = ${pages + 1}")
-                            check(runCatching { app.saveOwner(Owner(OwnerId("overflow"), "x".repeat(1_000_000))) }.isFailure)
+                            check(runCatching { app.accounts.saveOwner(Owner(OwnerId("overflow"), "x".repeat(1_000_000))) }.isFailure)
                             db.query("PRAGMA max_page_count = 1073741823")
                             check(app.snapshot().ownership == before)
                             check(db.query("PRAGMA integrity_check").single().single() == "ok")
@@ -756,13 +756,13 @@ class ReliabilityInstrumentation : Instrumentation() {
                             fixture { file ->
                                 AndroidSqliteDatabase(file.path).use { db ->
                                     val app = PortfolioApplication(db, System::currentTimeMillis)
-                                    app.setAutomaticPriceConsent(true)
+                                    app.prices.setAutomaticConsent(true)
                                     val transport = KrakenPriceTransport()
-                                    val count = app.refreshAutomaticPrices(transport::get)
+                                    val count = app.prices.refreshAutomatic(transport::get)
                                     check(count in 1..720)
-                                    val dailyCount = app.refreshAutomaticDailyPricesIfDue(transport::get)
+                                    val dailyCount = app.prices.refreshAutomaticDailyIfDue(transport::get)
                                     check(dailyCount in 1..720)
-                                    check(app.refreshAutomaticDailyPricesIfDue({ error("Daily fetch should be skipped") }) == 0)
+                                    check(app.prices.refreshAutomaticDailyIfDue({ error("Daily fetch should be skipped") }) == 0)
                                     val rows =
                                         db.query(
                                             "SELECT valid_at, value FROM market_prices WHERE provider='kraken' ORDER BY valid_at",

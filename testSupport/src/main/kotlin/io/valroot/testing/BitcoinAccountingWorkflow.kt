@@ -62,9 +62,9 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
         val app = PortfolioApplication(db) { 1_000_000L }
         val owner = OwnerId("owner")
         val account = AccountId("account")
-        app.saveOwner(Owner(owner, "Owner"))
-        app.saveAccount(Account(account, owner, "Wallet", AccountKind.WALLET))
-        app.saveTarget(
+        app.accounts.saveOwner(Owner(owner, "Owner"))
+        app.accounts.saveAccount(Account(account, owner, "Wallet", AccountKind.WALLET))
+        app.accounts.saveTarget(
             TrackingTarget(
                 TrackingTargetId("address"),
                 account,
@@ -73,8 +73,8 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 "Address",
             ),
         )
-        app.setSourceConsent(true)
-        app.refreshBitcoin(transport)
+        app.sources.setConsent(true)
+        app.bitcoin.refresh(transport)
         val snapshot = app.snapshot()
         assertEquals(
             "100",
@@ -84,7 +84,7 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 .toString(),
         )
         snapshot.activities.forEach { item ->
-            app.saveTreatments(
+            app.accounting.saveTreatments(
                 item.activity.id,
                 item.activity.movements.map { movement ->
                     val quote =
@@ -123,13 +123,19 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 },
             )
         }
-        assertTrue(app.accountingReport().orderingUncertain.isNotEmpty())
+        assertTrue(
+            app.accounting
+                .report()
+                .orderingUncertain
+                .isNotEmpty(),
+        )
         app
-            .accountingReport()
+            .accounting
+            .report()
             .report.disposals
             .forEach { assertNull(it.basis) }
-        app.verifyAccountingOrder(transport)
-        val verified = app.accountingReport()
+        app.bitcoin.verifyAccountingOrder(transport)
+        val verified = app.accounting.report()
         assertTrue(verified.orderingUncertain.isEmpty())
         assertEquals(
             "9/1",
@@ -159,12 +165,12 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 .basis
                 .toString(),
         )
-        app.refreshBitcoin(transport)
+        app.bitcoin.refresh(transport)
         assertEquals(0, app.snapshot().sourceStatus.utxoMismatchCount)
-        assertEquals(verified, app.accountingReport())
+        assertEquals(verified, app.accounting.report())
         // The advisory UTXO comparison runs during a full scan; an unchanged refresh keeps the previous result.
         omitProviderUtxos = true
-        app.refreshBitcoin(transport, recoverHistory = true)
+        app.bitcoin.refresh(transport, recoverHistory = true)
         assertTrue(app.snapshot().sourceStatus.utxoMismatchCount > 0)
         assertEquals(
             "100",
@@ -176,14 +182,14 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
                 .toString(),
         )
         omitProviderUtxos = false
-        app.refreshBitcoin(transport, recoverHistory = true)
+        app.bitcoin.refresh(transport, recoverHistory = true)
         assertEquals(0, app.snapshot().sourceStatus.utxoMismatchCount)
-        val archive = app.exportBackup("fixture-password".toCharArray())
+        val archive = app.backup.export("fixture-password".toCharArray())
         openDatabase().use { staging ->
-            app.restoreToStaging(staging, archive, "fixture-password".toCharArray())
+            app.backup.restoreToStaging(staging, archive, "fixture-password".toCharArray())
             val restored = PortfolioApplication(staging) { 1_000_000L }
-            assertEquals(verified, restored.accountingReport())
-            assertEquals(app.exportCsv(), restored.exportCsv())
+            assertEquals(verified, restored.accounting.report())
+            assertEquals(app.csv.export(), restored.csv.export())
             val savedGraph = BitcoinGraphRepository(db).latest()!!
             val restoredGraph = BitcoinGraphRepository(staging).latest()!!
             assertEquals(savedGraph.anchor, restoredGraph.anchor)
@@ -193,14 +199,20 @@ fun verifyBitcoinAccountingWorkflow(openDatabase: () -> SqliteDatabase) {
             assertEquals(savedGraph.comparison, restoredGraph.comparison)
         }
         hashes[2] = "f".repeat(64)
-        app.refreshBitcoin(transport)
-        assertTrue(app.accountingReport().orderingUncertain.isNotEmpty())
+        app.bitcoin.refresh(transport)
+        assertTrue(
+            app.accounting
+                .report()
+                .orderingUncertain
+                .isNotEmpty(),
+        )
         app
-            .accountingReport()
+            .accounting
+            .report()
             .report.disposals
             .forEach { assertNull(it.basis) }
-        app.verifyAccountingOrder(transport)
-        assertEquals(verified, app.accountingReport())
+        app.bitcoin.verifyAccountingOrder(transport)
+        assertEquals(verified, app.accounting.report())
     }
 }
 

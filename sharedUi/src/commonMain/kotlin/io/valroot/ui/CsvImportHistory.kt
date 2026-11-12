@@ -83,7 +83,7 @@ internal fun CsvImportHistorySection(
             history =
                 withContext(host.dispatcher) {
                     CsvHistory(
-                        app.csvImportReceipts(),
+                        app.csv.receipts(),
                         app
                             .snapshot()
                             .ownership.accounts
@@ -107,7 +107,7 @@ internal fun CsvImportHistorySection(
         if (id in rowsByImport) return
         scope.launch {
             try {
-                val rows = withContext(host.dispatcher) { app.csvImportRows(id) }
+                val rows = withContext(host.dispatcher) { app.csv.rows(id) }
                 rowsByImport = rowsByImport + (id to rows)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -121,7 +121,7 @@ internal fun CsvImportHistorySection(
         scope.launch {
             busy = true
             try {
-                val count = withContext(host.dispatcher) { app.reverseCsvImport(receipt.id) }
+                val count = withContext(host.dispatcher) { app.csv.reverse(receipt.id) }
                 notice = "${transactions(count)} undone."
                 reload++
                 onChanged()

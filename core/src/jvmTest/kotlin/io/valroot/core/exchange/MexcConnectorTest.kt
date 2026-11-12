@@ -115,8 +115,8 @@ class MexcConnectorTest {
     private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { now }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccountAndTarget(
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccountAndTarget(
             Account(account, OwnerId("owner"), "MEXC", AccountKind.ACCOUNT),
             TrackingTarget(
                 TrackingTargetId("mexc"),
@@ -126,7 +126,7 @@ class MexcConnectorTest {
                 "MEXC",
             ),
         )
-        app.setExchangeKey(ExchangeKind.MEXC, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
+        app.exchanges.setKey(ExchangeKind.MEXC, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
         return app
     }
 
@@ -150,7 +150,7 @@ class MexcConnectorTest {
             val mexc = FakeMexc()
             val outcome = MexcConnector { _, request -> mexc.get(request) }.refresh(app, SourceRefreshOptions())
             assertEquals(listOf(JobState.COMPLETED), outcome.jobs)
-            assertNull(app.exchangeStatus(account).error)
+            assertNull(app.exchanges.status(account).error)
             // MEXC's balances exactly, including MX to 25 decimals.
             assertEquals(
                 mapOf(
@@ -163,13 +163,18 @@ class MexcConnectorTest {
             val activities = app.snapshot(ActivityFilter(account = account, limit = 500)).activities.map { it.activity }
             assertEquals(150, activities.count { it.kind == ActivityKind.TRADE && it.id.value.contains(":trade:BTCUSDT:") })
             assertTrue(activities.any { it.id.value == "mexc:$uid:dust:${now - 400 * day}:c1" })
-            assertEquals(mapOf(ActivityId("mexc:$uid:withdrawal:w1") to ExchangeTransfer("ERC20", "0xabc")), app.exchangeTransfers())
+            assertEquals(mapOf(ActivityId("mexc:$uid:withdrawal:w1") to ExchangeTransfer("ERC20", "0xabc")), app.exchanges.transfers())
             // BTC bought before the records: an opening where the records start, not after the latest one.
             val opening = activities.single { it.id.value == "mexc:$uid:balance:BTC" }
             assertTrue(opening.occurredAtEpochMillis < now - 10 * day)
             // A full page of trades is split; spot↔futures history ends where MEXC refuses older windows.
             assertTrue(mexc.requests.count { it.path == "/api/v3/myTrades" && it.query.toMap()["symbol"] == "BTCUSDT" } > 1)
-            assertTrue(app.exchangeStreams(account).values.all { it.complete })
+            assertTrue(
+                app.exchanges
+                    .streams(account)
+                    .values
+                    .all { it.complete },
+            )
         }
     }
 

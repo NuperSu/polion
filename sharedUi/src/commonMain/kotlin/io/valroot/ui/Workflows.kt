@@ -162,31 +162,31 @@ internal fun WorkflowDialog(
     val scope = rememberCoroutineScope()
     LaunchedEffect(type) {
         if (type == "rule") {
-            rules = withContext(host.dispatcher) { app.rules() }
+            rules = withContext(host.dispatcher) { app.transactions.rules() }
             rulesLoaded = true
         }
         if (type == "price") {
-            priceConsent = withContext(host.dispatcher) { app.priceSourceConsent() }
-            automaticPriceConsent = withContext(host.dispatcher) { app.automaticPriceConsent() }
-            automaticPortfolioPrices = withContext(host.dispatcher) { app.automaticPortfolioPriceConsent() }
+            priceConsent = withContext(host.dispatcher) { app.prices.sourceConsent() }
+            automaticPriceConsent = withContext(host.dispatcher) { app.prices.automaticConsent() }
+            automaticPortfolioPrices = withContext(host.dispatcher) { app.prices.automaticPortfolioConsent() }
         }
         if (type == "reconcile") {
             withContext(host.dispatcher) {
-                candidates = app.reconciliationCandidates(86_400_000)
-                transferLinks = app.transferLinks()
-                transferConflicts = app.transferLinkConflicts()
+                candidates = app.accounting.reconciliationCandidates(86_400_000)
+                transferLinks = app.accounting.transferLinks()
+                transferConflicts = app.accounting.transferLinkConflicts()
                 summaries =
                     (
                         candidates.take(50).flatMap { listOf(it.first, it.second) } +
                             transferLinks.flatMap { listOf(it.outgoingActivity, it.incomingActivity) } +
                             transferConflicts.flatMap { listOf(it.first, it.second) }
-                    ).distinct().mapNotNull { id -> app.activitySummary(id)?.let { id to it } }.toMap()
+                    ).distinct().mapNotNull { id -> app.accounting.activitySummary(id)?.let { id to it } }.toMap()
             }
             transfersLoaded = true
         }
     }
     LaunchedEffect(type, priceRevision, automaticPriceConsent) {
-        if (type == "price") automaticPriceStatus = withContext(host.dispatcher) { app.automaticPriceStatus() }
+        if (type == "price") automaticPriceStatus = withContext(host.dispatcher) { app.prices.automaticStatus() }
     }
     val title =
         when (type) {
@@ -271,13 +271,13 @@ internal fun WorkflowDialog(
                     execute("${if (type == "account") "Account" else "Organization"} saved on this device") {
                         val id = uniqueId(type)
                         when (type) {
-                            "owner" -> app.saveOwner(Owner(OwnerId(id), name.trim()))
+                            "owner" -> app.accounts.saveOwner(Owner(OwnerId(id), name.trim()))
                             "portfolio" ->
-                                app.savePortfolio(
+                                app.accounts.savePortfolio(
                                     Portfolio(PortfolioId(id), name.trim(), data.currency.value, accountIds = selectedAccounts),
                                 )
                             else -> {
-                                val ownerId = owner ?: OwnerId(uniqueId("owner")).also { app.saveOwner(Owner(it, "Personal")) }
+                                val ownerId = owner ?: OwnerId(uniqueId("owner")).also { app.accounts.saveOwner(Owner(it, "Personal")) }
                                 val accountId = AccountId(id)
                                 val value =
                                     Account(
@@ -296,7 +296,7 @@ internal fun WorkflowDialog(
                                 if (type ==
                                     "account"
                                 ) {
-                                    app.saveAccountAndTarget(
+                                    app.accounts.saveAccountAndTarget(
                                         value,
                                         TrackingTarget(
                                             TrackingTargetId(uniqueId("address")),
@@ -311,7 +311,7 @@ internal fun WorkflowDialog(
                                         ),
                                     )
                                 } else {
-                                    app.saveAccount(value)
+                                    app.accounts.saveAccount(value)
                                 }
                             }
                         }
@@ -339,10 +339,10 @@ internal fun WorkflowDialog(
                                     data.ownership.owners
                                         .firstOrNull()
                                         ?.id ?: OwnerId(uniqueId("owner")).also {
-                                        app.saveOwner(Owner(it, "Personal"))
+                                        app.accounts.saveOwner(Owner(it, "Personal"))
                                     }
                                 val accountId = AccountId(uniqueId("manual-account"))
-                                app.saveAccount(Account(accountId, ownerId, manualAccountName.trim(), AccountKind.WALLET))
+                                app.accounts.saveAccount(Account(accountId, ownerId, manualAccountName.trim(), AccountKind.WALLET))
                                 account = accountId
                             } finally {
                                 creatingManualAccount = false
@@ -433,7 +433,7 @@ internal fun WorkflowDialog(
                         }
                         execute("Manual activity recorded") {
                             val id = ActivityId(uniqueId("manual"))
-                            app.saveManualActivity(
+                            app.transactions.saveManualActivity(
                                 Activity(
                                     id,
                                     occurredAt,
@@ -469,7 +469,7 @@ internal fun WorkflowDialog(
                                     true,
                                 ),
                             )
-                            if (name.isNotBlank()) app.saveOverlay(ActivityOverlay(id, label = name.trim()))
+                            if (name.isNotBlank()) app.transactions.saveOverlay(ActivityOverlay(id, label = name.trim()))
                         }
                         close()
                     }, modifier = Modifier.fillMaxWidth()) { Text("Record locally") }
@@ -513,7 +513,7 @@ internal fun WorkflowDialog(
                         return@Button
                     }
                     execute("Manual price saved") {
-                        app.recordManualPrice(
+                        app.prices.recordManual(
                             PriceObservation(
                                 uniqueId("manual-price"),
                                 Price(asset, data.currency, price),
@@ -550,7 +550,7 @@ internal fun WorkflowDialog(
                         Modifier
                             .toggleable(value = automaticPortfolioPrices, role = Role.Checkbox) { accepted ->
                                 automaticPortfolioPrices = accepted
-                                execute("Price currencies saved") { app.setAutomaticPortfolioPriceConsent(accepted) }
+                                execute("Price currencies saved") { app.prices.setAutomaticPortfolioConsent(accepted) }
                             }.testTag("automatic-portfolio-price-consent"),
                     ) {
                         Checkbox(checked = automaticPortfolioPrices, onCheckedChange = null)
@@ -586,7 +586,7 @@ internal fun WorkflowDialog(
                     Modifier
                         .toggleable(value = priceConsent, enabled = !fetchingPrice, role = Role.Checkbox) { accepted ->
                             priceConsent = accepted
-                            scope.launch { withContext(host.dispatcher) { app.setPriceSourceConsent(accepted) } }
+                            scope.launch { withContext(host.dispatcher) { app.prices.setSourceConsent(accepted) } }
                         }.testTag("price-source-consent"),
                 ) {
                     Checkbox(checked = priceConsent, onCheckedChange = null, enabled = !fetchingPrice)
@@ -600,8 +600,8 @@ internal fun WorkflowDialog(
                         scope.launch {
                             val apiKey =
                                 withContext(host.dispatcher) {
-                                    app.setPriceSourceConsent(priceConsent)
-                                    app.coingeckoApiKey().orEmpty()
+                                    app.prices.setSourceConsent(priceConsent)
+                                    app.market.coingeckoApiKey().orEmpty()
                                 }
                             host.fetchPriceHistory(AssetId("bitcoin:btc"), data.currency, priceDays, apiKey) { message ->
                                 fetchingPrice = false
@@ -662,8 +662,8 @@ internal fun WorkflowDialog(
                         }
                         runCatching {
                             withContext(host.dispatcher) {
-                                app.setSourceEndpoint(address)
-                                app.setSourceConsent(consent)
+                                app.sources.setEndpoint(address)
+                                app.sources.setConsent(consent)
                                 // Reschedule from the saved switch; this dialog does not change it.
                                 host.updateRefreshPreferences(host.refreshPreferences())
                             }
@@ -798,7 +798,7 @@ internal fun WorkflowDialog(
                 Button(
                     onClick = {
                         execute("Local portfolio data erased") {
-                            app.wipe()
+                            app.backup.wipe()
                             applyAutomaticRefresh(app, host, false)
                         }
                         close()
@@ -818,8 +818,8 @@ internal fun WorkflowDialog(
                         { showRuleEditor = false },
                     ) { value ->
                         execute("Classification rule saved") {
-                            app.saveRule(value)
-                            rules = app.rules()
+                            app.transactions.saveRule(value)
+                            rules = app.transactions.rules()
                             showRuleEditor = false
                         }
                     }
@@ -841,8 +841,8 @@ internal fun WorkflowDialog(
                             }, modifier = Modifier.testTag("edit-rule-${rule.id}")) { Text("Edit") }
                             TextButton(onClick = {
                                 execute(if (rule.enabled) "Rule disabled" else "Rule enabled") {
-                                    app.saveRule(rule.copy(enabled = !rule.enabled))
-                                    rules = app.rules()
+                                    app.transactions.saveRule(rule.copy(enabled = !rule.enabled))
+                                    rules = app.transactions.rules()
                                 }
                             }, modifier = Modifier.testTag("toggle-rule-${rule.id}")) {
                                 Text(if (rule.enabled) "Disable" else "Enable")
@@ -871,10 +871,10 @@ internal fun WorkflowDialog(
                     Text("In: ${summaries[link.incomingActivity] ?: link.incomingActivity.value}", fontSize = 12.sp)
                     TextButton(onClick = {
                         execute("Transfer link removed; decision marked rejected") {
-                            app.setDecision(link.outgoingActivity, link.incomingActivity, LinkState.REJECTED)
-                            transferLinks = app.transferLinks()
-                            transferConflicts = app.transferLinkConflicts()
-                            candidates = app.reconciliationCandidates(86_400_000)
+                            app.transactions.setDecision(link.outgoingActivity, link.incomingActivity, LinkState.REJECTED)
+                            transferLinks = app.accounting.transferLinks()
+                            transferConflicts = app.accounting.transferLinkConflicts()
+                            candidates = app.accounting.reconciliationCandidates(86_400_000)
                         }
                     }, modifier = Modifier.testTag("remove-transfer-${link.outgoingActivity.value}-${link.incomingActivity.value}")) {
                         Text("Remove link")
@@ -891,10 +891,10 @@ internal fun WorkflowDialog(
                     Text("Unresolved: ${conflict.reason}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     TextButton(onClick = {
                         execute("Transfer decision rejected") {
-                            app.setDecision(conflict.first, conflict.second, LinkState.REJECTED)
-                            transferLinks = app.transferLinks()
-                            transferConflicts = app.transferLinkConflicts()
-                            candidates = app.reconciliationCandidates(86_400_000)
+                            app.transactions.setDecision(conflict.first, conflict.second, LinkState.REJECTED)
+                            transferLinks = app.accounting.transferLinks()
+                            transferConflicts = app.accounting.transferLinkConflicts()
+                            candidates = app.accounting.reconciliationCandidates(86_400_000)
                         }
                     }, modifier = Modifier.testTag("reject-transfer-conflict-${conflict.first.value}-${conflict.second.value}")) {
                         Text("Reject decision")
@@ -913,7 +913,9 @@ internal fun WorkflowDialog(
                     Row {
                         TextButton(
                             onClick = {
-                                execute("Transfer link accepted") { app.setDecision(candidate.first, candidate.second, LinkState.ACCEPTED) }
+                                execute(
+                                    "Transfer link accepted",
+                                ) { app.transactions.setDecision(candidate.first, candidate.second, LinkState.ACCEPTED) }
                                 close()
                             },
                             modifier =
@@ -922,7 +924,9 @@ internal fun WorkflowDialog(
                                 ),
                         ) { Text("Link") }
                         TextButton(onClick = {
-                            execute("Suggestion rejected") { app.setDecision(candidate.first, candidate.second, LinkState.REJECTED) }
+                            execute(
+                                "Suggestion rejected",
+                            ) { app.transactions.setDecision(candidate.first, candidate.second, LinkState.REJECTED) }
                             close()
                         }) { Text("Reject") }
                     }

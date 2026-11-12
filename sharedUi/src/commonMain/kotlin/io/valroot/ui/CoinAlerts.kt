@@ -25,13 +25,13 @@ internal suspend fun loadCoinMarket(
     asset: AssetId,
 ): CoinMarketLoad =
     withContext(host.dispatcher) {
-        val coinId = app.marketCoinId(asset)
+        val coinId = app.market.coinId(asset)
         CoinMarketLoad(
             asset = asset,
             coinId = coinId,
-            marketConsent = app.marketDataConsent(),
-            orderConsent = app.orderBookConsent(),
-            alerts = coinId?.let { app.priceAlerts(it) }.orEmpty(),
+            marketConsent = app.market.consent(),
+            orderConsent = app.market.orderBookConsent(),
+            alerts = coinId?.let { app.notifications.alerts(it) }.orEmpty(),
         )
     }
 

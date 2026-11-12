@@ -209,16 +209,16 @@ class EvmConnectorTest {
     private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 1_800_000_000_000L }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccountAndTarget(
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccountAndTarget(
             Account(AccountId("evm"), OwnerId("owner"), "EVM", AccountKind.WALLET),
             TrackingTarget(TrackingTargetId("evm"), AccountId("evm"), TargetIdentity(EVM_FAMILY, "address", me), TargetRole.LEAF, "EVM"),
         )
-        app.setEvmConsent(true)
-        app.setMarketDataConsent(true)
+        app.evm.setConsent(true)
+        app.market.setConsent(true)
 
         fun fixture(name: String) = requireNotNull(javaClass.getResource("/coingecko/$name")).readText()
-        app.refreshEvmCatalog(
+        app.evm.refreshCatalog(
             { url, _ -> if (url.contains("asset_platforms")) fixture("asset_platforms.json") else fixture("coins_list.json") },
         )
         return app
@@ -230,11 +230,15 @@ class EvmConnectorTest {
             val provider = FakeAlchemy()
             val connector = EvmConnector(provider.post)
             // Discovery finds Base among the networks.
-            assertEquals(listOf(JobState.COMPLETED), connector.refresh(app, SourceRefreshOptions()).jobs, app.evmChainStates(me).toString())
-            assertEquals(listOf(chain), app.evmChainStates(me).map { it.chainId })
+            assertEquals(
+                listOf(JobState.COMPLETED),
+                connector.refresh(app, SourceRefreshOptions()).jobs,
+                app.evm.chainStates(me).toString(),
+            )
+            assertEquals(listOf(chain), app.evm.chainStates(me).map { it.chainId })
 
             val activities =
-                app.transactionEntries(ActivityFilter()).associateBy {
+                app.transactions.entries(ActivityFilter()).associateBy {
                     it.activity.id.value
                         .substringAfter("$chain:")
                         .substringBefore(':')
@@ -276,11 +280,17 @@ class EvmConnectorTest {
             val found = activities.getValue(h(20)).activity
             assertEquals(listOf("-300" to MovementRole.FEE), found.movements.map { it.amount.atomicUnits.toString() to it.role })
             // 3 ETH − 1 ETH − 600 − 50 + 250 − 300 matches Alchemy, with nothing missing.
-            val state = app.evmChainStates(me).single()
+            val state = app.evm.chainStates(me).single()
             assertNull(state.balanceDifference)
             assertNull(state.coverage)
-            assertEquals(mapOf(2L to h(20)), app.evmRecovered().nonces(me, chain).mapValues { it.value?.hash })
-            assertEquals(setOf(EvmAssets.token(chain, fakeUsdc), EvmAssets.nft(chain, punk, evmQuantity(huge))), app.hiddenAssets())
+            assertEquals(
+                mapOf(2L to h(20)),
+                app.evm
+                    .recovered()
+                    .nonces(me, chain)
+                    .mapValues { it.value?.hash },
+            )
+            assertEquals(setOf(EvmAssets.token(chain, fakeUsdc), EvmAssets.nft(chain, punk, evmQuantity(huge))), app.assets.hidden())
 
             // Unchanged: newest transfer, newest contract transfer and the sent count only.
             provider.requests.clear()
@@ -292,10 +302,10 @@ class EvmConnectorTest {
             provider.sentCount = 4
             provider.nativeBalance = "1999999999999999000"
             connector.refresh(app, SourceRefreshOptions())
-            val after = app.evmChainStates(me).single()
+            val after = app.evm.chainStates(me).single()
             assertNull(after.balanceDifference)
             assertEquals("1 sent transaction could not be found on the chain; their fees are not counted", after.coverage)
-            assertEquals(null, app.evmRecovered().nonces(me, chain)[3L])
+            assertEquals(null, app.evm.recovered().nonces(me, chain)[3L])
             provider.requests.clear()
             connector.refresh(app, SourceRefreshOptions())
             assertTrue(provider.requests.none { it.contains("eth_getBlockByNumber") })
@@ -376,11 +386,11 @@ class EvmConnectorTest {
                 }
             }
             val connector = EvmConnector(provider.post, oneInch)
-            app.addEvmChains(me, setOf(56L))
-            app.recordEvmDiscovery(me)
+            app.evm.addChains(me, setOf(56L))
+            app.evm.recordDiscovery(me)
             assertEquals(listOf(JobState.COMPLETED), connector.refresh(app, SourceRefreshOptions()).jobs)
             val activities =
-                app.transactionEntries(ActivityFilter()).associate {
+                app.transactions.entries(ActivityFilter()).associate {
                     it.activity.id.value
                         .substringAfter("56:")
                         .substringBefore(':') to it.activity
@@ -392,7 +402,7 @@ class EvmConnectorTest {
             // A payment in a transaction Alchemy never listed is its own deposit.
             assertEquals(ActivityKind.DEPOSIT, activities.getValue(h(30)).kind)
             // Balances match with no adjustment, and the chain reports no gap.
-            val state = app.evmChainStates(me).single()
+            val state = app.evm.chainStates(me).single()
             assertNull(state.balanceDifference)
             assertNull(state.coverage)
             assertTrue(
@@ -412,7 +422,10 @@ class EvmConnectorTest {
             EvmConnector(provider.post).refresh(app, SourceRefreshOptions(recoverHistory = true))
             assertEquals(
                 "Payments made by contracts are not listed on this chain; a 1inch key recovers them",
-                app.evmChainStates(me).single { it.chainId == 56L }.coverage,
+                app.evm
+                    .chainStates(me)
+                    .single { it.chainId == 56L }
+                    .coverage,
             )
             slug = "base-mainnet"
         }
@@ -427,22 +440,22 @@ class EvmConnectorTest {
                 require(path.startsWith("/history/"))
                 oneInchHistory(*listed.map { oneInchEvent(5, other, action("ERC20", other, me, "1", it)) }.toTypedArray())
             }
-            app.addEvmChains(me, setOf(chain))
-            app.recordEvmDiscovery(me)
+            app.evm.addChains(me, setOf(chain))
+            app.evm.recordDiscovery(me)
             EvmConnector(provider.post, oneInch).refresh(app, SourceRefreshOptions())
             val usdcAsset = EvmAssets.token(chain, usdc)
             // USD Coin has a CoinGecko coin, but 1inch's history of the address leaves it out.
-            assertTrue(usdcAsset in app.hiddenAssets())
+            assertTrue(usdcAsset in app.assets.hidden())
             // The user's choice wins.
-            app.setAssetShown(usdcAsset, true)
-            assertTrue(usdcAsset !in app.hiddenAssets())
-            app.evmRecovered().saveListing(me, chain, OneInchListing(1_800_000_000_000L, setOf(usdc)))
+            app.assets.setShown(usdcAsset, true)
+            assertTrue(usdcAsset !in app.assets.hidden())
+            app.evm.recovered().saveListing(me, chain, OneInchListing(1_800_000_000_000L, setOf(usdc)))
             JvmSqliteDatabase(":memory:").use { other ->
                 val fresh = setUp(other)
-                fresh.addEvmChains(me, setOf(chain))
+                fresh.evm.addChains(me, setOf(chain))
                 listed = listOf(usdc)
                 EvmConnector(FakeAlchemy().post, oneInch).refresh(fresh, SourceRefreshOptions())
-                assertTrue(usdcAsset !in fresh.hiddenAssets())
+                assertTrue(usdcAsset !in fresh.assets.hidden())
             }
         }
     }

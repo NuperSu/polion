@@ -24,7 +24,9 @@ class DesktopRestoreTest {
             host.updateRefreshPreferences(io.valroot.ui.RefreshPreferences(automaticRefresh = false, wifiOnly = true))
             assertEquals(false, host.backgroundRefreshEnabled())
             assertEquals(false, host.wifiOnlyRefreshSupported)
-            val archive = host.app.value.exportBackup("password".toCharArray())
+            val archive =
+                host.app.value.backup
+                    .export("password".toCharArray())
             host.updateRefreshPreferences(io.valroot.ui.RefreshPreferences(automaticRefresh = true))
             assertEquals("Backup restored", restore(host, archive, "password"))
             assertEquals(io.valroot.ui.RefreshPreferences(false, true), host.refreshPreferences())
@@ -48,7 +50,8 @@ class DesktopRestoreTest {
                 }
             }
         try {
-            host.app.value.setAutomaticPriceConsent(true)
+            host.app.value.prices
+                .setAutomaticConsent(true)
             var first = ""
             host.refreshAutomaticPrices { first = it }
             assertEquals("Price refresh queued.", first)
@@ -83,11 +86,14 @@ class DesktopRestoreTest {
             val archive =
                 JvmSqliteDatabase(":memory:").use { db ->
                     val source = PortfolioApplication(db) { 1000L }
-                    source.setAutomaticPriceConsent(true)
-                    source.exportBackup("password".toCharArray())
+                    source.prices.setAutomaticConsent(true)
+                    source.backup.export("password".toCharArray())
                 }
             assertEquals("Backup restored", restore(host, archive, "password"))
-            assertTrue(host.app.value.automaticPriceConsent())
+            assertTrue(
+                host.app.value.prices
+                    .automaticConsent(),
+            )
             assertTrue(requested.await(10, TimeUnit.SECONDS))
         } finally {
             host.close()
@@ -113,14 +119,15 @@ class DesktopRestoreTest {
                 }
             }
         try {
-            host.app.value.setAutomaticPriceConsent(true)
+            host.app.value.prices
+                .setAutomaticConsent(true)
             host.updateRefreshPreferences(io.valroot.ui.RefreshPreferences(automaticRefresh = true))
             assertTrue(started.await(10, TimeUnit.SECONDS))
             val archive =
                 JvmSqliteDatabase(":memory:").use { db ->
                     val source = PortfolioApplication(db) { 1000L }
-                    source.saveOwner(Owner(OwnerId("restored"), "Restored"))
-                    source.exportBackup("password".toCharArray())
+                    source.accounts.saveOwner(Owner(OwnerId("restored"), "Restored"))
+                    source.backup.export("password".toCharArray())
                 }
             val done = CountDownLatch(1)
             var message = ""
@@ -135,7 +142,11 @@ class DesktopRestoreTest {
             release.countDown()
             assertTrue(done.await(10, TimeUnit.SECONDS))
             assertEquals("Backup restored", message)
-            assertEquals(false, host.app.value.automaticPriceConsent())
+            assertEquals(
+                false,
+                host.app.value.prices
+                    .automaticConsent(),
+            )
             assertEquals(
                 listOf(OwnerId("restored")),
                 host.app.value
@@ -194,12 +205,12 @@ class DesktopRestoreTest {
         val directory = Files.createTempDirectory("valroot-host-restore-")
         val host = DesktopHost(directory, false)
         try {
-            sync(host) { it.saveOwner(Owner(OwnerId("old"), "Old data")) }
+            sync(host) { it.accounts.saveOwner(Owner(OwnerId("old"), "Old data")) }
             val archive =
                 JvmSqliteDatabase(":memory:").use { db ->
                     val source = PortfolioApplication(db) { 1000L }
-                    source.saveOwner(Owner(OwnerId("restored"), "Restored data"))
-                    source.exportBackup("password".toCharArray())
+                    source.accounts.saveOwner(Owner(OwnerId("restored"), "Restored data"))
+                    source.backup.export("password".toCharArray())
                 }
             assertEquals("Backup restored", restore(host, archive, "password"))
             sync(host) {
@@ -210,7 +221,7 @@ class DesktopRestoreTest {
                         .ownership.owners
                         .map { owner -> owner.id },
                 )
-                it.saveOwner(Owner(OwnerId("after"), "Written after restore"))
+                it.accounts.saveOwner(Owner(OwnerId("after"), "Written after restore"))
             }
             host.app.value.reload()
             assertEquals(
@@ -231,7 +242,7 @@ class DesktopRestoreTest {
         val directory = Files.createTempDirectory("valroot-host-restore-invalid-")
         val host = DesktopHost(directory, false)
         try {
-            sync(host) { it.saveOwner(Owner(OwnerId("old"), "Existing")) }
+            sync(host) { it.accounts.saveOwner(Owner(OwnerId("old"), "Existing")) }
             assertEquals("This is not a Valroot backup", restore(host, byteArrayOf(1, 2, 3), "password"))
             sync(host) {
                 assertEquals(

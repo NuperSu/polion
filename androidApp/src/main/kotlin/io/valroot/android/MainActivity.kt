@@ -152,7 +152,7 @@ private class AndroidHost(
      */
     override fun notificationSettingsChanged() {
         executor.execute {
-            val active = runCatching { app.value?.notificationsActive() }.getOrNull() == true
+            val active = runCatching { app.value?.notifications?.active() }.getOrNull() == true
             NotificationWorker.schedule(activity, active)
             main.post {
                 if (active && !closed) {
@@ -207,7 +207,7 @@ private class AndroidHost(
 
     override fun setLockDelay(millis: Long) {
         lockDelay = millis
-        executor.execute { runCatching { app.value?.setLockDelay(millis) } }
+        executor.execute { runCatching { app.value?.settings?.setLockDelay(millis) } }
     }
 
     /** The app went to the background: lock now, or remember when, depending on the delay. */
@@ -243,11 +243,11 @@ private class AndroidHost(
                 Files.createDirectories(file.parent)
                 db = AndroidSqliteDatabase(file.toString())
                 val opened = PortfolioApplication(db, System::currentTimeMillis)
-                opened.lockDelayMillis()?.let { lockDelay = it }
+                opened.settings.lockDelayMillis()?.let { lockDelay = it }
                 if (runCatching { reconcileRefreshPreferences(opened) }.isFailure) {
-                    runCatching { opened.recordAutomaticPriceSchedulingFailure() }
+                    runCatching { opened.prices.recordAutomaticSchedulingFailure() }
                 }
-                runCatching { NotificationWorker.schedule(activity, opened.notificationsActive()) }
+                runCatching { NotificationWorker.schedule(activity, opened.notifications.active()) }
                 main.post { if (!closed) app.value = opened }
             } catch (_: Exception) {
                 if (::db.isInitialized) runCatching { db.close() }
@@ -304,7 +304,7 @@ private class AndroidHost(
                             try {
                                 runCatching {
                                     files.write(uri) { out ->
-                                        requireNotNull(app.value).exportBackup(secret) { b, o, l -> out.write(b, o, l) }
+                                        requireNotNull(app.value).backup.export(secret) { b, o, l -> out.write(b, o, l) }
                                     }
                                 }.isSuccess
                             } finally {
@@ -345,7 +345,7 @@ private class AndroidHost(
                     staging.toString(),
                 ).use { stagingDb ->
                     files.read(uri) { input ->
-                        requireNotNull(app.value).restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
+                        requireNotNull(app.value).backup.restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
                     }
                 }
                 java.nio.channels.FileChannel
@@ -353,10 +353,10 @@ private class AndroidHost(
                     .use { it.force(true) }
                 AutomaticPriceGate.paused = true
                 pricePaused = true
-                requireNotNull(app.value).invalidateAutomaticPriceRequests()
+                requireNotNull(app.value).prices.invalidateAutomaticRequests()
                 PriceHistoryWorker.invalidate()
                 // This short transaction waits for earlier price commits and invalidates their consent generation.
-                requireNotNull(app.value).let { it.setPriceSourceConsent(it.priceSourceConsent()) }
+                requireNotNull(app.value).let { it.prices.setSourceConsent(it.prices.sourceConsent()) }
                 synchronized(AutomaticPriceGate.lock) {
                     db.close()
                     try {
@@ -544,32 +544,32 @@ private class AndroidHost(
 
     private fun readRefreshPreferences(application: PortfolioApplication) =
         io.valroot.ui.RefreshPreferences(
-            application.automaticRefreshPreference()
-                ?: (preferences.getBoolean("background_refresh", false) || application.automaticPriceConsent()),
-            application.wifiOnlyRefreshPreference(),
+            application.settings.automaticRefresh()
+                ?: (preferences.getBoolean("background_refresh", false) || application.prices.automaticConsent()),
+            application.settings.wifiOnlyRefresh(),
         )
 
     override fun updateRefreshPreferences(preferences: io.valroot.ui.RefreshPreferences) {
         val application = app.value ?: return
-        application.setRefreshPreferences(preferences.automaticRefresh, preferences.wifiOnly)
+        application.settings.setRefreshPreferences(preferences.automaticRefresh, preferences.wifiOnly)
         reconcileRefreshPreferences(application)
     }
 
     private fun reconcileRefreshPreferences(application: PortfolioApplication) {
         val preference = readRefreshPreferences(application)
-        application.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
-        val plan = io.valroot.ui.refreshSchedulePlan(preference, application.sourceConsent(), application.automaticPriceConsent())
+        application.settings.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
+        val plan = io.valroot.ui.refreshSchedulePlan(preference, application.sources.consent(), application.prices.automaticConsent())
         val now = System.currentTimeMillis()
         scheduleWalletRefresh(
             plan.walletHistory,
             plan.wifiOnly,
-            cooldownDelayMillis(application.sourceLastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, now),
+            cooldownDelayMillis(application.sources.lastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, now),
         )
         scheduleAutomaticPrices(
             plan.prices,
             plan.wifiOnly,
-            application.automaticPriceConsent(),
-            cooldownDelayMillis(application.automaticPriceLastRunMillis(), PRICE_REFRESH_INTERVAL_MILLIS, now),
+            application.prices.automaticConsent(),
+            cooldownDelayMillis(application.prices.automaticLastRunMillis(), PRICE_REFRESH_INTERVAL_MILLIS, now),
         )
     }
 
@@ -654,8 +654,8 @@ private class AndroidHost(
             val success =
                 runCatching {
                     app.value?.let { application ->
-                        application.wipe()
-                        application.setAutomaticRefresh(false)
+                        application.backup.wipe()
+                        application.prices.setAutomaticRefresh(false)
                         reconcileRefreshPreferences(application)
                     }
                     lockStore.remove()

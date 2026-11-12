@@ -146,8 +146,8 @@ internal fun ModelWorkspace(
         }
         val (ids, choices) =
             withContext(host.dispatcher) {
-                val coinId = app.marketCoinId(coin)
-                (coinId?.let { app.assetsForCoin(it) }?.toSet() ?: emptySet()) to app.evmChainChoices()
+                val coinId = app.market.coinId(coin)
+                (coinId?.let { app.assets.forCoin(it) }?.toSet() ?: emptySet()) to app.evm.chainChoices()
             }
         coinAssets = ids
         chainChoices = choices
@@ -156,7 +156,7 @@ internal fun ModelWorkspace(
     LaunchedEffect(app, dataRevision, snapshot?.currency) {
         marketOverview =
             try {
-                withContext(host.dispatcher) { app.marketOverview() }
+                withContext(host.dispatcher) { app.market.overview() }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -242,7 +242,7 @@ internal fun ModelWorkspace(
                 alertEditor =
                     editor.copy(error = (failure as? IllegalArgumentException)?.message ?: "Could not save this alert. Try again.")
             },
-        ) { app.savePriceAlert(coinId, editor.condition, threshold, editor.alertId) }
+        ) { app.notifications.saveAlert(coinId, editor.condition, threshold, editor.alertId) }
     }
 
     fun setAlertEnabled(
@@ -255,7 +255,7 @@ internal fun ModelWorkspace(
                 host.notificationSettingsChanged()
             },
             onFailure = { alertNotice = "Could not change this alert. Try again." },
-        ) { app.setPriceAlertEnabled(id, enabled) }
+        ) { app.notifications.setAlertEnabled(id, enabled) }
     }
 
     fun deleteAlert(
@@ -270,7 +270,7 @@ internal fun ModelWorkspace(
                 host.notificationSettingsChanged()
             },
             onFailure = { alertEditor = editor.copy(error = "Could not delete this alert. Try again.") },
-        ) { app.deletePriceAlert(id) }
+        ) { app.notifications.deleteAlert(id) }
     }
     var transactionSearch by rememberSaveable { mutableStateOf("") }
     var transactionType by rememberSaveable { mutableStateOf("All") }
@@ -366,7 +366,10 @@ internal fun ModelWorkspace(
             try {
                 movementSummary =
                     withContext(host.dispatcher) {
-                        portfolioMovementSummary(app.analytics(start, selectedPortfolio), app.analytics(end, selectedPortfolio))
+                        portfolioMovementSummary(
+                            app.analytics.report(start, selectedPortfolio),
+                            app.analytics.report(end, selectedPortfolio),
+                        )
                     }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -398,7 +401,7 @@ internal fun ModelWorkspace(
             accountingLoading = true
             accountingError = false
             try {
-                accounting = withContext(host.dispatcher) { app.accountingReport(selectedPortfolio) }
+                accounting = withContext(host.dispatcher) { app.accounting.report(selectedPortfolio) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -418,9 +421,9 @@ internal fun ModelWorkspace(
             insightsData =
                 withContext(host.dispatcher) {
                     InsightsData(
-                        runCatching { app.moneyWeightedReturn(selectedPortfolio, rangeStart, rangeEnd) }.getOrNull(),
-                        runCatching { app.activityInsights(selectedPortfolio, rangeStart, rangeEnd) }.getOrNull(),
-                        runCatching { app.analytics(rangeEnd, selectedPortfolio) }.getOrNull(),
+                        runCatching { app.analytics.moneyWeightedReturn(selectedPortfolio, rangeStart, rangeEnd) }.getOrNull(),
+                        runCatching { app.analytics.insights(selectedPortfolio, rangeStart, rangeEnd) }.getOrNull(),
+                        runCatching { app.analytics.report(rangeEnd, selectedPortfolio) }.getOrNull(),
                     )
                 }
         }
@@ -442,7 +445,7 @@ internal fun ModelWorkspace(
                     "1Y" -> 365 * 86_400_000L
                     else -> 30 * 86_400_000L
                 }
-            val end = app.evaluationTimeMillis()
+            val end = app.analytics.evaluationTimeMillis()
             val start = (end - duration).coerceAtLeast(0)
             val span = end - start
             priceLoading = true
@@ -450,7 +453,7 @@ internal fun ModelWorkspace(
             try {
                 prices =
                     withContext(host.dispatcher) {
-                        app.priceSeries(asset, quote, (0..60).map { start + span * it / 60 })
+                        app.analytics.priceSeries(asset, quote, (0..60).map { start + span * it / 60 })
                     }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -835,7 +838,7 @@ internal fun ModelWorkspace(
                             changeCoin(
                                 onDone = { orderNotice = null },
                                 onFailure = { orderNotice = "Could not turn on Kraken order books. Try again." },
-                            ) { app.setOrderBookConsent(true) }
+                            ) { app.market.setOrderBookConsent(true) }
                         },
                         onOrderRetry = orderBook.retry,
                     ),
@@ -873,16 +876,17 @@ internal fun ModelWorkspace(
                             transactionScope.launch {
                                 try {
                                     withContext(host.dispatcher) {
-                                        val accounts = app.transactionAccounts(exportFilter.portfolio)
+                                        val accounts = app.transactions.accounts(exportFilter.portfolio)
                                         val ids =
                                             app
-                                                .transactionEntries(exportFilter)
+                                                .transactions
+                                                .entries(exportFilter)
                                                 .filter {
                                                     exportType == "All" ||
                                                         transactionKind(it, asset.asset, accounts) == exportType
                                                 }.map { it.activity.id }
                                                 .toSet()
-                                        val csv = app.exportCsv(exportFilter, ids)
+                                        val csv = app.csv.export(exportFilter, ids)
                                         host.saveFile("valroot-${asset.asset.value}-transactions.csv", csv.encodeToByteArray()) {
                                             exportMessage =
                                                 it

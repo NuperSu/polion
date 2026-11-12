@@ -1,6 +1,6 @@
 # CSV import
 
-Code: `core/…/application/CsvImport.kt` (reading, template, dates, receipts), `PortfolioApplication.previewCsvImport` / `importCsv` / `reverseCsvImport`. Tests: `CsvImportTest`.
+Code: `core/…/application/CsvImport.kt` (reading, template, dates, receipts), `CsvService.preview` / `importFile` / `reverse` (`app.csv`). Tests: `CsvImportTest`.
 
 ## Template
 

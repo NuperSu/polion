@@ -40,13 +40,13 @@ internal class CoinLogoLoader(
         cached(url)?.let { return it }
         if (synchronized(memory) { url in failed } || CoingeckoMarkets.logoUrl(url) != url) return null
         return try {
-            val saved = withContext(database) { app.cachedLogo(url) }
+            val saved = withContext(database) { app.market.cachedLogo(url) }
             val bytes =
                 saved ?: downloads.withPermit {
                     withContext(Dispatchers.IO) { download(url, io.valroot.core.market.MarketFeedRepository.MAX_LOGO_BYTES) }
                 }
             val image = bytes?.let(::decodeLogo)
-            if (image != null && saved == null) runCatching { withContext(database) { app.saveLogo(url, bytes) } }
+            if (image != null && saved == null) runCatching { withContext(database) { app.market.saveLogo(url, bytes) } }
             synchronized(memory) { if (image == null) failed += url else memory[url] = image }
             image
         } catch (cancelled: CancellationException) {

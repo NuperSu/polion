@@ -24,9 +24,9 @@ class ProviderProvenanceTest {
             val address = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
             val owner = OwnerId("owner")
             val account = AccountId("account")
-            app.saveOwner(Owner(owner, "Owner"))
-            app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
-            app.saveTarget(
+            app.accounts.saveOwner(Owner(owner, "Owner"))
+            app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+            app.accounts.saveTarget(
                 TrackingTarget(
                     TrackingTargetId("target"),
                     account,
@@ -35,7 +35,7 @@ class ProviderProvenanceTest {
                     "Address",
                 ),
             )
-            app.setSourceConsent(true)
+            app.sources.setConsent(true)
             val txid = "a".repeat(64)
             val hash = "b".repeat(64)
             val payload =
@@ -57,18 +57,24 @@ class ProviderProvenanceTest {
                     }
                 }
             for (endpoint in listOf("https://first.example/api", "https://second.example/api")) {
-                app.setSourceEndpoint(endpoint)
-                app.refreshBitcoin(transport)
+                app.sources.setEndpoint(endpoint)
+                app.bitcoin.refresh(transport)
             }
             assertEquals(1, app.snapshot().activityTotal)
             val sources = db.query("SELECT DISTINCT source_id FROM raw_observations").map { it.single()!! }
             assertEquals(2, sources.size)
-            assertTrue(sources.all { it in app.bitcoinProviderEndpoints() })
-            assertEquals(setOf("https://first.example/api", "https://second.example/api"), app.bitcoinProviderEndpoints().values.toSet())
-            val archive = app.exportBackup("password".toCharArray())
+            assertTrue(sources.all { it in app.bitcoin.providerEndpoints() })
+            assertEquals(
+                setOf("https://first.example/api", "https://second.example/api"),
+                app.bitcoin
+                    .providerEndpoints()
+                    .values
+                    .toSet(),
+            )
+            val archive = app.backup.export("password".toCharArray())
             JvmSqliteDatabase(":memory:").use { staging ->
-                app.restoreToStaging(staging, archive, "password".toCharArray())
-                assertEquals(app.bitcoinProviderEndpoints(), PortfolioApplication(staging) { 15552000000L }.bitcoinProviderEndpoints())
+                app.backup.restoreToStaging(staging, archive, "password".toCharArray())
+                assertEquals(app.bitcoin.providerEndpoints(), PortfolioApplication(staging) { 15552000000L }.bitcoin.providerEndpoints())
                 assertEquals(2, staging.query("SELECT DISTINCT source_id FROM raw_observations").size)
             }
         }

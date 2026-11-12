@@ -83,7 +83,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -115,7 +115,7 @@ class ValrootUiTest {
             Host().use { host ->
                 var clock = System.currentTimeMillis()
                 val app = PortfolioApplication(db) { clock }
-                app.seedDemo()
+                app.demo.seed()
                 clock += 3 * 3_600_000L
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { ValrootApp(app, host) }
@@ -140,10 +140,10 @@ class ValrootUiTest {
                 val data = app.snapshot()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { WorkflowDialog("price", data, app, host, {}, { _, operation -> operation() }, {}, { _, _ -> }) }
-                    assertEquals(false, app.automaticPriceConsent())
+                    assertEquals(false, app.prices.automaticConsent())
                     onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { host.automaticPrices }
-                    assertTrue(app.automaticPriceConsent())
+                    assertTrue(app.prices.automaticConsent())
                     onNodeWithTag("refresh-prices-now").performScrollTo().performClick()
                     onAllNodesWithText("Price refresh queued.").onFirst().assertIsDisplayed()
                     onNodeWithTag("refresh-prices-now").assertIsNotEnabled()
@@ -152,7 +152,7 @@ class ValrootUiTest {
                     host.priceRefreshStatus.value = PriceRefreshPhase.IDLE
                     onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { !host.automaticPrices }
-                    assertEquals(false, app.automaticPriceConsent())
+                    assertEquals(false, app.prices.automaticConsent())
                 }
             }
         }
@@ -163,10 +163,11 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 val acquisition =
                     app
-                        .accountingReport()
+                        .accounting
+                        .report()
                         .report.lots
                         .first()
                         .acquisitionActivityId!!
@@ -192,14 +193,14 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 val account =
                     app
                         .snapshot()
                         .ownership.accounts
                         .single()
                         .id
-                app.saveTarget(
+                app.accounts.saveTarget(
                     io.valroot.core.ownership.TrackingTarget(
                         io.valroot.core.model
                             .TrackingTargetId("source-test"),
@@ -235,7 +236,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -260,7 +261,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 val asset = app.snapshot().valuations.first()
                 val expected = app.snapshot(ActivityFilter(asset = asset.asset)).activityTotal
                 runDesktopComposeUiTest(width = 360, height = 800) {
@@ -399,7 +400,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 val original = app.snapshot()
                 val account = original.ownership.accounts.single()
                 val originalRows = db.query("SELECT COUNT(*) FROM ledger_activities").single().single()
@@ -484,7 +485,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 val account =
                     app
                         .snapshot()
@@ -561,7 +562,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -588,7 +589,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -604,8 +605,8 @@ class ValrootUiTest {
                     waitUntil(
                         conditionDescription = "hide empty preference persisted",
                         timeoutMillis = 10_000,
-                    ) { app.assetListPreference().hideEmpty }
-                    assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.assetListPreference().hideEmpty)
+                    ) { app.settings.assetList().hideEmpty }
+                    assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.settings.assetList().hideEmpty)
                     onNodeWithTag("page-content").performScrollToNode(hasTestTag("hide-small-assets"))
                     waitUntil(conditionDescription = "hide small control enabled", timeoutMillis = 10_000) {
                         onAllNodes(hasTestTag("hide-small-assets") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
@@ -616,8 +617,8 @@ class ValrootUiTest {
                     waitUntil(
                         conditionDescription = "hide small preference persisted",
                         timeoutMillis = 10_000,
-                    ) { app.assetListPreference().hideSmall }
-                    assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.assetListPreference().hideSmall)
+                    ) { app.settings.assetList().hideSmall }
+                    assertEquals(true, PortfolioApplication(db) { System.currentTimeMillis() }.settings.assetList().hideSmall)
                 }
             }
         }
@@ -628,8 +629,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 1000, height = 900) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
@@ -649,7 +650,7 @@ class ValrootUiTest {
                     assertEquals(
                         io.valroot.core.onboarding
                             .OnboardingState(),
-                        app.onboardingState(),
+                        app.settings.onboarding(),
                     )
                     assertTrue(
                         app
@@ -683,7 +684,7 @@ class ValrootUiTest {
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                     }
-                    assertTrue(app.onboardingState()!!.completed)
+                    assertTrue(app.settings.onboarding()!!.completed)
                     assertTrue(
                         app
                             .snapshot()
@@ -714,7 +715,7 @@ class ValrootUiTest {
                     }
                     onNodeWithTag("onboarding-goal-BALANCES").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) {
-                        io.valroot.core.onboarding.OnboardingGoal.BALANCES in app.onboardingState()!!.goals
+                        io.valroot.core.onboarding.OnboardingGoal.BALANCES in app.settings.onboarding()!!.goals
                     }
                     onNodeWithText("Skip setup for now").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) {
@@ -748,8 +749,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 800, height = 900) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -777,8 +778,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
@@ -812,8 +813,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 320, height = 800) {
                     setContent {
                         val density = LocalDensity.current
@@ -842,8 +843,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val started = CountDownLatch(1)
                 val release = CountDownLatch(1)
                 try {
@@ -885,7 +886,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 host.syncStatus.value = SyncStatus(SyncPhase.ERROR, "A full history recovery is required.")
                 val data = app.snapshot()
                 runDesktopComposeUiTest(width = 800, height = 900) {
@@ -902,7 +903,7 @@ class ValrootUiTest {
                     onNodeWithTag("recover-bitcoin-history").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { host.recoveryRequests == 1 }
                     assertEquals(0, host.refreshRequests)
-                    assertTrue(app.sourceConsent())
+                    assertTrue(app.sources.consent())
                     host.syncStatus.value = SyncStatus(SyncPhase.SYNCING, "Reading page 1")
                     onNodeWithTag("recover-bitcoin-history").performScrollTo().assertIsNotEnabled()
                 }
@@ -915,7 +916,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { 1000L }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
 
                 fun activity(
                     id: String,
@@ -950,8 +951,8 @@ class ValrootUiTest {
                     )
                 val repository = ActivityRepository(db)
                 records.forEach { repository.save(it) }
-                app.setDecision(ActivityId("accepted-out"), ActivityId("accepted-in"), LinkState.ACCEPTED)
-                app.setDecision(ActivityId("conflict-out"), ActivityId("conflict-in"), LinkState.ACCEPTED)
+                app.transactions.setDecision(ActivityId("accepted-out"), ActivityId("accepted-in"), LinkState.ACCEPTED)
+                app.transactions.setDecision(ActivityId("conflict-out"), ActivityId("conflict-in"), LinkState.ACCEPTED)
                 val original = repository.current()
                 val data = app.snapshot()
                 var closed = false
@@ -971,17 +972,23 @@ class ValrootUiTest {
                     onNodeWithTag("reject-transfer-conflict-conflict-in-conflict-out").performScrollTo().performClick()
                     onNodeWithText("No transfer link conflicts.").performScrollTo().assertIsDisplayed()
                     runOnIdle {
-                        assertTrue(app.transferLinks().isEmpty())
-                        assertTrue(app.transferLinkConflicts().isEmpty())
-                        assertEquals(1, app.reconciliationCandidates(86_400_000).size)
+                        assertTrue(app.accounting.transferLinks().isEmpty())
+                        assertTrue(app.accounting.transferLinkConflicts().isEmpty())
+                        assertEquals(1, app.accounting.reconciliationCandidates(86_400_000).size)
                         assertEquals(original, repository.current())
                     }
                     onNodeWithTag("accept-transfer-candidate-in-candidate-out").performScrollTo().performClick()
                     runOnIdle {
                         assertTrue(closed)
-                        assertEquals(ActivityId("candidate-out"), app.transferLinks().single().outgoingActivity)
+                        assertEquals(
+                            ActivityId("candidate-out"),
+                            app.accounting
+                                .transferLinks()
+                                .single()
+                                .outgoingActivity,
+                        )
                         assertEquals(original, repository.current())
-                        assertTrue(app.reconciliationCandidates(86_400_000).isEmpty())
+                        assertTrue(app.accounting.reconciliationCandidates(86_400_000).isEmpty())
                     }
                 }
             }
@@ -993,7 +1000,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 val original =
                     ClassificationRule(
                         "filtered-rule",
@@ -1005,8 +1012,8 @@ class ValrootUiTest {
                         enabled = false,
                     )
                 val anyKind = original.copy(id = "any-kind-rule", matchKind = null, priority = 12)
-                app.saveRule(original)
-                app.saveRule(anyKind)
+                app.transactions.saveRule(original)
+                app.transactions.saveRule(anyKind)
                 val data = app.snapshot()
                 runDesktopComposeUiTest(width = 800, height = 1000) {
                     setContent {
@@ -1018,23 +1025,39 @@ class ValrootUiTest {
                     onNodeWithText("deposit").performScrollTo().performClick()
                     onNodeWithText("reward").performClick()
                     onNodeWithText("Save rule").performScrollTo().performClick()
-                    runOnIdle { assertEquals(original.copy(result = ActivityKind.REWARD), app.rules().first { it.id == original.id }) }
-                    onNodeWithTag("toggle-rule-${original.id}").performScrollTo().performClick()
                     runOnIdle {
                         assertEquals(
-                            original.copy(result = ActivityKind.REWARD, enabled = true),
-                            app.rules().first {
+                            original.copy(result = ActivityKind.REWARD),
+                            app.transactions.rules().first {
                                 it.id ==
                                     original.id
                             },
                         )
                     }
                     onNodeWithTag("toggle-rule-${original.id}").performScrollTo().performClick()
-                    runOnIdle { assertEquals(original.copy(result = ActivityKind.REWARD), app.rules().first { it.id == original.id }) }
+                    runOnIdle {
+                        assertEquals(
+                            original.copy(result = ActivityKind.REWARD, enabled = true),
+                            app.transactions.rules().first {
+                                it.id ==
+                                    original.id
+                            },
+                        )
+                    }
+                    onNodeWithTag("toggle-rule-${original.id}").performScrollTo().performClick()
+                    runOnIdle {
+                        assertEquals(
+                            original.copy(result = ActivityKind.REWARD),
+                            app.transactions.rules().first {
+                                it.id ==
+                                    original.id
+                            },
+                        )
+                    }
                     onNodeWithTag("edit-rule-${anyKind.id}").performScrollTo().performClick()
                     onNodeWithText("Any classification").performScrollTo().assertIsDisplayed()
                     onNodeWithText("Save rule").performScrollTo().performClick()
-                    runOnIdle { assertEquals(anyKind, app.rules().first { it.id == anyKind.id }) }
+                    runOnIdle { assertEquals(anyKind, app.transactions.rules().first { it.id == anyKind.id }) }
                 }
             }
         }
@@ -1045,7 +1068,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 val data = app.snapshot()
                 runDesktopComposeUiTest(width = 800, height = 900) {
                     setContent {
@@ -1057,7 +1080,7 @@ class ValrootUiTest {
                     waitUntil(timeoutMillis = 10_000) { host.priceRequests == 1 }
                     onNodeWithText("Saved Bitcoin price history.").performScrollTo().assertIsDisplayed()
                 }
-                assertTrue(app.priceSourceConsent())
+                assertTrue(app.prices.sourceConsent())
                 assertEquals(1, host.priceRequests)
             }
         }
@@ -1070,8 +1093,8 @@ class ValrootUiTest {
             JvmSqliteDatabase(path.toString()).use { db ->
                 Host().use { host ->
                     val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                    app.updateOnboarding(OnboardingAction.Skip)
-                    app.seedDemo()
+                    app.settings.updateOnboarding(OnboardingAction.Skip)
+                    app.demo.seed()
                     runDesktopComposeUiTest(width = 800, height = 900) {
                         setContent { ValrootApp(app, host) }
                         waitUntil(timeoutMillis = 10_000) {
@@ -1112,7 +1135,7 @@ class ValrootUiTest {
             }
             JvmSqliteDatabase(path.toString()).use { db ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 assertEquals(1, app.snapshot(ActivityFilter(search = "UI deposit")).activityTotal)
                 assertEquals(
                     "70000",
@@ -1136,7 +1159,7 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 runDesktopComposeUiTest(width = 800, height = 360) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -1160,8 +1183,8 @@ class ValrootUiTest {
     fun activityCorrectionsSupportEveryLegAndResetToSource() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { System.currentTimeMillis() }
-            app.updateOnboarding(OnboardingAction.Skip)
-            app.seedDemo()
+            app.settings.updateOnboarding(OnboardingAction.Skip)
+            app.demo.seed()
             val data = app.snapshot()
             val base = data.activities.first { it.activity.movements.size == 1 }
             val first = base.activity.movements.single()
@@ -1187,8 +1210,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -1215,12 +1238,12 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val started = System.nanoTime()
                 repeat(10_000) { index ->
                     val id = "bulk-${index.toString().padStart(5, '0')}"
-                    app.saveManualActivity(
+                    app.transactions.saveManualActivity(
                         io.valroot.core.ledger.Activity(
                             ActivityId(id),
                             System.currentTimeMillis(),
@@ -1275,8 +1298,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 1440, height = 1000) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
@@ -1295,7 +1318,7 @@ class ValrootUiTest {
                     onNodeWithText("Label").performTextInput("Reviewed deposit")
                     onNodeWithText("Save correction").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Reviewed deposit").fetchSemanticsNodes().isNotEmpty() }
-                    assertEquals("Reviewed deposit", app.overlay(ActivityId("demo-deposit"))?.label)
+                    assertEquals("Reviewed deposit", app.transactions.overlay(ActivityId("demo-deposit"))?.label)
                     onNodeWithText("Search activity").performTextReplacement("Reviewed deposit")
                     waitUntil(
                         timeoutMillis = 10_000,
@@ -1319,8 +1342,8 @@ class ValrootUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 360, height = 800) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty() }
@@ -1343,7 +1366,7 @@ class ValrootUiTest {
                         onNodeWithTag("page-content").performScrollToNode(hasTestTag(tag))
                         onNodeWithTag(tag).performScrollTo().assertIsDisplayed().performClick()
                         waitUntil(timeoutMillis = 10_000) {
-                            app.appearanceTheme() == key && onAllNodes(hasTestTag(tag) and isSelected()).fetchSemanticsNodes().isNotEmpty()
+                            app.settings.theme() == key && onAllNodes(hasTestTag(tag) and isSelected()).fetchSemanticsNodes().isNotEmpty()
                         }
                         onNodeWithTag("page-content").performScrollToNode(hasTestTag(tag))
                         onNodeWithTag(tag).performScrollTo().assertIsSelected()

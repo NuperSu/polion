@@ -20,11 +20,11 @@ class GeneralSettingsAppTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.setLandingPage(LandingPage.PORTFOLIO)
-                app.setShowPortfolioChart(false)
-                app.setSecondaryCurrency(AssetId("EUR"))
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.settings.setLandingPage(LandingPage.PORTFOLIO)
+                app.settings.setShowPortfolioChart(false)
+                app.settings.setSecondaryCurrency(AssetId("EUR"))
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
@@ -36,11 +36,11 @@ class GeneralSettingsAppTest {
                     openSettings()
                     openSettingsRow("settings-portfolio")
                     openSettingsRow("settings-show-chart")
-                    waitUntil(timeoutMillis = 10_000) { app.generalPreferences().showPortfolioChart }
+                    waitUntil(timeoutMillis = 10_000) { app.settings.general().showPortfolioChart }
                     onNodeWithTag("settings-back").performClick()
                     onNodeWithTag("model-PORTFOLIO").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("portfolio-chart").fetchSemanticsNodes().isNotEmpty() }
-                    assertEquals(LandingPage.PORTFOLIO, app.generalPreferences().landing)
+                    assertEquals(LandingPage.PORTFOLIO, app.settings.general().landing)
                 }
             }
         }

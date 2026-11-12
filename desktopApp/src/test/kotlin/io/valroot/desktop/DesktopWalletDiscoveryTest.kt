@@ -28,7 +28,7 @@ class DesktopWalletDiscoveryTest {
         val app = PortfolioApplication(db) { 1000L }
         val owner = Owner(OwnerId("owner"), "Personal")
         val account = Account(AccountId("account"), owner.id, "Savings", AccountKind.WALLET)
-        app.saveBitcoinWallet(
+        app.bitcoinWallets.save(
             TrackingTarget(
                 walletId,
                 account.id,
@@ -132,7 +132,7 @@ class DesktopWalletDiscoveryTest {
     fun discoveryKeepsCapturedEndpointWhenSettingsChangeBeforeHistoryStarts() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = walletApplication(db)
-            val endpoint = app.sourceEndpoint()
+            val endpoint = app.sources.endpoint()
             var calls = 0
             val status =
                 discoverWalletStatus(
@@ -144,13 +144,13 @@ class DesktopWalletDiscoveryTest {
                     },
                     providerEndpoint = endpoint,
                 ) {
-                    app.setSourceEndpoint("https://replacement.example/api")
+                    app.sources.setEndpoint("https://replacement.example/api")
                 }
             assertEquals(SyncPhase.ERROR, status.phase)
             assertEquals(BitcoinProviderFailure.HISTORY_CHANGED.userMessage, status.message)
             assertEquals(1, calls)
-            assertTrue(app.sourceConsent())
-            assertEquals("https://replacement.example/api", app.sourceEndpoint())
+            assertTrue(app.sources.consent())
+            assertEquals("https://replacement.example/api", app.sources.endpoint())
             assertEquals(null, app.snapshot().sourceStatus.lastSuccessfulRefresh)
         }
     }

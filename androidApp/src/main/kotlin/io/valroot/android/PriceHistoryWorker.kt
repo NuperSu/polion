@@ -36,7 +36,7 @@ internal object PriceHistoryWorker {
                 try {
                     AndroidSqliteDatabase(context.getDatabasePath("portfolio.sqlite").path).use { db ->
                         val count =
-                            PortfolioApplication(db, System::currentTimeMillis).fetchPriceHistory(
+                            PortfolioApplication(db, System::currentTimeMillis).prices.fetchHistory(
                                 { url ->
                                     checkGeneration(requestGeneration)
                                     transport.get(url, apiKey)
@@ -72,7 +72,7 @@ internal object PriceHistoryWorker {
                 try {
                     AndroidSqliteDatabase(context.getDatabasePath("portfolio.sqlite").path).use { db ->
                         val result =
-                            PortfolioApplication(db, System::currentTimeMillis).fetchHistoricalPrice(
+                            PortfolioApplication(db, System::currentTimeMillis).prices.fetchHistorical(
                                 { url ->
                                     checkGeneration(requestGeneration)
                                     transport.get(url, apiKey)

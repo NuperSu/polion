@@ -129,10 +129,10 @@ class BitcoinWholeHistoryAcceptanceTest {
 
     private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 1_800_000_000_000L }
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
         listOf("spending" to a, "savings" to b).forEach { (name, address) ->
-            app.saveAccount(Account(AccountId(name), OwnerId("owner"), name, AccountKind.WALLET))
-            app.saveTarget(
+            app.accounts.saveAccount(Account(AccountId(name), OwnerId("owner"), name, AccountKind.WALLET))
+            app.accounts.saveTarget(
                 TrackingTarget(
                     TrackingTargetId(name),
                     AccountId(name),
@@ -142,8 +142,8 @@ class BitcoinWholeHistoryAcceptanceTest {
                 ),
             )
         }
-        app.setSourceConsent(true)
-        app.setSourceEndpoint("https://example.org/api")
+        app.sources.setConsent(true)
+        app.sources.setEndpoint("https://example.org/api")
         return app
     }
 
@@ -152,11 +152,11 @@ class BitcoinWholeHistoryAcceptanceTest {
         app: PortfolioApplication,
         db: JvmSqliteDatabase,
     ) = listOf(
-        app.exportCsv(),
+        app.csv.export(),
         app.snapshot().valuations.map { it.asset to it.amount },
-        app.accountOverview().map { it.account.id to it.holdings },
-        app.accountingReport().let { it.report.lots to it.report.disposals },
-        app.transactionEntries(ActivityFilter()).map { it.activity },
+        app.analytics.accountOverview().map { it.account.id to it.holdings },
+        app.accounting.report().let { it.report.lots to it.report.disposals },
+        app.transactions.entries(ActivityFilter()).map { it.activity },
         BitcoinGraphRepository(db).latest()!!.graph.transactions,
     )
 
@@ -164,11 +164,11 @@ class BitcoinWholeHistoryAcceptanceTest {
         val uninterrupted =
             JvmSqliteDatabase(":memory:").use { db ->
                 val app = setUp(db)
-                assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), app.refreshBitcoin(transport))
+                assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), app.bitcoin.refresh(transport))
                 // A's 33 transactions span two pages; the second page is requested after the last ID of the first.
                 assertTrue(requested.any { it.startsWith("/address/$a/txs/chain/") }, requested.toString())
                 // 30 payments in, two spends with change, one move between the wallets.
-                assertEquals(33, app.transactionEntries(ActivityFilter()).size)
+                assertEquals(33, app.transactions.entries(ActivityFilter()).size)
                 val expected = (0 until 30).sumOf { 10_000L + it } - 10_000 - 10_001 - 10_002 + 801 + 802 + 14_000
                 assertEquals(
                     expected.toString(),
@@ -181,7 +181,7 @@ class BitcoinWholeHistoryAcceptanceTest {
                 )
                 val first = results(app, db)
                 // A rebuild from scratch reaches the same results.
-                assertTrue(app.refreshBitcoin(transport, recoverHistory = true).all { it == JobState.COMPLETED })
+                assertTrue(app.bitcoin.refresh(transport, recoverHistory = true).all { it == JobState.COMPLETED })
                 assertEquals(first, results(app, db))
                 first
             }
@@ -195,13 +195,13 @@ class BitcoinWholeHistoryAcceptanceTest {
                         if (++calls > cut) throw BitcoinProviderException(BitcoinProviderFailure.OFFLINE)
                         transport.get(path)
                     }
-                val interrupted = runCatching { app.refreshBitcoin(failing) }
+                val interrupted = runCatching { app.bitcoin.refresh(failing) }
                 assertTrue(calls > cut, "cut $cut was not reached")
                 assertTrue(interrupted.isFailure || interrupted.getOrThrow().any { it != JobState.COMPLETED }, "cut $cut")
                 // Nothing partial is accepted.
-                assertTrue(app.transactionEntries(ActivityFilter()).isEmpty(), "cut $cut")
+                assertTrue(app.transactions.entries(ActivityFilter()).isEmpty(), "cut $cut")
                 val resumed = PortfolioApplication(db) { 1_800_000_000_000L }
-                assertTrue(resumed.refreshBitcoin(transport).all { it == JobState.COMPLETED }, "cut $cut")
+                assertTrue(resumed.bitcoin.refresh(transport).all { it == JobState.COMPLETED }, "cut $cut")
                 assertEquals(uninterrupted, results(resumed, db), "cut $cut")
             }
         }

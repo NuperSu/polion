@@ -129,7 +129,7 @@ class WalletUiTest {
                             .ownership.targets
                             .isEmpty(),
                     )
-                    assertFalse(app.sourceConsent())
+                    assertFalse(app.sources.consent())
                     val xpub =
                         "xpub6CatWdiZiodmUeTDp8LT5or8nmbKNcuyvz7WyksVFkKB4RHwCD3XyuvP" +
                             "EbvqAQY3rAPshWcMLoP2fMFMKHPJ4ZeZXYVUhLv1VMrjPC7PW6V"

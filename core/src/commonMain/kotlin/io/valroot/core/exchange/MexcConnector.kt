@@ -50,19 +50,19 @@ class MexcConnector(
     ): SourceRefreshOutcome {
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
-        app.exchangeTargets(ExchangeKind.MEXC).forEach { (account, uid) ->
-            if (!app.hasExchangeKey(ExchangeKind.MEXC, account)) {
+        app.exchanges.targets(ExchangeKind.MEXC).forEach { (account, uid) ->
+            if (!app.exchanges.hasKey(ExchangeKind.MEXC, account)) {
                 notes += "A MEXC account needs its API key again"
                 return@forEach
             }
             options.onProgress("MEXC")
             jobs +=
                 try {
-                    if (options.recoverHistory) app.forgetExchangeHistory(account)
+                    if (options.recoverHistory) app.exchanges.forgetHistory(account)
                     sync(app, account, uid, options)?.let { notes += it }
                     JobState.COMPLETED
                 } catch (failure: Exception) {
-                    app.recordExchangeError(account, message(failure))
+                    app.exchanges.recordError(account, message(failure))
                     JobState.FAILED
                 }
         }
@@ -80,7 +80,7 @@ class MexcConnector(
         val now = app.clockMillis()
         val balances = Mexc.parseBalances(budget.send(Mexc.account()))
 
-        fun save(rows: List<ExchangeRow>) = app.saveExchangeRows(ExchangeKind.MEXC, account, uid, rows, MexcDecoder.VERSION)
+        fun save(rows: List<ExchangeRow>) = app.exchanges.saveRows(ExchangeKind.MEXC, account, uid, rows, MexcDecoder.VERSION)
         var unfinished = false
         STREAMS.forEach { stream ->
             options.onProgress("MEXC · ${stream.name}")
@@ -94,11 +94,11 @@ class MexcConnector(
         options.onProgress("MEXC · trades")
         if (!readTrades(app, account, balances, now, budget, ::save)) unfinished = true
 
-        val pairs = app.exchangePairs(account)
+        val pairs = app.exchanges.pairs(account)
         val unmatched =
-            app.unmatchedExchangeSymbols(
+            app.exchanges.unmatchedSymbols(
                 ExchangeKind.MEXC.id,
-                app.exchangeRowSymbols(ExchangeKind.MEXC, account) + balances.keys,
+                app.exchanges.rowSymbols(ExchangeKind.MEXC, account) + balances.keys,
             )
         val contracts =
             if (unmatched.isNotEmpty() &&
@@ -108,8 +108,12 @@ class MexcConnector(
             } else {
                 emptyMap()
             }
-        app.applyMexcHistory(account, uid, balances, now, pairs, contracts)
-        app.saveExchangeCursor(account, BALANCES_CURSOR, balances.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" })
+        app.exchanges.applyMexcHistory(account, uid, balances, now, pairs, contracts)
+        app.exchanges.saveCursor(
+            account,
+            BALANCES_CURSOR,
+            balances.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" },
+        )
         return if (unfinished) "Older MEXC history is still being read; it continues with the next refresh" else null
     }
 
@@ -122,14 +126,14 @@ class MexcConnector(
         budget: Budget,
         save: (List<ExchangeRow>) -> Unit,
     ): Boolean {
-        var state = app.exchangeStreams(account)[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
+        var state = app.exchanges.streams(account)[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
         var from = maxOf(state.fromMillis, state.toMillis - Mexc.DAY_MILLIS)
         while (from < now) {
             if (budget.left <= 0) return false
             val to = minOf(from + Mexc.WEEK_MILLIS, now)
             save(stream.read(budget::send, from, to))
             state = state.copy(toMillis = to)
-            app.saveExchangeStream(account, state)
+            app.exchanges.saveStream(account, state)
             from = to
         }
         val limit = now - stream.retentionMillis
@@ -143,11 +147,11 @@ class MexcConnector(
                     // MEXC refuses windows older than it keeps: the history ends here.
                     if (refused.rateLimited || refused.invalidKey || refused.clockSkew) throw refused
                     state = state.copy(complete = true)
-                    app.saveExchangeStream(account, state)
+                    app.exchanges.saveStream(account, state)
                     break
                 }
             state = state.copy(fromMillis = start, emptyWindows = if (found == 0) state.emptyWindows + 1 else 0, complete = start <= limit)
-            app.saveExchangeStream(account, state)
+            app.exchanges.saveStream(account, state)
         }
         return true
     }
@@ -163,10 +167,13 @@ class MexcConnector(
     ): Boolean {
         if (budget.left <= 0) return false
         val listed = Mexc.parseSymbols(budget.send(Mexc.tickers()))
-        val cursors = app.exchangeCursors(account)
+        val cursors = app.exchanges.cursors(account)
         val coins =
-            app.exchangeRowSymbols(ExchangeKind.MEXC, account) + balances.keys +
-                app.exchangePairs(account).values.flatMap { listOf(it.first, it.second) }
+            app.exchanges.rowSymbols(ExchangeKind.MEXC, account) + balances.keys +
+                app.exchanges
+                    .pairs(account)
+                    .values
+                    .flatMap { listOf(it.first, it.second) }
         val candidates = mutableMapOf<String, Pair<String, String>>()
         coins.forEach { base ->
             (coins + QUOTES).forEach { quote ->
@@ -183,7 +190,7 @@ class MexcConnector(
                 .mapNotNull { entry -> entry.split('=').takeIf { it.size == 2 }?.let { it[0] to it[1] } }
                 .toMap()
         val changed = (balances.keys + previous.keys).filter { previous[it] != balances[it]?.toString() }.toSet()
-        candidates.forEach { (symbol, pair) -> app.saveExchangeCursor(account, PAIR + symbol, "${pair.first}/${pair.second}") }
+        candidates.forEach { (symbol, pair) -> app.exchanges.saveCursor(account, PAIR + symbol, "${pair.first}/${pair.second}") }
         for ((symbol, pair) in candidates.entries.sortedBy { it.key }) {
             val read = cursors[TRADE_CURSOR + symbol]?.toLongOrNull()
             val due = read == null || now - read >= Mexc.DAY_MILLIS || pair.first in changed || pair.second in changed
@@ -191,7 +198,7 @@ class MexcConnector(
             if (budget.left <= 0) return false
             val from = maxOf(read?.minus(Mexc.DAY_MILLIS) ?: 0L, now - Mexc.TRADE_RETENTION_MILLIS + Mexc.DAY_MILLIS / 24)
             if (!readTradeWindow(symbol, from, now, budget, save)) return false
-            app.saveExchangeCursor(account, TRADE_CURSOR + symbol, "$now")
+            app.exchanges.saveCursor(account, TRADE_CURSOR + symbol, "$now")
         }
         return true
     }

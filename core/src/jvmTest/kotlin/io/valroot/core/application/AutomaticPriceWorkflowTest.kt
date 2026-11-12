@@ -18,19 +18,19 @@ class AutomaticPriceWorkflowTest {
         try {
             JvmSqliteDatabase(path.toString()).use { db ->
                 val app = PortfolioApplication(db) { now }
-                app.setAutomaticPriceConsent(true)
+                app.prices.setAutomaticConsent(true)
                 assertFailsWith<KrakenRateLimitedException> {
-                    app.refreshAutomaticPrices({ throw KrakenRateLimitedException(120_000) })
+                    app.prices.refreshAutomatic({ throw KrakenRateLimitedException(120_000) })
                 }
             }
             JvmSqliteDatabase(path.toString()).use { db ->
                 var clock = now + 60_000
                 val app = PortfolioApplication(db) { clock }
-                assertFailsWith<KrakenRateLimitedException> { app.refreshAutomaticPrices({ error("unexpected request") }) }
+                assertFailsWith<KrakenRateLimitedException> { app.prices.refreshAutomatic({ error("unexpected request") }) }
                 clock = now + 120_000
                 var requested = false
                 assertFailsWith<IllegalArgumentException> {
-                    app.refreshAutomaticPrices({
+                    app.prices.refreshAutomatic({
                         requested = true
                         "invalid"
                     })
@@ -45,32 +45,32 @@ class AutomaticPriceWorkflowTest {
     @Test fun rateLimitStopsTheWholePriceBatchAndPreservesSavedData() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            app.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
-            app.setAutomaticPriceConsent(true)
+            app.accounts.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
+            app.prices.setAutomaticConsent(true)
             val current = now / hour * hour
-            app.refreshAutomaticPrices({
+            app.prices.refreshAutomatic({
                 """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, "40000")},${candle(current, "41000")}],"last":0}}"""
             })
             val saved = db.query("SELECT id,value,valid_at FROM market_prices ORDER BY id")
             var requests = 0
             assertFailsWith<KrakenRateLimitedException> {
-                app.refreshAutomaticPriceSet(transport = {
+                app.prices.refreshAutomaticSet(transport = {
                     requests++
                     throw KrakenRateLimitedException(120_000)
                 })
             }
             assertEquals(1, requests)
             assertEquals(saved, db.query("SELECT id,value,valid_at FROM market_prices ORDER BY id"))
-            app.recordAutomaticPriceStatus(false, rateLimited = true)
+            app.prices.recordAutomaticStatus(false, rateLimited = true)
             assertEquals(
                 "Kraken is rate limiting requests; retry after ${kotlin.time.Instant.fromEpochMilliseconds(
                     now + 120_000,
                 )}. Saved prices remain available",
-                app.automaticPriceStatus(),
+                app.prices.automaticStatus(),
             )
             var clock = now + 60_000
             val reopened = PortfolioApplication(db) { clock }
-            assertFailsWith<KrakenRateLimitedException> { reopened.refreshAutomaticPrices({ error("cooldown must prevent requests") }) }
+            assertFailsWith<KrakenRateLimitedException> { reopened.prices.refreshAutomatic({ error("cooldown must prevent requests") }) }
             assertEquals(
                 (now + 120_000).toString(),
                 db.query("SELECT value FROM application_settings WHERE key='kraken_retry_after'").single().single(),
@@ -78,7 +78,7 @@ class AutomaticPriceWorkflowTest {
             clock = now + 120_000
             var retried = false
             assertFailsWith<IllegalArgumentException> {
-                reopened.refreshAutomaticPrices({
+                reopened.prices.refreshAutomatic({
                     retried = true
                     "invalid"
                 })
@@ -90,16 +90,16 @@ class AutomaticPriceWorkflowTest {
     @Test fun restoreInvalidationCancelsInFlightRequestWithoutChangingConsentScope() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            app.setAutomaticPriceConsent(true)
+            app.prices.setAutomaticConsent(true)
             val current = now / hour * hour
             assertFailsWith<CoingeckoProviderException> {
-                app.refreshAutomaticPrices({
-                    app.invalidateAutomaticPriceRequests()
+                app.prices.refreshAutomatic({
+                    app.prices.invalidateAutomaticRequests()
                     """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, "40000")},${candle(current, "41000")}],"last":0}}"""
                 })
             }
-            assertEquals(true, app.automaticPriceConsent())
-            assertEquals(true, app.automaticPortfolioPriceConsent())
+            assertEquals(true, app.prices.automaticConsent())
+            assertEquals(true, app.prices.automaticPortfolioConsent())
             assertEquals("0", db.query("SELECT COUNT(*) FROM market_prices").single().single())
         }
     }
@@ -107,14 +107,14 @@ class AutomaticPriceWorkflowTest {
     @Test fun revokedConsentStopsRemainingCurrencyRequests() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            app.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
-            app.setAutomaticPriceConsent(true)
+            app.accounts.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
+            app.prices.setAutomaticConsent(true)
             var requests = 0
             val current = now / hour * hour
             assertFailsWith<CoingeckoProviderException> {
-                app.refreshAutomaticPriceSet({
+                app.prices.refreshAutomaticSet({
                     requests++
-                    app.setAutomaticPriceConsent(false)
+                    app.prices.setAutomaticConsent(false)
                     """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, "40000")},${candle(current, "41000")}],"last":0}}"""
                 })
             }
@@ -126,17 +126,17 @@ class AutomaticPriceWorkflowTest {
     @Test fun refreshCoversPortfolioCurrenciesAndContinuesAfterOneMarketFails() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            app.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
-            app.setAutomaticPriceConsent(true)
+            app.accounts.savePortfolio(Portfolio(PortfolioId("euro"), "Euro", "EUR"))
+            app.prices.setAutomaticConsent(true)
             db.execute("DELETE FROM application_settings WHERE key='automatic_price_scope'")
             assertEquals(
                 listOf(
                     io.valroot.core.model
                         .AssetId("USD"),
                 ),
-                app.automaticPriceCurrencies(),
+                app.prices.automaticCurrencies(),
             )
-            app.setAutomaticPortfolioPriceConsent(true)
+            app.prices.setAutomaticPortfolioConsent(true)
             assertEquals(
                 setOf(
                     io.valroot.core.model
@@ -144,7 +144,7 @@ class AutomaticPriceWorkflowTest {
                     io.valroot.core.model
                         .AssetId("EUR"),
                 ),
-                app.automaticPriceCurrencies().toSet(),
+                app.prices.automaticCurrencies().toSet(),
             )
             val urls = mutableListOf<String>()
             val transport: (String) -> String = { url ->
@@ -155,7 +155,7 @@ class AutomaticPriceWorkflowTest {
                 val pair = if (url.contains("XBTEUR")) "XXBTZEUR" else "XXBTZUSD"
                 """{"error":[],"result":{"$pair":[${candle(current - interval, "40000")},${candle(current, "41000")}],"last":0}}"""
             }
-            assertFailsWith<IllegalStateException> { app.refreshAutomaticPriceSet(transport) }
+            assertFailsWith<IllegalStateException> { app.prices.refreshAutomaticSet(transport) }
             assertEquals(4, urls.size)
             assertEquals(setOf("USD", "EUR"), db.query("SELECT DISTINCT quote_asset FROM market_prices").map { it.single() }.toSet())
             assertEquals("1", db.query("SELECT COUNT(*) FROM market_prices WHERE quote_asset='USD'").single().single())
@@ -165,21 +165,21 @@ class AutomaticPriceWorkflowTest {
     @Test fun automaticRefreshSwitchSetsPreferenceAndPriceConsentTogether() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            assertEquals(null, app.automaticRefreshPreference())
-            assertEquals(false, app.automaticPriceConsent())
+            assertEquals(null, app.settings.automaticRefresh())
+            assertEquals(false, app.prices.automaticConsent())
 
-            val before = app.automaticPriceGeneration()
-            app.setAutomaticRefresh(true)
-            assertEquals(true, app.automaticRefreshPreference())
-            assertEquals(true, app.automaticPriceConsent())
-            assertEquals(true, app.automaticPortfolioPriceConsent())
-            val enabledGeneration = app.automaticPriceGeneration()
+            val before = app.prices.automaticGeneration()
+            app.prices.setAutomaticRefresh(true)
+            assertEquals(true, app.settings.automaticRefresh())
+            assertEquals(true, app.prices.automaticConsent())
+            assertEquals(true, app.prices.automaticPortfolioConsent())
+            val enabledGeneration = app.prices.automaticGeneration()
             assertNotEquals(before, enabledGeneration)
 
-            app.setAutomaticRefresh(false)
-            assertEquals(false, app.automaticRefreshPreference())
-            assertEquals(false, app.automaticPriceConsent())
-            assertNotEquals(enabledGeneration, app.automaticPriceGeneration())
+            app.prices.setAutomaticRefresh(false)
+            assertEquals(false, app.settings.automaticRefresh())
+            assertEquals(false, app.prices.automaticConsent())
+            assertNotEquals(enabledGeneration, app.prices.automaticGeneration())
         }
     }
 
@@ -187,13 +187,13 @@ class AutomaticPriceWorkflowTest {
         JvmSqliteDatabase(":memory:").use { db ->
             var clock = now
             val app = PortfolioApplication(db) { clock }
-            app.setAutomaticRefresh(true)
-            assertEquals(null, app.automaticPriceLastRunMillis())
-            app.recordAutomaticPriceStatus(success = true)
-            assertEquals(now, app.automaticPriceLastRunMillis())
+            app.prices.setAutomaticRefresh(true)
+            assertEquals(null, app.prices.automaticLastRunMillis())
+            app.prices.recordAutomaticStatus(success = true)
+            assertEquals(now, app.prices.automaticLastRunMillis())
             clock = now + 1000
-            app.recordAutomaticPriceStatus(success = false)
-            assertEquals(now + 1000, app.automaticPriceLastRunMillis())
+            app.prices.recordAutomaticStatus(success = false)
+            assertEquals(now + 1000, app.prices.automaticLastRunMillis())
         }
     }
 
@@ -211,20 +211,20 @@ class AutomaticPriceWorkflowTest {
             var price = "40000"
             val current = now / hour * hour
             val app = PortfolioApplication(db) { clock }
-            app.setAutomaticPriceConsent(true)
+            app.prices.setAutomaticConsent(true)
             val transport: (String) -> String = {
                 """{"error":[],"result":{"XXBTZUSD":[${candle(current - hour, price)},${candle(current, "1")}],"last":0}}"""
             }
-            app.refreshAutomaticPrices(transport)
+            app.prices.refreshAutomatic(transport)
             clock++
-            app.refreshAutomaticPrices(transport)
+            app.prices.refreshAutomatic(transport)
             assertEquals("1", db.query("SELECT COUNT(*) FROM market_prices").single().single())
             price = "41000"
             clock++
-            app.refreshAutomaticPrices(transport)
+            app.prices.refreshAutomatic(transport)
             price = "40000"
             clock++
-            app.refreshAutomaticPrices(transport)
+            app.prices.refreshAutomatic(transport)
             assertEquals(
                 listOf(listOf("40000"), listOf("41000"), listOf("40000")),
                 db.query("SELECT value FROM market_prices ORDER BY observed_at"),
@@ -237,7 +237,7 @@ class AutomaticPriceWorkflowTest {
             var clock = now
             val day = 86_400_000L
             val app = PortfolioApplication(db) { clock }
-            app.setAutomaticPriceConsent(true)
+            app.prices.setAutomaticConsent(true)
             var requests = 0
             val transport: (String) -> String = { url ->
                 requests++
@@ -248,13 +248,13 @@ class AutomaticPriceWorkflowTest {
                     "39000",
                 )},${candle(current - day, "40000")},${candle(current, "99999")}],"last":0}}"""
             }
-            assertEquals(2, app.refreshAutomaticDailyPricesIfDue(transport))
-            assertEquals(0, app.refreshAutomaticDailyPricesIfDue(transport))
+            assertEquals(2, app.prices.refreshAutomaticDailyIfDue(transport))
+            assertEquals(0, app.prices.refreshAutomaticDailyIfDue(transport))
             assertEquals(1, requests)
             val values = db.query("SELECT value FROM market_prices ORDER BY valid_at")
             assertEquals(listOf(listOf("39000"), listOf("40000")), values)
             clock += day
-            assertEquals(2, app.refreshAutomaticDailyPricesIfDue(transport))
+            assertEquals(2, app.prices.refreshAutomaticDailyIfDue(transport))
             assertEquals(2, requests)
         }
     }
@@ -273,16 +273,16 @@ class AutomaticPriceWorkflowTest {
                 assertEquals("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60", url)
                 payload
             }
-            assertFailsWith<IllegalArgumentException> { app.refreshAutomaticPrices(transport) }
+            assertFailsWith<IllegalArgumentException> { app.prices.refreshAutomatic(transport) }
             assertEquals(0, requests)
-            app.setAutomaticPriceConsent(true)
-            assertEquals(2, app.refreshAutomaticPrices(transport))
+            app.prices.setAutomaticConsent(true)
+            assertEquals(2, app.prices.refreshAutomatic(transport))
             val stored = db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at")
             assertEquals(listOf((current - hour).toString(), "40000.10"), stored[0])
             assertEquals(listOf(current.toString(), "41000.20"), stored[1])
             var calls = 0
             assertFailsWith<CoingeckoProviderException> {
-                app.refreshAutomaticPrices(transport) {
+                app.prices.refreshAutomatic(transport) {
                     if (++calls ==
                         3
                     ) {
@@ -292,7 +292,7 @@ class AutomaticPriceWorkflowTest {
             }
             assertEquals(stored, db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at"))
             assertFailsWith<IllegalArgumentException> {
-                app.refreshAutomaticPrices(transport = { """{"error":["EGeneral:Invalid arguments"],"result":{}}""" })
+                app.prices.refreshAutomatic(transport = { """{"error":["EGeneral:Invalid arguments"],"result":{}}""" })
             }
             assertEquals(stored, db.query("SELECT valid_at,value FROM market_prices ORDER BY valid_at"))
         }

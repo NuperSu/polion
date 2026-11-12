@@ -125,10 +125,10 @@ fun ValrootApp(
     platform: PlatformActions,
     locked: Boolean = false,
 ) {
-    var appearance by remember(application) { mutableStateOf(AppearanceTheme.fromKey(application.appearanceTheme())) }
+    var appearance by remember(application) { mutableStateOf(AppearanceTheme.fromKey(application.settings.theme())) }
     val preferenceRevision by platform.dataRevision.collectAsState()
     LaunchedEffect(application, preferenceRevision) {
-        appearance = AppearanceTheme.fromKey(application.appearanceTheme())
+        appearance = AppearanceTheme.fromKey(application.settings.theme())
     }
     ValrootTheme(appearance) {
         Surface(Modifier.fillMaxSize(), color = Paper) {
@@ -158,7 +158,7 @@ private fun OnboardingProduct(
     val revision by host.dataRevision.collectAsState()
     LaunchedEffect(app, revision, localRevision) {
         try {
-            val saved = withContext(host.dispatcher) { app.onboardingState() }
+            val saved = withContext(host.dispatcher) { app.settings.onboarding() }
             state = saved
             loaded = true
             error = null
@@ -178,7 +178,7 @@ private fun OnboardingProduct(
         error = null
         scope.launch {
             try {
-                val saved = withContext(host.dispatcher) { app.updateOnboarding(action) }
+                val saved = withContext(host.dispatcher) { app.settings.updateOnboarding(action) }
                 state = saved
                 afterSave()
             } catch (cancelled: CancellationException) {
@@ -250,7 +250,7 @@ private fun Product(
         modelEditingDraft =
             modelEditingId?.let { id ->
                 withContext(host.dispatcher) {
-                    app.transactionDraft(
+                    app.transactions.draft(
                         io.valroot.core.model
                             .ActivityId(id),
                     )
@@ -288,19 +288,19 @@ private fun Product(
     var hasOneInchKey by remember(app) { mutableStateOf(false) }
     var lockDelay by remember(host) { mutableStateOf(host.lockDelayMillis) }
     LaunchedEffect(app, dashboardRevision, revision) {
-        assetPreference = withContext(host.dispatcher) { app.assetListPreference() }
-        marketFavorites = withContext(host.dispatcher) { app.marketFavorites() }
-        generalPreferences = withContext(host.dispatcher) { app.generalPreferences() }
-        hasCoingeckoKey = withContext(host.dispatcher) { app.coingeckoApiKey() != null }
-        hasAlchemyKey = withContext(host.dispatcher) { app.alchemyApiKey() != null }
-        hasOneInchKey = withContext(host.dispatcher) { app.oneInchApiKey() != null }
+        assetPreference = withContext(host.dispatcher) { app.settings.assetList() }
+        marketFavorites = withContext(host.dispatcher) { app.market.favorites() }
+        generalPreferences = withContext(host.dispatcher) { app.settings.general() }
+        hasCoingeckoKey = withContext(host.dispatcher) { app.market.coingeckoApiKey() != null }
+        hasAlchemyKey = withContext(host.dispatcher) { app.evm.alchemyApiKey() != null }
+        hasOneInchKey = withContext(host.dispatcher) { app.evm.oneInchApiKey() != null }
         biometric = host.biometricUnlock()
     }
     // The saved landing page applies once per launch, and only if nothing has navigated away from Main yet.
     var landingApplied by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(app) {
         if (!landingApplied) {
-            val landing = withContext(host.dispatcher) { app.generalPreferences().landing }
+            val landing = withContext(host.dispatcher) { app.settings.general().landing }
             landingApplied = true
             if (page == Page.HOME) {
                 page =
@@ -336,7 +336,11 @@ private fun Product(
         selectedManualDraft = null
         selectedManualCanEdit = false
         selectedActivity?.takeIf { it.original.manual }?.let { item ->
-            val (draft, overlay) = withContext(host.dispatcher) { app.transactionDraft(item.activity.id) to app.overlay(item.activity.id) }
+            val (draft, overlay) =
+                withContext(host.dispatcher) {
+                    app.transactions.draft(item.activity.id) to
+                        app.transactions.overlay(item.activity.id)
+                }
             selectedManualDraft = draft
             selectedManualCanEdit = draft != null && (overlay == null || overlay.amounts.isEmpty() && overlay.kind == null)
         }
@@ -386,7 +390,7 @@ private fun Product(
         if (pricePhase == PriceRefreshPhase.IDLE && observedPriceWork) {
             observedPriceWork = false
             priceRequested = false
-            val result = withContext(host.dispatcher) { app.automaticPriceStatus() }
+            val result = withContext(host.dispatcher) { app.prices.automaticStatus() }
             refreshDetails = result ?: "Price refresh finished. Saved values remain available."
             if (result != notifiedPriceResult || result == null) {
                 presenter.notify(
@@ -405,7 +409,7 @@ private fun Product(
 
     LaunchedEffect(preferenceRevision) {
         if (priceRequested && pricePhase != PriceRefreshPhase.IDLE) {
-            val result = withContext(host.dispatcher) { app.automaticPriceStatus() }
+            val result = withContext(host.dispatcher) { app.prices.automaticStatus() }
             if (result != null &&
                 result != notifiedPriceResult &&
                 (result.startsWith("Some price requests failed") || result.contains("rate limiting"))
@@ -429,7 +433,7 @@ private fun Product(
         if (marketRefreshing) return
         marketRefreshing = true
         priceScope.launch {
-            val consent = runCatching { withContext(host.dispatcher) { app.marketDataConsent() } }.getOrDefault(false)
+            val consent = runCatching { withContext(host.dispatcher) { app.market.consent() } }.getOrDefault(false)
             if (!consent) {
                 marketRefreshing = false
                 if (!quiet) marketDisclosure = true
@@ -450,7 +454,10 @@ private fun Product(
         priceScope.launch {
             val (allowedCurrencies, consent) =
                 withContext(host.dispatcher) {
-                    app.automaticPriceCurrencies().map { it.value }.toSet() to app.automaticPriceConsent()
+                    app.prices
+                        .automaticCurrencies()
+                        .map { it.value }
+                        .toSet() to app.prices.automaticConsent()
                 }
             val missingCurrencyConsent =
                 snapshot?.ownership?.portfolios.orEmpty().any {
@@ -480,7 +487,7 @@ private fun Product(
 
     fun showPriceRefreshDetails(fallback: String) {
         showRefreshDetails = true
-        priceScope.launch { refreshDetails = withContext(host.dispatcher) { app.automaticPriceStatus() } ?: fallback }
+        priceScope.launch { refreshDetails = withContext(host.dispatcher) { app.prices.automaticStatus() } ?: fallback }
     }
     val snackbar = remember { SnackbarHostState() }
     var snackbarHeight by remember { mutableIntStateOf(0) }
@@ -511,13 +518,13 @@ private fun Product(
         val previous = generalPreferences
         generalPreferences = updated
         execute("Settings saved") {
-            if (updated.landing != previous.landing) app.setLandingPage(updated.landing)
-            if (updated.secondaryCurrency != previous.secondaryCurrency) app.setSecondaryCurrency(updated.secondaryCurrency)
-            if (updated.showPortfolioChart != previous.showPortfolioChart) app.setShowPortfolioChart(updated.showPortfolioChart)
-            if (updated.zeroBasisRewards != previous.zeroBasisRewards) app.setZeroBasisRewards(updated.zeroBasisRewards)
-            if (updated.deviceName != previous.deviceName) app.setDeviceName(updated.deviceName)
-            if (updated.hideAmounts != previous.hideAmounts) app.setHideAmounts(updated.hideAmounts)
-            if (updated.candleCharts != previous.candleCharts) app.setCandleCharts(updated.candleCharts)
+            if (updated.landing != previous.landing) app.settings.setLandingPage(updated.landing)
+            if (updated.secondaryCurrency != previous.secondaryCurrency) app.settings.setSecondaryCurrency(updated.secondaryCurrency)
+            if (updated.showPortfolioChart != previous.showPortfolioChart) app.settings.setShowPortfolioChart(updated.showPortfolioChart)
+            if (updated.zeroBasisRewards != previous.zeroBasisRewards) app.settings.setZeroBasisRewards(updated.zeroBasisRewards)
+            if (updated.deviceName != previous.deviceName) app.settings.setDeviceName(updated.deviceName)
+            if (updated.hideAmounts != previous.hideAmounts) app.settings.setHideAmounts(updated.hideAmounts)
+            if (updated.candleCharts != previous.candleCharts) app.settings.setCandleCharts(updated.candleCharts)
         }
         // A new secondary currency needs its own Bitcoin price; fetch it now when automatic prices are allowed.
         if (updated.secondaryCurrency != null && updated.secondaryCurrency != previous.secondaryCurrency && preferences.automaticRefresh) {
@@ -527,7 +534,7 @@ private fun Product(
 
     fun saveAssetPreference(preference: AssetListPreference) =
         execute("Asset display saved") {
-            app.setAssetListPreference(preference)
+            app.settings.setAssetList(preference)
             assetPreference = preference
         }
     LaunchedEffect(presenter, snackbar) {
@@ -552,7 +559,7 @@ private fun Product(
                     onClick = {
                         marketDisclosure = false
                         priceScope.launch {
-                            withContext(host.dispatcher) { app.setMarketDataConsent(true) }
+                            withContext(host.dispatcher) { app.market.setConsent(true) }
                             refreshMarkets()
                         }
                     },
@@ -719,7 +726,7 @@ private fun Product(
                             val favorites = marketFavorites
                             marketFavorites = if (asset in favorites) favorites - asset else favorites + asset
                             execute("Favorites saved") {
-                                app.setMarketFavorites(if (asset in favorites) favorites - asset else favorites + asset)
+                                app.market.setFavorites(if (asset in favorites) favorites - asset else favorites + asset)
                             }
                         },
                         onPage = {
@@ -735,9 +742,9 @@ private fun Product(
                             val portfolio = snapshot?.ownership?.portfolios?.find { it.id == selectedPortfolio }
                             execute("Display currency saved") {
                                 if (portfolio == null) {
-                                    app.setCurrency(currency)
+                                    app.assets.setCurrency(currency)
                                 } else {
-                                    app.savePortfolio(portfolio.copy(valuationCurrency = currency.value))
+                                    app.accounts.savePortfolio(portfolio.copy(valuationCurrency = currency.value))
                                 }
                             }
                         },
@@ -832,10 +839,10 @@ private fun Product(
                                         execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
                                         preferences = updated
                                     },
-                                    onCurrency = { code -> execute("Currency saved") { app.setCurrency(AssetId(code)) } },
+                                    onCurrency = { code -> execute("Currency saved") { app.assets.setCurrency(AssetId(code)) } },
                                     onAppearance = { selected ->
                                         execute("Appearance saved") {
-                                            app.setAppearanceTheme(selected.key)
+                                            app.settings.setTheme(selected.key)
                                             onAppearance(selected)
                                         }
                                     },
@@ -843,7 +850,7 @@ private fun Product(
                                     onDialog = { dialog = it },
                                     onExportCsv = {
                                         execute("Export ready") {
-                                            host.saveFile("valroot-activities.csv", app.exportCsv().encodeToByteArray()) { message = it }
+                                            host.saveFile("valroot-activities.csv", app.csv.export().encodeToByteArray()) { message = it }
                                         }
                                     },
                                     onConnect = { connectChooser = true },
@@ -855,7 +862,7 @@ private fun Product(
                                         }
                                     },
                                     onSetup = onSetup,
-                                    onRemoveExample = { execute("Example data removed") { app.removeExampleData() } },
+                                    onRemoveExample = { execute("Example data removed") { app.demo.removeExampleData() } },
                                     onGeneral = ::saveGeneral,
                                     onLockDelay = { millis ->
                                         lockDelay = millis
@@ -871,7 +878,7 @@ private fun Product(
                                             } else {
                                                 "CoinGecko key saved"
                                             },
-                                        ) { app.setCoingeckoApiKey(key) }
+                                        ) { app.market.setCoingeckoApiKey(key) }
                                     },
                                     onAlchemyKey = { key ->
                                         val problem = withContext(host.dispatcher) { saveAlchemyKey(app, key) }
@@ -1114,7 +1121,9 @@ private fun Product(
                                                             listOf("USD", "EUR", "GBP").forEach { currency ->
                                                                 DropdownMenuItem(text = { Text(currency) }, onClick = {
                                                                     currencyMenu = false
-                                                                    execute("Display currency saved") { app.setCurrency(AssetId(currency)) }
+                                                                    execute(
+                                                                        "Display currency saved",
+                                                                    ) { app.assets.setCurrency(AssetId(currency)) }
                                                                 })
                                                             }
                                                         }
@@ -1383,7 +1392,7 @@ private fun Product(
                                                             onClick = {
                                                                 execute(
                                                                     "Account restored",
-                                                                ) { app.archiveAccount(archived.id, false) }
+                                                                ) { app.accounts.archiveAccount(archived.id, false) }
                                                             },
                                                             enabled = !busy && syncStatus.phase != SyncPhase.SYNCING,
                                                             modifier = Modifier.testTag("restore-account-${archived.id.value}"),
@@ -1474,7 +1483,7 @@ private fun Product(
                                                     )
                                                     OutlinedButton(onClick = {
                                                         execute("Export ready") {
-                                                            val csv = app.exportCsv(ActivityFilter(portfolio = selectedPortfolio))
+                                                            val csv = app.csv.export(ActivityFilter(portfolio = selectedPortfolio))
                                                             host.saveFile("valroot-activities.csv", csv.encodeToByteArray()) {
                                                                 message =
                                                                     it
@@ -1560,7 +1569,7 @@ private fun Product(
                                                     Text("Appearance", color = Muted, fontSize = 12.sp)
                                                     AppearanceSelector(appearance) { selected ->
                                                         execute("Appearance saved") {
-                                                            app.setAppearanceTheme(selected.key)
+                                                            app.settings.setTheme(selected.key)
                                                             onAppearance(selected)
                                                         }
                                                     }
@@ -1572,9 +1581,9 @@ private fun Product(
                                                     Text("Display currency", color = Muted, fontSize = 12.sp)
                                                     WrapActions(
                                                         listOf(
-                                                            "USD" to { execute { app.setCurrency(AssetId("USD")) } },
-                                                            "EUR" to { execute { app.setCurrency(AssetId("EUR")) } },
-                                                            "GBP" to { execute { app.setCurrency(AssetId("GBP")) } },
+                                                            "USD" to { execute { app.assets.setCurrency(AssetId("USD")) } },
+                                                            "EUR" to { execute { app.assets.setCurrency(AssetId("EUR")) } },
+                                                            "GBP" to { execute { app.assets.setCurrency(AssetId("GBP")) } },
                                                         ),
                                                     )
                                                     Text(
@@ -1631,7 +1640,7 @@ private fun Product(
                                                                     execute("Export ready") {
                                                                         host.saveFile(
                                                                             "valroot-activities.csv",
-                                                                            app.exportCsv().encodeToByteArray(),
+                                                                            app.csv.export().encodeToByteArray(),
                                                                         ) {
                                                                             message =
                                                                                 it
@@ -1668,7 +1677,7 @@ private fun Product(
                                             if (data.ownership.owners.isEmpty()) {
                                                 item {
                                                     TextButton(onClick = {
-                                                        execute("Example portfolio loaded. This is sample data.") { app.seedDemo() }
+                                                        execute("Example portfolio loaded. This is sample data.") { app.demo.seed() }
                                                     }) { Text("Explore with sample data") }
                                                 }
                                             }
@@ -1881,7 +1890,7 @@ private fun Product(
                     confirmButton = {
                         TextButton(
                             onClick = {
-                                execute("Account archived; saved history retained") { app.archiveAccount(account.id) }
+                                execute("Account archived; saved history retained") { app.accounts.archiveAccount(account.id) }
                                 selectedAccount = null
                                 removeAccount = null
                             },
@@ -1927,7 +1936,7 @@ private fun Product(
                         {
                             execute(
                                 "Provider prices selected; manual history retained",
-                            ) { app.useProviderPrices(asset.asset, snapshot!!.currency) }
+                            ) { app.prices.useProvider(asset.asset, snapshot!!.currency) }
                             selectedAsset = null
                         },
                         onAddTransaction = { assetId ->
@@ -1976,14 +1985,16 @@ private fun Product(
                     reverse =
                         if (item.original.manual) {
                             {
-                                execute("Manual transaction reversed; history retained") { app.reverseManualTransaction(item.activity.id) }
+                                execute(
+                                    "Manual transaction reversed; history retained",
+                                ) { app.transactions.reverseManual(item.activity.id) }
                                 selectedActivity = null
                             }
                         } else {
                             null
                         },
                 ) { overlay ->
-                    execute("Correction saved; original evidence preserved") { app.saveOverlay(overlay) }
+                    execute("Correction saved; original evidence preserved") { app.transactions.saveOverlay(overlay) }
                     selectedActivity =
                         null
                 }

@@ -28,9 +28,9 @@ class BitcoinScanResumeTest {
         val app = PortfolioApplication(db) { 15552000000L }
         val owner = OwnerId("owner")
         val account = AccountId("account")
-        app.saveOwner(Owner(owner, "Owner"))
-        app.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
-        app.saveTarget(
+        app.accounts.saveOwner(Owner(owner, "Owner"))
+        app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.WALLET))
+        app.accounts.saveTarget(
             TrackingTarget(
                 TrackingTargetId("target"),
                 account,
@@ -39,8 +39,8 @@ class BitcoinScanResumeTest {
                 "Address",
             ),
         )
-        app.setSourceConsent(true)
-        app.setSourceEndpoint("https://example.org/api")
+        app.sources.setConsent(true)
+        app.sources.setEndpoint("https://example.org/api")
         return app
     }
 
@@ -96,10 +96,10 @@ class BitcoinScanResumeTest {
             val app = setUp(db)
             val provider = ChainProvider(address, hash, totalTransactions = 75) { tx(it) }
             provider.failChainRequest = 3
-            assertEquals(listOf(JobState.READY), app.refreshBitcoin(provider.transport))
+            assertEquals(listOf(JobState.READY), app.bitcoin.refresh(provider.transport))
             provider.failChainRequest = null
             provider.chainRequests = 0
-            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertEquals(listOf(JobState.COMPLETED), app.bitcoin.refresh(provider.transport))
             assertEquals(75, countRows(db, "ledger_activities WHERE status='CONFIRMED'"))
         }
     }
@@ -109,10 +109,10 @@ class BitcoinScanResumeTest {
             val app = setUp(db)
             val first = ChainProvider(address, hash, totalTransactions = 75) { tx(it) }
             first.failChainRequest = 3
-            app.refreshBitcoin(first.transport)
+            app.bitcoin.refresh(first.transport)
             val changed =
                 ChainProvider(address, hash, totalTransactions = 75) { tx(it).replace("\"value\":100", "\"value\":101") }
-            assertFailsWith<BitcoinProviderException> { app.refreshBitcoin(changed.transport) }
+            assertFailsWith<BitcoinProviderException> { app.bitcoin.refresh(changed.transport) }
             assertEquals(
                 0,
                 db
@@ -136,7 +136,7 @@ class BitcoinScanResumeTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
             val provider = ChainProvider(address, hash, totalTransactions = 25 * 1001) { tx(it) }
-            assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+            assertEquals(listOf(JobState.COMPLETED), app.bitcoin.refresh(provider.transport))
             assertEquals(false, app.snapshot().sourceStatus.interrupted)
         }
     }

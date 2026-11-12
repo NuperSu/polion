@@ -76,33 +76,33 @@ class AutomaticPriceWorker(
         try {
             AndroidSqliteDatabase(applicationContext.getDatabasePath("portfolio.sqlite").path).use { db ->
                 val app = PortfolioApplication(db, System::currentTimeMillis)
-                if (!app.automaticPriceConsent() ||
-                    (inputData.getBoolean("automatic", false) && app.automaticRefreshPreference() == false)
+                if (!app.prices.automaticConsent() ||
+                    (inputData.getBoolean("automatic", false) && app.settings.automaticRefresh() == false)
                 ) {
                     return Result.success()
                 }
                 try {
-                    val generation = app.automaticPriceGeneration()
+                    val generation = app.prices.automaticGeneration()
                     val transport =
                         KrakenPriceTransport(beforeRequest = {
                             check(
-                                !isStopped && !AutomaticPriceGate.paused && app.automaticPriceConsent() &&
-                                    (!inputData.getBoolean("automatic", false) || app.automaticRefreshPreference() != false) &&
-                                    app.automaticPriceGeneration() == generation,
+                                !isStopped && !AutomaticPriceGate.paused && app.prices.automaticConsent() &&
+                                    (!inputData.getBoolean("automatic", false) || app.settings.automaticRefresh() != false) &&
+                                    app.prices.automaticGeneration() == generation,
                             )
                         })
-                    app.refreshAutomaticPriceSet(transport::get) { check(!isStopped && !AutomaticPriceGate.paused) }
-                    app.recordAutomaticPriceStatus(true)
+                    app.prices.refreshAutomaticSet(transport::get) { check(!isStopped && !AutomaticPriceGate.paused) }
+                    app.prices.recordAutomaticStatus(true)
                     // Market lists ride on the same schedule; a failure here never fails the price refresh.
-                    if (app.marketDataConsent()) {
-                        runCatching { app.refreshMarketFeeds(MarketFeedRefresher.transport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
+                    if (app.market.consent()) {
+                        runCatching { app.market.refreshFeeds(MarketFeedRefresher.transport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
                         MarketFeedRefresher.refreshEvmCatalogAndPrices(app)
                     }
                 } catch (failure: Exception) {
                     if (!isStopped &&
                         !AutomaticPriceGate.paused
                     ) {
-                        app.recordAutomaticPriceStatus(false, failure is KrakenRateLimitedException)
+                        app.prices.recordAutomaticStatus(false, failure is KrakenRateLimitedException)
                     }
                     RefreshWorker.dataRevision.update { it + 1 }
                     throw failure

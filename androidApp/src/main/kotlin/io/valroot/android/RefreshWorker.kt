@@ -30,7 +30,7 @@ class RefreshWorker(
     override fun doWork(): Result {
         val automaticEnabled =
             AndroidSqliteDatabase(applicationContext.getDatabasePath("portfolio.sqlite").path).use { db ->
-                PortfolioApplication(db, System::currentTimeMillis).automaticRefreshPreference() != false
+                PortfolioApplication(db, System::currentTimeMillis).settings.automaticRefresh() != false
             }
         if (!automaticEnabled) return Result.success()
         if (syncStatus.value.phase == SyncPhase.SYNCING) return Result.retry()
@@ -75,15 +75,15 @@ class RefreshWorker(
                 AndroidSqliteDatabase(file.path).use { db ->
                     val app = PortfolioApplication(db, System::currentTimeMillis)
                     // Each source needs its own consent. Wallet discovery and order verification are Bitcoin-only.
-                    val bitcoinOn = app.sourceConsent() && !withoutBitcoin
-                    val evmOn = app.evmConsent() && app.evmTargets().isNotEmpty()
-                    val bybitOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
-                    val binanceOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
-                    val mexcOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
+                    val bitcoinOn = app.sources.consent() && !withoutBitcoin
+                    val evmOn = app.evm.consent() && app.evm.targets().isNotEmpty()
+                    val bybitOn = app.exchanges.targets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
+                    val binanceOn = app.exchanges.targets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
+                    val mexcOn = app.exchanges.targets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
                     if (!bitcoinOn && (!(evmOn || bybitOn || binanceOn || mexcOn) || walletId != null || verifyOrder)) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
-                        val endpoint = app.sourceEndpoint()
+                        val endpoint = app.sources.endpoint()
                         val transport =
                             wrap(
                                 io.valroot.core.bitcoin.FailoverEsploraTransport(
@@ -98,7 +98,7 @@ class RefreshWorker(
                                                 },
                                                 ensureActive = {
                                                     ensureActive()
-                                                    if (!app.sourceConsent() || app.sourceEndpoint() != endpoint) {
+                                                    if (!app.sources.consent() || app.sources.endpoint() != endpoint) {
                                                         throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
                                                     }
                                                 },
@@ -111,7 +111,7 @@ class RefreshWorker(
                         val discoveryNotice =
                             if (walletId != null) {
                                 app
-                                    .discoverBitcoinWallet(
+                                    .bitcoinWallets.discover(
                                         io.valroot.core.model
                                             .TrackingTargetId(walletId),
                                         transport,
@@ -121,7 +121,7 @@ class RefreshWorker(
                                 null
                             }
                         if (verifyOrder) {
-                            app.verifyAccountingOrder(transport) { progress ->
+                            app.bitcoin.verifyAccountingOrder(transport) { progress ->
                                 val detail = "Verifying blocks ${progress.blocksResolved}/${progress.totalBlocks}"
                                 syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
                                 onProgress(detail)
@@ -154,19 +154,19 @@ class RefreshWorker(
                         if (evmOn) {
                             val alchemy =
                                 AlchemyTransport(
-                                    apiKey = { app.alchemyApiKey() },
+                                    apiKey = { app.evm.alchemyApiKey() },
                                     beforeRequest = {
                                         ensureActive()
-                                        check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
+                                        check(app.evm.consent()) { "EVM refresh was cancelled. Retry if needed." }
                                     },
                                 )
                             val oneInch =
-                                app.oneInchApiKey()?.let {
+                                app.evm.oneInchApiKey()?.let {
                                     OneInchTransport(
-                                        apiKey = { app.oneInchApiKey() },
+                                        apiKey = { app.evm.oneInchApiKey() },
                                         beforeRequest = {
                                             ensureActive()
-                                            check(app.evmConsent()) { "EVM refresh was cancelled. Retry if needed." }
+                                            check(app.evm.consent()) { "EVM refresh was cancelled. Retry if needed." }
                                         },
                                     )
                                 }
@@ -175,20 +175,20 @@ class RefreshWorker(
                         // Exchange symbols are matched to coins through the catalog, so it is current before their records.
                         if (bybitOn || binanceOn || mexcOn) MarketFeedRefresher.refreshCatalog(app)
                         if (mexcOn) {
-                            val mexc = MexcTransport(credentials = { app.exchangeKey(io.valroot.core.exchange.ExchangeKind.MEXC, it) }, beforeRequest = ensureActive)
+                            val mexc = MexcTransport(credentials = { app.exchanges.key(io.valroot.core.exchange.ExchangeKind.MEXC, it) }, beforeRequest = ensureActive)
                             connectors += io.valroot.core.exchange.MexcConnector(mexc::get)
                         }
                         if (binanceOn) {
                             val binance =
-                                BinanceTransport(credentials = { app.exchangeKey(io.valroot.core.exchange.ExchangeKind.BINANCE, it) }, beforeRequest = ensureActive)
+                                BinanceTransport(credentials = { app.exchanges.key(io.valroot.core.exchange.ExchangeKind.BINANCE, it) }, beforeRequest = ensureActive)
                             connectors += io.valroot.core.exchange.BinanceConnector(binance::get)
                         }
                         if (bybitOn) {
-                            val bybit = BybitTransport(credentials = { app.exchangeKey(io.valroot.core.exchange.ExchangeKind.BYBIT, it) }, beforeRequest = ensureActive)
+                            val bybit = BybitTransport(credentials = { app.exchanges.key(io.valroot.core.exchange.ExchangeKind.BYBIT, it) }, beforeRequest = ensureActive)
                             connectors += BybitConnector(bybit::get)
                         }
                         val outcomes =
-                            app.refreshSources(
+                            app.sources.refresh(
                                 SourceRegistry(connectors),
                                 SourceRefreshOptions(
                                     recoverHistory = recoverHistory,
@@ -199,8 +199,8 @@ class RefreshWorker(
                                     },
                                     withoutConsent =
                                         setOfNotNull(
-                                            io.valroot.core.bitcoin.BITCOIN_MAINNET.takeIf { !app.sourceConsent() },
-                                            io.valroot.core.evm.EVM_FAMILY.takeIf { !app.evmConsent() },
+                                            io.valroot.core.bitcoin.BITCOIN_MAINNET.takeIf { !app.sources.consent() },
+                                            io.valroot.core.evm.EVM_FAMILY.takeIf { !app.evm.consent() },
                                         ),
                                 ),
                             )
@@ -219,7 +219,7 @@ class RefreshWorker(
                             states.any { it != JobState.COMPLETED } ->
                                 SyncStatus(
                                     SyncPhase.ERROR,
-                                    app.sourceFailureMessage() ?: "History is incomplete; retry.",
+                                    app.sources.failureMessage() ?: "History is incomplete; retry.",
                                 )
                             else ->
                                 SyncStatus(
@@ -227,7 +227,7 @@ class RefreshWorker(
                                     (
                                         when {
                                             recoverHistory -> "History recovery complete; coverage remains unverified"
-                                            app.lastRefreshSkipped() -> "Checked for new activity; none found."
+                                            app.sources.lastRefreshSkipped() -> "Checked for new activity; none found."
                                             else -> "Sync complete; coverage remains unverified"
                                         }
                                     ) + (listOfNotNull(discoveryNotice, sourceNotes).joinToString("") { " $it" }),

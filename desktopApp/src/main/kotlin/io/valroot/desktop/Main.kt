@@ -56,7 +56,7 @@ internal fun discoverWalletStatus(
     application: PortfolioApplication,
     walletId: TrackingTargetId,
     transport: EsploraTransport,
-    providerEndpoint: String = application.sourceEndpoint(),
+    providerEndpoint: String = application.sources.endpoint(),
     onProgress: (String) -> Unit,
 ): SyncStatus =
     runCatching {
@@ -68,9 +68,9 @@ internal fun discoverWalletStatus(
                     onProgress("Discovering wallet · address queries answered: $queries")
                 }
             }
-        val result = application.discoverBitcoinWallet(walletId, discoveryTransport, providerEndpoint = providerEndpoint)
+        val result = application.bitcoinWallets.discover(walletId, discoveryTransport, providerEndpoint = providerEndpoint)
         val states =
-            application.refreshBitcoin(transport, providerEndpoint = providerEndpoint) { progress ->
+            application.bitcoin.refresh(transport, providerEndpoint = providerEndpoint) { progress ->
                 onProgress(
                     when (progress.phase) {
                         "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
@@ -83,7 +83,7 @@ internal fun discoverWalletStatus(
                 )
             }
         if (states.isEmpty() || states.any { it != io.valroot.core.sync.JobState.COMPLETED }) {
-            SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "Wallet history is incomplete; retry.")
+            SyncStatus(SyncPhase.ERROR, application.sources.failureMessage() ?: "Wallet history is incomplete; retry.")
         } else {
             SyncStatus(
                 SyncPhase.SUCCESS,
@@ -180,7 +180,7 @@ internal class DesktopHost(
 
     override fun setLockDelay(millis: Long) {
         lockDelay = millis
-        executor.execute { runCatching { app.value.setLockDelay(millis) } }
+        executor.execute { runCatching { app.value.settings.setLockDelay(millis) } }
     }
 
     /** The window lost focus: lock now, or remember when, depending on the delay. */
@@ -217,10 +217,10 @@ internal class DesktopHost(
                 runCatching { db.close() }
                 throw failure
             }
-        if (demo) app.value.seedDemo()
-        lockDelay = app.value.lockDelayMillis() ?: DEFAULT_LOCK_DELAY_MILLIS
+        if (demo) app.value.demo.seed()
+        lockDelay = app.value.settings.lockDelayMillis() ?: DEFAULT_LOCK_DELAY_MILLIS
         if (runCatching { reconcileRefreshPreferences() }.isFailure) {
-            runCatching { app.value.recordAutomaticPriceSchedulingFailure() }
+            runCatching { app.value.prices.recordAutomaticSchedulingFailure() }
         }
         reconcileNotificationChecks()
     }
@@ -277,7 +277,7 @@ internal class DesktopHost(
                     } else {
                         try {
                             Files.newOutputStream(temp).buffered().use { out ->
-                                app.value.exportBackup(secret) { bytes, offset, length -> out.write(bytes, offset, length) }
+                                app.value.backup.export(secret) { bytes, offset, length -> out.write(bytes, offset, length) }
                             }
                             Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING)
                             "Backup saved"
@@ -322,7 +322,7 @@ internal class DesktopHost(
                         staging = Files.createTempFile(directory, "restore-", ".sqlite")
                         JvmSqliteDatabase(staging.toString()).use { stagingDb ->
                             Files.newInputStream(path).buffered().use { input ->
-                                app.value.restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
+                                app.value.backup.restoreToStaging(stagingDb, { b, o, l -> input.read(b, o, l) }, password.toCharArray())
                             }
                         }
                         java.nio.channels.FileChannel
@@ -330,7 +330,7 @@ internal class DesktopHost(
                             .use { it.force(true) }
                         priceRestorePaused = true
                         pricePaused = true
-                        app.value.invalidateAutomaticPriceRequests()
+                        app.value.prices.invalidateAutomaticRequests()
                         synchronized(priceGate) {
                             closeSyncConnection()
                             db.close()
@@ -435,7 +435,7 @@ internal class DesktopHost(
 
     private fun bitcoinTransport(
         application: PortfolioApplication,
-        endpoint: String = application.sourceEndpoint(),
+        endpoint: String = application.sources.endpoint(),
     ): EsploraTransport =
         io.valroot.core.bitcoin.FailoverEsploraTransport(
             io.valroot.core.bitcoin.esploraEndpoints(endpoint).map { url ->
@@ -445,7 +445,7 @@ internal class DesktopHost(
                         url,
                         onProgress = { syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = it) },
                         ensureActive = {
-                            if (closing.get() || !application.sourceConsent() || application.sourceEndpoint() != endpoint) {
+                            if (closing.get() || !application.sources.consent() || application.sources.endpoint() != endpoint) {
                                 throw BitcoinProviderException(BitcoinProviderFailure.CANCELLED)
                             }
                         },
@@ -457,7 +457,7 @@ internal class DesktopHost(
     override fun verifyAccountingOrder(onResult: (String) -> Unit) {
         runSync(SyncStatus(SyncPhase.SYNCING, "Verifying Bitcoin order…", io.valroot.ui.SyncOperation.ORDER), onResult) { application ->
             runCatching {
-                application.verifyAccountingOrder(bitcoinTransport(application))
+                application.bitcoin.verifyAccountingOrder(bitcoinTransport(application))
                 SyncStatus(SyncPhase.SUCCESS, "Bitcoin order verified. Mixed-source chronology may still require review.")
             }.getOrElse {
                 SyncStatus(
@@ -477,7 +477,7 @@ internal class DesktopHost(
             SyncStatus(SyncPhase.SYNCING, "Discovering wallet addresses…", io.valroot.ui.SyncOperation.DISCOVERY),
             onResult,
         ) { application ->
-            val endpoint = application.sourceEndpoint()
+            val endpoint = application.sources.endpoint()
             discoverWalletStatus(application, walletId, bitcoinTransport(application, endpoint), providerEndpoint = endpoint) { detail ->
                 syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = detail)
             }
@@ -496,7 +496,7 @@ internal class DesktopHost(
             onResult,
         ) { application ->
             try {
-                val result = application.fetchHistoricalPrice({ url -> priceTransport.get(url, apiKey) }, asset, quote, dayUtcMillis)
+                val result = application.prices.fetchHistorical({ url -> priceTransport.get(url, apiKey) }, asset, quote, dayUtcMillis)
                 if (result.status == io.valroot.core.market.PriceStatus.MISSING) {
                     SyncStatus(SyncPhase.ERROR, "No historical quote was returned. Saved prices are unchanged.")
                 } else {
@@ -522,7 +522,7 @@ internal class DesktopHost(
             onResult,
         ) { application ->
             try {
-                val count = application.fetchPriceHistory({ url -> priceTransport.get(url, apiKey) }, asset, quote, days)
+                val count = application.prices.fetchHistory({ url -> priceTransport.get(url, apiKey) }, asset, quote, days)
                 SyncStatus(SyncPhase.SUCCESS, "Saved $count Bitcoin price points from CoinGecko.")
             } catch (failure: io.valroot.core.market.CoingeckoProviderException) {
                 SyncStatus(SyncPhase.ERROR, failure.failure.message)
@@ -614,18 +614,18 @@ internal class DesktopHost(
         ) { application ->
             runCatching {
                 // Each source refreshes only with its own consent; with neither, nothing is fetched.
-                val bitcoinOn = application.sourceConsent() && !withoutBitcoin
-                val evmOn = application.evmConsent() && application.evmTargets().isNotEmpty()
-                val bybitOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
-                val binanceOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
-                val mexcOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
+                val bitcoinOn = application.sources.consent() && !withoutBitcoin
+                val evmOn = application.evm.consent() && application.evm.targets().isNotEmpty()
+                val bybitOn = application.exchanges.targets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
+                val binanceOn = application.exchanges.targets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
+                val mexcOn = application.exchanges.targets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
                 if (!bitcoinOn && !evmOn && !bybitOn && !binanceOn && !mexcOn) {
                     return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                 }
                 // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
                 val connectors = mutableListOf<SourceConnector>()
                 if (bitcoinOn) {
-                    val endpoint = application.sourceEndpoint()
+                    val endpoint = application.sources.endpoint()
                     connectors +=
                         BitcoinConnector(bitcoinTransport(application, endpoint), endpoint) { progress ->
                             syncStatus.value =
@@ -645,12 +645,12 @@ internal class DesktopHost(
                 }
                 if (evmOn) {
                     val oneInch =
-                        application.oneInchApiKey()?.let {
+                        application.evm.oneInchApiKey()?.let {
                             OneInchTransport(
-                                apiKey = { application.oneInchApiKey() },
+                                apiKey = { application.evm.oneInchApiKey() },
                                 beforeRequest = {
                                     check(
-                                        !closing.get() && application.evmConsent(),
+                                        !closing.get() && application.evm.consent(),
                                     ) { "EVM refresh was cancelled. Retry if needed." }
                                 },
                             )
@@ -659,14 +659,14 @@ internal class DesktopHost(
                 }
                 // Exchange symbols are matched to coins through the catalog, so it is current before their records.
                 if ((bybitOn || binanceOn || mexcOn) &&
-                    application.marketDataConsent()
+                    application.market.consent()
                 ) {
-                    runCatching { application.refreshEvmCatalog(priceTransport::feed) }
+                    runCatching { application.evm.refreshCatalog(priceTransport::feed) }
                 }
                 if (mexcOn) {
                     val transport =
                         MexcTransport(
-                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.MEXC, it) },
+                            credentials = { application.exchanges.key(io.valroot.core.exchange.ExchangeKind.MEXC, it) },
                             beforeRequest = { check(!closing.get()) { "MEXC refresh was cancelled. Retry if needed." } },
                         )
                     connectors +=
@@ -676,7 +676,7 @@ internal class DesktopHost(
                 if (binanceOn) {
                     val transport =
                         BinanceTransport(
-                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.BINANCE, it) },
+                            credentials = { application.exchanges.key(io.valroot.core.exchange.ExchangeKind.BINANCE, it) },
                             beforeRequest = { check(!closing.get()) { "Binance refresh was cancelled. Retry if needed." } },
                         )
                     connectors +=
@@ -686,13 +686,13 @@ internal class DesktopHost(
                 if (bybitOn) {
                     val transport =
                         BybitTransport(
-                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.BYBIT, it) },
+                            credentials = { application.exchanges.key(io.valroot.core.exchange.ExchangeKind.BYBIT, it) },
                             beforeRequest = { check(!closing.get()) { "Bybit refresh was cancelled. Retry if needed." } },
                         )
                     connectors += BybitConnector(transport::get)
                 }
                 val outcomes =
-                    application.refreshSources(
+                    application.sources.refresh(
                         SourceRegistry(connectors),
                         SourceRefreshOptions(
                             recoverHistory = recoverHistory,
@@ -706,9 +706,9 @@ internal class DesktopHost(
                             withoutConsent =
                                 setOfNotNull(
                                     io.valroot.core.bitcoin.BITCOIN_MAINNET
-                                        .takeIf { !application.sourceConsent() },
+                                        .takeIf { !application.sources.consent() },
                                     io.valroot.core.evm.EVM_FAMILY
-                                        .takeIf { !application.evmConsent() },
+                                        .takeIf { !application.evm.consent() },
                                 ),
                         ),
                     )
@@ -740,13 +740,13 @@ internal class DesktopHost(
                         )
                     states.any {
                         it != io.valroot.core.sync.JobState.COMPLETED
-                    } -> SyncStatus(SyncPhase.ERROR, application.sourceFailureMessage() ?: "History is incomplete; retry.")
+                    } -> SyncStatus(SyncPhase.ERROR, application.sources.failureMessage() ?: "History is incomplete; retry.")
                     else ->
                         SyncStatus(
                             SyncPhase.SUCCESS,
                             when {
                                 recoverHistory -> "History recovery complete; coverage remains unverified"
-                                application.lastRefreshSkipped() -> "Checked for new activity; none found."
+                                application.sources.lastRefreshSkipped() -> "Checked for new activity; none found."
                                 else -> "Sync complete; coverage remains unverified"
                             } + discoveryNotes.joinToString("") { " $it" },
                         )
@@ -764,8 +764,8 @@ internal class DesktopHost(
     /** Alchemy requests for EVM history; a refresh stops at its next request once the app closes or EVM consent is withdrawn. */
     private fun alchemyTransport(application: PortfolioApplication): AlchemyTransport =
         AlchemyTransport(
-            apiKey = { application.alchemyApiKey() },
-            beforeRequest = { check(!closing.get() && application.evmConsent()) { "EVM refresh was cancelled. Retry if needed." } },
+            apiKey = { application.evm.alchemyApiKey() },
+            beforeRequest = { check(!closing.get() && application.evm.consent()) { "EVM refresh was cancelled. Retry if needed." } },
         )
 
     /**
@@ -774,11 +774,11 @@ internal class DesktopHost(
      * successful. Does nothing without market data consent.
      */
     private fun refreshEvmCatalogAndPrices(application: PortfolioApplication) {
-        if (!application.marketDataConsent()) return
-        runCatching { application.refreshEvmCatalog(priceTransport::feed) }
-        runCatching { application.refreshLinkedCoinUsdPrices(defiLlamaTransport::get) }
-        runCatching { application.refreshLinkedCoinPrices(priceTransport::feed) }
-        runCatching { application.refreshLinkedCoinLogos(priceTransport::feed) }
+        if (!application.market.consent()) return
+        runCatching { application.evm.refreshCatalog(priceTransport::feed) }
+        runCatching { application.linkedCoins.refreshUsdPrices(defiLlamaTransport::get) }
+        runCatching { application.linkedCoins.refreshPrices(priceTransport::feed) }
+        runCatching { application.linkedCoins.refreshLogos(priceTransport::feed) }
         backfillLinkedCoinHistory()
     }
 
@@ -795,14 +795,14 @@ internal class DesktopHost(
                 val usd =
                     runCatching {
                         backfillSteps(LINKED_USD_HISTORY_REQUESTS_PER_RUN, LINKED_USD_HISTORY_INTERVAL_MILLIS) { application ->
-                            application.backfillLinkedCoinUsdHistory(defiLlamaTransport::get, maxRequests = 1)
+                            application.linkedCoins.backfillUsdHistory(defiLlamaTransport::get, maxRequests = 1)
                         }
                     }.getOrDefault(true)
                 val other =
                     !closing.get() &&
                         runCatching {
                             backfillSteps(LINKED_HISTORY_REQUESTS_PER_RUN, LINKED_HISTORY_INTERVAL_MILLIS) { application ->
-                                application.backfillLinkedCoinHistory(
+                                application.linkedCoins.backfillHistory(
                                     { url, key -> priceTransport.get(url, key.orEmpty()) },
                                     maxRequests = 1,
                                 )
@@ -833,7 +833,7 @@ internal class DesktopHost(
                         if (closing.get() || priceRestorePaused) return changed
                         JvmSqliteDatabase(file.toString()).use { connection ->
                             val application = PortfolioApplication(connection, System::currentTimeMillis)
-                            if (!application.marketDataConsent()) return changed
+                            if (!application.market.consent()) return changed
                             step(application)
                         }
                     }
@@ -855,19 +855,19 @@ internal class DesktopHost(
 
     override fun refreshPreferences(): io.valroot.ui.RefreshPreferences =
         io.valroot.ui.RefreshPreferences(
-            app.value.automaticRefreshPreference() ?: (Files.exists(refreshPreference) || app.value.automaticPriceConsent()),
-            app.value.wifiOnlyRefreshPreference(),
+            app.value.settings.automaticRefresh() ?: (Files.exists(refreshPreference) || app.value.prices.automaticConsent()),
+            app.value.settings.wifiOnlyRefresh(),
         )
 
     override fun updateRefreshPreferences(preferences: io.valroot.ui.RefreshPreferences) {
-        app.value.setRefreshPreferences(preferences.automaticRefresh, preferences.wifiOnly)
+        app.value.settings.setRefreshPreferences(preferences.automaticRefresh, preferences.wifiOnly)
         reconcileRefreshPreferences()
     }
 
     private fun reconcileRefreshPreferences() {
         val preference = refreshPreferences()
-        app.value.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
-        val plan = io.valroot.ui.refreshSchedulePlan(preference, app.value.sourceConsent(), app.value.automaticPriceConsent())
+        app.value.settings.setRefreshPreferences(preference.automaticRefresh, preference.wifiOnly)
+        val plan = io.valroot.ui.refreshSchedulePlan(preference, app.value.sources.consent(), app.value.prices.automaticConsent())
         scheduleWalletRefresh(plan.walletHistory)
         schedulePrices(plan.prices)
     }
@@ -880,7 +880,7 @@ internal class DesktopHost(
             if (enabled) {
                 // The first run waits out the rest of the interval after a success, so a restart does not repeat it.
                 val delay =
-                    cooldownDelayMillis(app.value.sourceLastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, System.currentTimeMillis())
+                    cooldownDelayMillis(app.value.sources.lastSuccessMillis(), WALLET_REFRESH_INTERVAL_MILLIS, System.currentTimeMillis())
                 executor.scheduleWithFixedDelay({
                     refresh { }
                 }, delay, WALLET_REFRESH_INTERVAL_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -894,10 +894,10 @@ internal class DesktopHost(
     private fun schedulePrices(enabled: Boolean) {
         automaticPriceTask?.cancel(false)
         automaticPriceTask =
-            if (enabled && refreshPreferences().automaticRefresh && app.value.automaticPriceConsent() && !closing.get()) {
+            if (enabled && refreshPreferences().automaticRefresh && app.value.prices.automaticConsent() && !closing.get()) {
                 val delay =
                     cooldownDelayMillis(
-                        app.value.automaticPriceLastRunMillis(),
+                        app.value.prices.automaticLastRunMillis(),
                         PRICE_REFRESH_INTERVAL_MILLIS,
                         System.currentTimeMillis(),
                     )
@@ -930,7 +930,7 @@ internal class DesktopHost(
                             runCatching {
                                 JvmSqliteDatabase(file.toString()).use { connection ->
                                     val application = PortfolioApplication(connection, System::currentTimeMillis)
-                                    val message = marketRefreshMessage(application.refreshMarketFeeds(priceTransport::feed, maxAgeMillis))
+                                    val message = marketRefreshMessage(application.market.refreshFeeds(priceTransport::feed, maxAgeMillis))
                                     refreshEvmCatalogAndPrices(application)
                                     message
                                 }
@@ -960,7 +960,7 @@ internal class DesktopHost(
                         } else {
                             runCatching {
                                 JvmSqliteDatabase(file.toString()).use { connection ->
-                                    PortfolioApplication(connection, System::currentTimeMillis).refreshEvmCatalog(priceTransport::feed)
+                                    PortfolioApplication(connection, System::currentTimeMillis).evm.refreshCatalog(priceTransport::feed)
                                 }
                                 null
                             }.getOrElse { "Could not load the chain list from CoinGecko." }
@@ -1052,7 +1052,7 @@ internal class DesktopHost(
                         emptyList()
                     } else {
                         JvmSqliteDatabase(file.toString()).use { connection ->
-                            PortfolioApplication(connection, System::currentTimeMillis).runNotificationCheck(
+                            PortfolioApplication(connection, System::currentTimeMillis).notifications.runCheck(
                                 priceTransport::feed,
                                 LocalDate.now().toString(),
                                 LocalTime.now().hour,
@@ -1071,7 +1071,7 @@ internal class DesktopHost(
      * Called at launch, when settings change, and after a restore; the schedule is guarded by [hostLock].
      */
     private fun reconcileNotificationChecks(): Boolean {
-        val active = !closing.get() && runCatching { app.value.notificationsActive() }.getOrDefault(false)
+        val active = !closing.get() && runCatching { app.value.notifications.active() }.getOrDefault(false)
         synchronized(hostLock) {
             val running = notificationTask?.isDone == false
             if (!active) {
@@ -1102,30 +1102,30 @@ internal class DesktopHost(
             try {
                 JvmSqliteDatabase(file.toString()).use { connection ->
                     val application = PortfolioApplication(connection, System::currentTimeMillis)
-                    if (application.automaticPriceConsent()) {
+                    if (application.prices.automaticConsent()) {
                         try {
-                            val generation = application.automaticPriceGeneration()
+                            val generation = application.prices.automaticGeneration()
                             val transport =
                                 automaticPriceTransport {
                                     check(
                                         !closing.get() &&
                                             !priceRestorePaused &&
-                                            application.automaticPriceConsent() &&
-                                            application.automaticPriceGeneration() == generation,
+                                            application.prices.automaticConsent() &&
+                                            application.prices.automaticGeneration() == generation,
                                     )
                                 }
-                            application.refreshAutomaticPriceSet(transport) { check(!closing.get() && !priceRestorePaused) }
-                            application.recordAutomaticPriceStatus(true)
+                            application.prices.refreshAutomaticSet(transport) { check(!closing.get() && !priceRestorePaused) }
+                            application.prices.recordAutomaticStatus(true)
                             // Market lists ride on the same schedule; a failure here never fails the price refresh.
-                            if (application.marketDataConsent()) {
-                                runCatching { application.refreshMarketFeeds(priceTransport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
+                            if (application.market.consent()) {
+                                runCatching { application.market.refreshFeeds(priceTransport::feed, MARKET_SCHEDULED_AGE_MILLIS) }
                                 refreshEvmCatalogAndPrices(application)
                             }
                         } catch (failure: Exception) {
                             if (!closing.get() &&
                                 !priceRestorePaused
                             ) {
-                                application.recordAutomaticPriceStatus(
+                                application.prices.recordAutomaticStatus(
                                     false,
                                     failure is io.valroot.core.market.KrakenRateLimitedException,
                                 )
@@ -1178,8 +1178,8 @@ internal class DesktopHost(
         executor.execute {
             val success =
                 runCatching {
-                    app.value.wipe()
-                    app.value.setAutomaticRefresh(false)
+                    app.value.backup.wipe()
+                    app.value.prices.setAutomaticRefresh(false)
                     reconcileRefreshPreferences()
                     lockStore.remove()
                 }.isSuccess

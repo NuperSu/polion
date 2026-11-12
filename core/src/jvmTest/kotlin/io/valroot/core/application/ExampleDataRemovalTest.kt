@@ -12,10 +12,10 @@ class ExampleDataRemovalTest {
     @Test fun removingExampleDataRetiresItsRecordsPricesAndLabel() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_710_000_000_000L }
-            app.seedDemo()
+            app.demo.seed()
             assertTrue(app.snapshot().sampleData)
 
-            app.removeExampleData()
+            app.demo.removeExampleData()
 
             val snapshot = app.snapshot()
             assertFalse(snapshot.sampleData)
@@ -30,7 +30,7 @@ class ExampleDataRemovalTest {
             assertEquals(listOf("Personal"), snapshot.ownership.owners.map { it.label })
             // Example prices no longer value bitcoin.
             assertTrue(snapshot.marketCoins.none { it.price.manual })
-            assertFails { app.removeExampleData() }
+            assertFails { app.demo.removeExampleData() }
         }
     }
 }

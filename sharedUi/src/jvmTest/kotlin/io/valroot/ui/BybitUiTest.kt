@@ -52,14 +52,14 @@ class BybitUiTest {
                     onNodeWithTag("bybit-connect-confirm").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("bybit-connect-error").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("bybit-connect-error").assertIsDisplayed()
-                    assertTrue(app.exchangeTargets(ExchangeKind.BYBIT).isEmpty())
+                    assertTrue(app.exchanges.targets(ExchangeKind.BYBIT).isEmpty())
                     // A read-only key adds the account it belongs to, keeps the key on the device and starts a refresh.
                     host.info = ExchangeKeyInfo("1001", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("bybit-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchangeTargets(ExchangeKind.BYBIT).isNotEmpty() }
-                    val (account, uid) = app.exchangeTargets(ExchangeKind.BYBIT).single()
+                    waitUntil(timeoutMillis = 10_000) { app.exchanges.targets(ExchangeKind.BYBIT).isNotEmpty() }
+                    val (account, uid) = app.exchanges.targets(ExchangeKind.BYBIT).single()
                     assertEquals("1001", uid)
-                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchangeKey(ExchangeKind.BYBIT, account))
+                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchanges.key(ExchangeKind.BYBIT, account))
                     waitUntil(timeoutMillis = 10_000) { host.refreshRequests > 0 }
                     assertEquals(listOf("KEYKEYKEYKEY" to "SECRETSECRETSECRET"), host.checked.distinct())
                 }
@@ -93,10 +93,10 @@ class BybitUiTest {
                     onNodeWithTag("mexc-secret").performTextInput("SECRETSECRETSECRET")
                     host.info = ExchangeKeyInfo("12345678", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("mexc-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchangeTargets(ExchangeKind.MEXC).isNotEmpty() }
-                    val (account, uid) = app.exchangeTargets(ExchangeKind.MEXC).single()
+                    waitUntil(timeoutMillis = 10_000) { app.exchanges.targets(ExchangeKind.MEXC).isNotEmpty() }
+                    val (account, uid) = app.exchanges.targets(ExchangeKind.MEXC).single()
                     assertEquals("12345678", uid)
-                    assertEquals("mx0vglKEYKEYKEY" to "SECRETSECRETSECRET", app.exchangeKey(ExchangeKind.MEXC, account))
+                    assertEquals("mx0vglKEYKEYKEY" to "SECRETSECRETSECRET", app.exchanges.key(ExchangeKind.MEXC, account))
                 }
             } finally {
                 executor.shutdown()
@@ -129,22 +129,22 @@ class BybitUiTest {
                     host.info = ExchangeKeyInfo("777", readOnly = false, expiresAtMillis = null)
                     onNodeWithTag("binance-connect-confirm").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("binance-connect-error").fetchSemanticsNodes().isNotEmpty() }
-                    assertTrue(app.exchangeTargets(ExchangeKind.BINANCE).isEmpty())
+                    assertTrue(app.exchanges.targets(ExchangeKind.BINANCE).isEmpty())
                     host.info = ExchangeKeyInfo("777", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("binance-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchangeTargets(ExchangeKind.BINANCE).isNotEmpty() }
-                    val (account, _) = app.exchangeTargets(ExchangeKind.BINANCE).single()
-                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchangeKey(ExchangeKind.BINANCE, account))
-                    assertTrue(app.exchangeTargets(ExchangeKind.BYBIT).isEmpty())
+                    waitUntil(timeoutMillis = 10_000) { app.exchanges.targets(ExchangeKind.BINANCE).isNotEmpty() }
+                    val (account, _) = app.exchanges.targets(ExchangeKind.BINANCE).single()
+                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchanges.key(ExchangeKind.BINANCE, account))
+                    assertTrue(app.exchanges.targets(ExchangeKind.BYBIT).isEmpty())
                 }
                 runDesktopComposeUiTest(width = 800, height = 1400) {
-                    val (account, _) = app.exchangeTargets(ExchangeKind.BINANCE).single()
+                    val (account, _) = app.exchanges.targets(ExchangeKind.BINANCE).single()
                     setContent { ExchangeAccountDetails(ExchangeKind.BINANCE, app, host, account, 0, onChanged = {}) }
                     onNodeWithTag("binance-add-pair").performClick()
                     onNodeWithTag("pair-base").performTextInput("sol")
                     onNodeWithTag("pair-quote").performTextInput("usdt")
                     onNodeWithTag("pair-save").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchangePairs(account).containsKey("SOLUSDT") }
+                    waitUntil(timeoutMillis = 10_000) { app.exchanges.pairs(account).containsKey("SOLUSDT") }
                 }
             } finally {
                 executor.shutdown()

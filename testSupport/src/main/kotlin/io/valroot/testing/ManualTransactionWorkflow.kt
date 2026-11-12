@@ -39,15 +39,15 @@ fun verifyManualTransactionWorkflow(openDatabase: () -> SqliteDatabase) {
     openDatabase().use { db ->
         val app = PortfolioApplication(db) { 10000L }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccount(Account(a, OwnerId("owner"), "A", AccountKind.ACCOUNT))
-        app.saveAccount(Account(b, OwnerId("owner"), "B", AccountKind.ACCOUNT))
-        app.registerAsset(
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccount(Account(a, OwnerId("owner"), "A", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(b, OwnerId("owner"), "B", AccountKind.ACCOUNT))
+        app.assets.register(
             AssetDefinition(eth, AssetIdentity(AssetKind.CUSTOM, null, "ETH-fixture")),
             AssetMetadata("ETH", "Fixture asset", 18, 0),
         )
-        app.saveTransaction(draft("fund", TransactionType.DEPOSIT, "1000", "1", usd))
-        app.saveTransaction(draft("fund-fee", TransactionType.DEPOSIT, "1", "10", eth))
+        app.transactions.saveTransaction(draft("fund", TransactionType.DEPOSIT, "1000", "1", usd))
+        app.transactions.saveTransaction(draft("fund-fee", TransactionType.DEPOSIT, "1", "10", eth))
         val buy =
             draft(
                 "buy",
@@ -61,17 +61,17 @@ fun verifyManualTransactionWorkflow(openDatabase: () -> SqliteDatabase) {
                 feeUnitPrice = ExactDecimal.parse("12"),
                 notes = "Execution and third-asset fee evidence",
             )
-        app.saveTransaction(buy)
-        app.saveTransaction(
+        app.transactions.saveTransaction(buy)
+        app.transactions.saveTransaction(
             draft("sell", TransactionType.SELL, "0.5", "150", time = 3000).copy(feeAsset = usd, feeQuantity = ExactDecimal.parse("1")),
         )
-        app.saveTransaction(draft("move", TransactionType.TRANSFER, "0.5", time = 4000).copy(destination = b))
-        app.saveTransaction(draft("external", TransactionType.TRANSFER, "0.1", time = 5000).copy(incomingExternal = true))
-        app.saveTransaction(draft("reward", TransactionType.REWARD, "0.2", "100", time = 6000))
-        app.saveTransaction(draft("withdraw", TransactionType.WITHDRAWAL, "0.1", time = 7000))
-        app.saveTransaction(draft("external-out", TransactionType.TRANSFER, "0.1", time = 8000))
-        app.saveTransaction(draft("fee", TransactionType.FEE, "0.01", time = 9000))
-        val report = app.accountingReport().report
+        app.transactions.saveTransaction(draft("move", TransactionType.TRANSFER, "0.5", time = 4000).copy(destination = b))
+        app.transactions.saveTransaction(draft("external", TransactionType.TRANSFER, "0.1", time = 5000).copy(incomingExternal = true))
+        app.transactions.saveTransaction(draft("reward", TransactionType.REWARD, "0.2", "100", time = 6000))
+        app.transactions.saveTransaction(draft("withdraw", TransactionType.WITHDRAWAL, "0.1", time = 7000))
+        app.transactions.saveTransaction(draft("external-out", TransactionType.TRANSFER, "0.1", time = 8000))
+        app.transactions.saveTransaction(draft("fee", TransactionType.FEE, "0.01", time = 9000))
+        val report = app.accounting.report().report
         check(report.disposals.single { it.activityId == ActivityId("sell") && it.asset == BITCOIN_ASSET }.gain == Rational.of("25"))
         check(
             report.disposals.single { it.activityId == ActivityId("buy") && it.fee }.gain ==
@@ -88,23 +88,23 @@ fun verifyManualTransactionWorkflow(openDatabase: () -> SqliteDatabase) {
         db.execute(
             "CREATE TRIGGER reject_manual_fixture BEFORE INSERT ON accounting_treatments WHEN NEW.activity_id='rollback' BEGIN SELECT RAISE(ABORT, 'fixture'); END",
         )
-        check(runCatching { app.saveTransaction(draft("rollback", TransactionType.BUY, "1", "100")) }.isFailure)
+        check(runCatching { app.transactions.saveTransaction(draft("rollback", TransactionType.BUY, "1", "100")) }.isFailure)
         check(ActivityRepository(db).history(ActivityId("rollback")).isEmpty())
-        check(app.transactionDraft(ActivityId("rollback")) == null)
-        check(app.overlay(ActivityId("rollback")) == null)
-        app.saveTransaction(buy.copy(notes = "Reviewed"), editing = true)
+        check(app.transactions.draft(ActivityId("rollback")) == null)
+        check(app.transactions.overlay(ActivityId("rollback")) == null)
+        app.transactions.saveTransaction(buy.copy(notes = "Reviewed"), editing = true)
         check(ActivityRepository(db).history(buy.id).size == 1) // Notes are retained by overlay revisions.
         val reopened = PortfolioApplication(db) { 10000L }
-        check(reopened.transactionDraft(buy.id)?.notes == "Reviewed")
-        check(reopened.transactionDraft(buy.id)?.feeUnitPrice == ExactDecimal.parse("12"))
-        val csv = reopened.exportCsv()
-        val backup = reopened.exportBackup("manual-fixture-password".toCharArray())
+        check(reopened.transactions.draft(buy.id)?.notes == "Reviewed")
+        check(reopened.transactions.draft(buy.id)?.feeUnitPrice == ExactDecimal.parse("12"))
+        val csv = reopened.csv.export()
+        val backup = reopened.backup.export("manual-fixture-password".toCharArray())
         openDatabase().use { restored ->
-            reopened.restoreToStaging(restored, backup, "manual-fixture-password".toCharArray())
+            reopened.backup.restoreToStaging(restored, backup, "manual-fixture-password".toCharArray())
             val copy = PortfolioApplication(restored) { 10000L }
-            check(copy.exportCsv() == csv)
-            check(copy.transactionDraft(buy.id) == reopened.transactionDraft(buy.id))
-            copy.reverseManualTransaction(buy.id)
+            check(copy.csv.export() == csv)
+            check(copy.transactions.draft(buy.id) == reopened.transactions.draft(buy.id))
+            copy.transactions.reverseManual(buy.id)
             check(ActivityRepository(restored).history(buy.id).last().status == ActivityStatus.REVERSED)
             check(ActivityRepository(restored).history(buy.id).first().status == ActivityStatus.CONFIRMED)
         }
