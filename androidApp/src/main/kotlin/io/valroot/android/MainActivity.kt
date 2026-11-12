@@ -475,12 +475,12 @@ private class AndroidHost(
 
     override fun recoverBitcoinHistory(onResult: (String) -> Unit) = refresh(true, onResult)
 
-    override fun refreshEvm(onResult: (String) -> Unit) = refresh(false, onResult, evmOnly = true)
+    override fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(false, onResult, withoutBitcoin = true)
 
     private fun refresh(
         recoverHistory: Boolean,
         onResult: (String) -> Unit,
-        evmOnly: Boolean = false,
+        withoutBitcoin: Boolean = false,
     ) {
         main.post {
             try {
@@ -494,7 +494,7 @@ private class AndroidHost(
                 activity.startForegroundService(
                     Intent(activity, BitcoinRefreshService::class.java)
                         .putExtra("recover_history", recoverHistory)
-                        .putExtra("evm_only", evmOnly),
+                        .putExtra("without_bitcoin", withoutBitcoin),
                 )
                 onResult("Sync continues when you switch apps. Progress appears in the notification.")
             } catch (_: Exception) {

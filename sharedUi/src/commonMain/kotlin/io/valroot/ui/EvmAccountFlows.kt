@@ -371,7 +371,7 @@ internal fun EvmConnectDialog(
         baseline = syncStatus
         hostReply = null
         requested = true
-        host.refreshEvm { hostReply = it }
+        host.refreshWithoutBitcoin { hostReply = it }
     }
 
     fun submit(valid: String) {

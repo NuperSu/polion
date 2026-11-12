@@ -69,6 +69,11 @@ internal object MarketFeedRefresher {
         }
     }
 
+    /** Refreshes the CoinGecko catalog when it is due, so exchange symbols can be matched to coins. Never fails the caller. */
+    fun refreshCatalog(app: PortfolioApplication) {
+        if (app.marketDataConsent()) runCatching { app.refreshEvmCatalog(transport::feed) }
+    }
+
     /**
      * Refreshes the CoinGecko chain catalog, then linked-coin prices (USD from DefiLlama, other currencies from
      * CoinGecko), logos and missing price history. Each step is isolated, so a failure never fails the caller. Does

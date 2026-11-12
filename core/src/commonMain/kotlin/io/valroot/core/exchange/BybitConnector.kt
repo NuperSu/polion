@@ -231,7 +231,9 @@ class BybitConnector(
         when {
             failure is BybitException && failure.rateLimited -> "Bybit asked to slow down; it is tried again later"
             failure is BybitException && failure.invalidKey -> "Bybit did not accept this API key"
-            failure is IllegalArgumentException || failure is BybitException -> failure.message ?: "Could not read this Bybit account"
+            // Validation and the host's transport give short, fixed messages without keys or addresses.
+            failure is IllegalArgumentException || failure is IllegalStateException || failure is BybitException ->
+                failure.message ?: "Could not read this Bybit account"
             else -> "Could not reach Bybit"
         }
 
