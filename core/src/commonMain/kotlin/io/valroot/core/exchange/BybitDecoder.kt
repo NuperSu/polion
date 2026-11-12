@@ -8,6 +8,7 @@ import io.valroot.core.model.ActivityId
 import io.valroot.core.model.AssetId
 import io.valroot.core.model.ExactDecimal
 import io.valroot.core.model.SourceRecordId
+import kotlinx.serialization.json.JsonPrimitive
 
 /** Bybit's balances at one moment: the Funding and Unified wallets per coin, and every other account type's total. */
 data class BybitBalances(
@@ -54,7 +55,7 @@ data class ExchangeDecoded(
  * - **Remainder:** coins held where no history exists (Earn, bots, …) and anything the records do not explain are one
  *   adjustment per coin, just after the latest record.
  */
-object BybitDecoder {
+object BybitDecoder : ExchangeHistory {
     const val VERSION = "bybit-1"
     const val LOG = "log"
     const val FUNDING = "funding"
@@ -387,4 +388,51 @@ object BybitDecoder {
     private fun negate(value: ExactDecimal) = ExactDecimal(-value.coefficient, value.scale)
 
     private val ZERO = ExactDecimal.parse("0")
+
+    override val version: String get() = VERSION
+
+    override fun coins(
+        rows: List<ExchangeRow>,
+        pairs: Map<String, Pair<String, String>>,
+    ): Set<String> =
+        rows
+            .flatMap { row ->
+                val o = Bybit.row(row.payload)
+                listOf("currency", "coin", "fromCoin", "toCoin").mapNotNull { (o[it] as? JsonPrimitive)?.content }
+            }.filter { it.isNotBlank() }
+            .toSet()
+
+    override fun balanceRecord(snapshot: ExchangeSnapshot): String =
+        "bybit-balances-1\n" +
+            snapshot.held
+                .sortedWith(compareBy({ it.wallet }, { it.coin }))
+                .joinToString("\n") { "${it.wallet}|${it.coin}|${it.amount}" }
+
+    override fun recordsFrom(
+        streams: Map<String, ExchangeStreamState>,
+        snapshot: ExchangeSnapshot,
+    ): Long? = snapshot.coveredFrom.values.minOrNull()
+
+    /** Funding and Unified wallets are checked per coin against their logs; every other account type is a total. */
+    override fun decode(
+        account: AccountId,
+        uid: String,
+        rows: List<ExchangeRow>,
+        assets: Map<String, AssetId>,
+        snapshot: ExchangeSnapshot,
+        source: SourceRecordId,
+        recordsFrom: Long?,
+        decimals: (AssetId) -> Int,
+    ): ExchangeDecoded {
+        val wallets = snapshot.held.filter { it.wallet == UNIFIED || it.wallet == FUND }
+        val elsewhere = snapshot.held - wallets.toSet()
+        val balances =
+            BybitBalances(
+                snapshot.atMillis,
+                wallets.associate { (it.wallet to it.coin) to it.amount },
+                elsewhere.groupBy { it.coin }.mapValues { (_, list) -> list.map { it.amount }.reduce { a, b -> a + b } },
+                source,
+            )
+        return decode(account, uid, rows, assets, balances, snapshot.coveredFrom, decimals)
+    }
 }

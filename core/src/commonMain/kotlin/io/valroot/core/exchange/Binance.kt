@@ -166,12 +166,12 @@ data class BinanceP2p(
 )
 
 class BinanceException(
-    val code: Int,
+    code: Int,
     message: String,
-) : Exception(message) {
-    val rateLimited: Boolean get() = code == -1003 || code == 429 || code == 418
-    val invalidKey: Boolean get() = code in setOf(-2014, -2015, -1022, 401)
-    val clockSkew: Boolean get() = code == -1021
+) : ExchangeApiException(code, message) {
+    override val rateLimited: Boolean get() = code == -1003 || code == 429 || code == 418
+    override val invalidKey: Boolean get() = code in setOf(-2014, -2015, -1022, 401)
+    override val clockSkew: Boolean get() = code == -1021
 }
 
 /**

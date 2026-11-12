@@ -137,12 +137,12 @@ data class BybitBalance(
 )
 
 class BybitException(
-    val code: Int,
+    code: Int,
     message: String,
-) : Exception(message) {
-    val rateLimited: Boolean get() = code == RATE_LIMITED || code == HTTP_FORBIDDEN
-    val invalidKey: Boolean get() = code in INVALID_KEY
-    val clockSkew: Boolean get() = code == CLOCK_SKEW
+) : ExchangeApiException(code, message) {
+    override val rateLimited: Boolean get() = code == RATE_LIMITED || code == HTTP_FORBIDDEN
+    override val invalidKey: Boolean get() = code in INVALID_KEY
+    override val clockSkew: Boolean get() = code == CLOCK_SKEW
 
     companion object {
         const val RATE_LIMITED = 10006

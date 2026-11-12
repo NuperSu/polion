@@ -24,7 +24,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *   explained by nothing: they are an opening amount at the start of the records, and gaps fill moments a coin would
  *   go below zero ([ExchangeLedgerBuilder.settleByRunningBalance]).
  */
-object MexcDecoder {
+object MexcDecoder : ExchangeHistory {
     const val VERSION = "mexc-1"
     const val TRADES = "trades"
     const val DEPOSITS = "deposits"
@@ -43,7 +43,7 @@ object MexcDecoder {
     )
 
     /** Coins the saved records move; trades name theirs through [pairs] (symbol → base and quote). */
-    fun coins(
+    override fun coins(
         rows: List<ExchangeRow>,
         pairs: Map<String, Pair<String, String>>,
     ): Set<String> =
@@ -167,4 +167,25 @@ object MexcDecoder {
     }
 
     private fun negate(value: ExactDecimal) = ExactDecimal(-value.coefficient, value.scale)
+
+    override val version: String get() = VERSION
+
+    override fun balanceRecord(snapshot: ExchangeSnapshot): String = totalsRecord(ExchangeKind.MEXC, snapshot)
+
+    override fun recordsFrom(
+        streams: Map<String, ExchangeStreamState>,
+        snapshot: ExchangeSnapshot,
+    ): Long? = transfersFrom(streams, DEPOSITS, WITHDRAWALS)
+
+    override fun decode(
+        account: AccountId,
+        uid: String,
+        rows: List<ExchangeRow>,
+        assets: Map<String, AssetId>,
+        snapshot: ExchangeSnapshot,
+        source: SourceRecordId,
+        recordsFrom: Long?,
+        decimals: (AssetId) -> Int,
+    ): ExchangeDecoded =
+        decode(account, uid, rows, assets, snapshot.pairs, Balances(snapshot.atMillis, snapshot.totals, source, recordsFrom), decimals)
 }

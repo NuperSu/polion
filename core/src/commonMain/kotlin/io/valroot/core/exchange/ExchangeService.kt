@@ -8,7 +8,6 @@ import io.valroot.core.market.CoingeckoCatalog
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.ActivityId
 import io.valroot.core.model.AssetId
-import io.valroot.core.model.ExactDecimal
 import io.valroot.core.storage.sha256
 import kotlin.time.Instant
 
@@ -115,39 +114,15 @@ class ExchangeService internal constructor(
     fun rowSymbols(
         kind: io.valroot.core.exchange.ExchangeKind,
         account: AccountId,
-    ): Set<String> {
-        val rows = exchangeSync.rows(account)
-        return when (kind) {
-            io.valroot.core.exchange.ExchangeKind.BINANCE ->
-                io.valroot.core.exchange.BinanceDecoder
-                    .coins(rows, pairs(account))
-            io.valroot.core.exchange.ExchangeKind.MEXC ->
-                io.valroot.core.exchange.MexcDecoder
-                    .coins(rows, pairs(account))
-            io.valroot.core.exchange.ExchangeKind.BYBIT ->
-                rows
-                    .flatMap { row ->
-                        val o =
-                            io.valroot.core.exchange.Bybit
-                                .row(row.payload)
-                        listOf(
-                            "currency",
-                            "coin",
-                            "fromCoin",
-                            "toCoin",
-                        ).mapNotNull { (o[it] as? kotlinx.serialization.json.JsonPrimitive)?.content }
-                    }.filter { it.isNotBlank() }
-                    .toSet()
-        }
-    }
+    ): Set<String> = ExchangeProviders.of(kind).history.coins(exchangeSync.rows(account), pairs(account))
 
     /** The symbols an exchange account's trades are read for (Binance, MEXC), with their base and quote coins. */
     fun pairs(account: AccountId): Map<String, Pair<String, String>> =
         exchangeSync
             .cursors(account)
             .filterKeys {
-                it.startsWith(io.valroot.core.exchange.BinanceConnector.PAIR) ||
-                    it.startsWith(io.valroot.core.exchange.BinanceConnector.USER_PAIR)
+                it.startsWith(TradeSymbols.PAIR) ||
+                    it.startsWith(TradeSymbols.USER_PAIR)
             }.mapNotNull { (key, value) ->
                 val coins = value.split('/')
                 if (coins.size != 2) {
@@ -166,112 +141,7 @@ class ExchangeService internal constructor(
         val b = base.trim().uppercase()
         val q = quote.trim().uppercase()
         require(b.matches(EXCHANGE_SYMBOL) && q.matches(EXCHANGE_SYMBOL) && b != q) { "Enter two coin symbols, such as BTC and USDT" }
-        exchangeSync.saveCursor(account, io.valroot.core.exchange.BinanceConnector.USER_PAIR + b + q, "$b/$q")
-    }
-
-    /**
-     * Derives a MEXC account's activities again from every saved record and its spot [balances], read at [atMillis].
-     * Coins nothing explains are an opening amount where the records start.
-     */
-    fun applyMexcHistory(
-        account: AccountId,
-        uid: String,
-        balances: Map<String, ExactDecimal>,
-        atMillis: Long,
-        pairs: Map<String, Pair<String, String>>,
-        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
-    ): io.valroot.core.exchange.ExchangeDecoded {
-        val kind = io.valroot.core.exchange.ExchangeKind.MEXC
-        require(targets(kind).any { it.first == account && it.second == uid }) { "Unknown MEXC account" }
-        val rows = exchangeSync.rows(account)
-        val held = balances.filterValues { it.coefficient.sign != 0 }
-        val assets =
-            assets(
-                kind.id,
-                io.valroot.core.exchange.MexcDecoder
-                    .coins(rows, pairs) + held.keys,
-                contracts,
-            )
-        val snapshot = "mexc-balances-1\n" + held.entries.sortedBy { it.key }.joinToString("\n") { "${it.key}|${it.value}" }
-        val decoded =
-            db.transaction {
-                val source = ingestRecord(kind, account, uid, "balances", snapshot, io.valroot.core.exchange.MexcDecoder.VERSION)
-                val recordsFrom =
-                    exchangeSync
-                        .streams(account)
-                        .values
-                        .filter {
-                            it.stream == io.valroot.core.exchange.MexcDecoder.DEPOSITS ||
-                                it.stream == io.valroot.core.exchange.MexcDecoder.WITHDRAWALS
-                        }.minOfOrNull { it.fromMillis }
-                val decoded =
-                    io.valroot.core.exchange.MexcDecoder.decode(
-                        account,
-                        uid,
-                        rows,
-                        assets,
-                        pairs,
-                        io.valroot.core.exchange.MexcDecoder
-                            .Balances(atMillis, held, source, recordsFrom),
-                    ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
-                saveDecode(kind, account, uid, decoded, recordsFrom, null)
-                decoded
-            }
-        invalidate()
-        return decoded
-    }
-
-    /**
-     * Derives a Binance account's activities again from every saved record and the current [balances] (each coin's
-     * total over every wallet), read at [atMillis]. [pairs] names each traded symbol's coins; [contracts] are Binance's
-     * token contracts for symbols not matched yet.
-     */
-    fun applyBinanceHistory(
-        account: AccountId,
-        uid: String,
-        balances: Map<String, ExactDecimal>,
-        atMillis: Long,
-        pairs: Map<String, Pair<String, String>>,
-        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
-    ): io.valroot.core.exchange.ExchangeDecoded {
-        val kind = io.valroot.core.exchange.ExchangeKind.BINANCE
-        require(targets(kind).any { it.first == account && it.second == uid }) { "Unknown Binance account" }
-        val rows = exchangeSync.rows(account)
-        val held = balances.filterValues { it.coefficient.sign != 0 }
-        val assets =
-            assets(
-                kind.id,
-                io.valroot.core.exchange.BinanceDecoder
-                    .coins(rows, pairs) + held.keys,
-                contracts,
-            )
-        val snapshot = "binance-balances-1\n" + held.entries.sortedBy { it.key }.joinToString("\n") { "${it.key}|${it.value}" }
-        val decoded =
-            db.transaction {
-                val source = ingestRecord(kind, account, uid, "balances", snapshot, io.valroot.core.exchange.BinanceDecoder.VERSION)
-                val decoded =
-                    io.valroot.core.exchange.BinanceDecoder.decode(
-                        account,
-                        uid,
-                        rows,
-                        assets,
-                        pairs,
-                        io.valroot.core.exchange.BinanceDecoder
-                            .Balances(atMillis, held, source),
-                    ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
-                val historyFrom =
-                    exchangeSync
-                        .streams(account)
-                        .values
-                        .filter {
-                            it.stream == io.valroot.core.exchange.BinanceDecoder.DEPOSITS ||
-                                it.stream == io.valroot.core.exchange.BinanceDecoder.WITHDRAWALS
-                        }.minOfOrNull { it.fromMillis }
-                saveDecode(kind, account, uid, decoded, historyFrom, null)
-                decoded
-            }
-        invalidate()
-        return decoded
+        exchangeSync.saveCursor(account, TradeSymbols.USER_PAIR + b + q, "$b/$q")
     }
 
     /**
@@ -473,67 +343,28 @@ class ExchangeService internal constructor(
     fun transfers(): Map<ActivityId, io.valroot.core.exchange.ExchangeTransfer> = exchangeSync.transfers()
 
     /**
-     * Derives a Bybit account's activities again from every saved record and the current [balances], read at
-     * [atMillis]; [coveredFrom] is where each wallet's log starts. Activities the records no longer produce (an
-     * adjustment that is now explained) are superseded. Returns the decode, with its unmatched symbols and failures.
+     * Derives an exchange account's activities again from every saved record and the balances of [snapshot], read at
+     * its time, and saves them with the balances observation in one transaction.
      */
-    fun applyBybitHistory(
+    fun applyHistory(
+        kind: io.valroot.core.exchange.ExchangeKind,
         account: AccountId,
         uid: String,
-        balances: List<io.valroot.core.exchange.BybitBalance>,
-        atMillis: Long,
-        coveredFrom: Map<String, Long>,
-        keyExpiresAtMillis: Long?,
-        /** Bybit's token contracts for symbols not matched yet, so CoinGecko's contract map can name their coins. */
-        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
-    ): io.valroot.core.exchange.ExchangeDecoded {
-        require(targets(io.valroot.core.exchange.ExchangeKind.BYBIT).any { it.first == account && it.second == uid }) {
-            "Unknown Bybit account"
-        }
+        snapshot: ExchangeSnapshot,
+    ): ExchangeDecoded {
+        require(targets(kind).any { it.first == account && it.second == uid }) { "Unknown ${kind.label} account" }
+        val history = ExchangeProviders.of(kind).history
         val rows = exchangeSync.rows(account)
-        val held = balances.filter { it.amount.coefficient.sign != 0 }
-        val symbols = rowSymbols(io.valroot.core.exchange.ExchangeKind.BYBIT, account) + held.map { it.coin }
-        val assets = assets(io.valroot.core.exchange.BYBIT_EXCHANGE, symbols, contracts)
-        val snapshot =
-            held
-                .sortedWith(compareBy({ it.accountType }, { it.coin }))
-                .joinToString("\n") { "${it.accountType}|${it.coin}|${it.amount}" }
-                .let { "bybit-balances-1\n$it" }
+        val assets = assets(kind.id, history.coins(rows, snapshot.pairs) + snapshot.held.map { it.coin }, snapshot.contracts)
         val decoded =
             db.transaction {
-                val source =
-                    ingestRecord(
-                        io.valroot.core.exchange.ExchangeKind.BYBIT,
-                        account,
-                        uid,
-                        "balances",
-                        snapshot,
-                        io.valroot.core.exchange.BybitDecoder.VERSION,
-                    )
-                val wallets = held.filter { it.accountType == "UNIFIED" || it.accountType == "FUND" }
-                val elsewhere = held - wallets.toSet()
+                val source = ingestRecord(kind, account, uid, "balances", history.balanceRecord(snapshot), history.version)
+                val recordsFrom = history.recordsFrom(exchangeSync.streams(account), snapshot)
                 val decoded =
-                    io.valroot.core.exchange.BybitDecoder.decode(
-                        account,
-                        uid,
-                        rows,
-                        assets,
-                        io.valroot.core.exchange.BybitBalances(
-                            atMillis,
-                            wallets.associate { (it.accountType to it.coin) to it.amount },
-                            elsewhere.groupBy { it.coin }.mapValues { (_, list) -> list.map { it.amount }.reduce { a, b -> a + b } },
-                            source,
-                        ),
-                        coveredFrom,
-                    ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
-                saveDecode(
-                    io.valroot.core.exchange.ExchangeKind.BYBIT,
-                    account,
-                    uid,
-                    decoded,
-                    coveredFrom.values.minOrNull(),
-                    keyExpiresAtMillis,
-                )
+                    history.decode(account, uid, rows, assets, snapshot, source, recordsFrom) { asset ->
+                        market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: ExchangeAssets.DECIMALS
+                    }
+                saveDecode(kind, account, uid, decoded, recordsFrom, snapshot.keyExpiresAtMillis)
                 decoded
             }
         invalidate()

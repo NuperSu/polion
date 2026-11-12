@@ -1,15 +1,12 @@
 package io.valroot.core.exchange
 
 import io.valroot.core.application.PortfolioApplication
-import io.valroot.core.application.SourceConnector
 import io.valroot.core.application.SourceRefreshOptions
-import io.valroot.core.application.SourceRefreshOutcome
 import io.valroot.core.connectors.Capability
 import io.valroot.core.connectors.Coverage
 import io.valroot.core.connectors.IntegrationManifest
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.ExactDecimal
-import io.valroot.core.sync.JobState
 
 /** Binance accounts through a read-only API key: balances, trades and every other record Binance keeps. */
 val BINANCE_MANIFEST =
@@ -46,42 +43,16 @@ private data class BinanceStream(
  */
 class BinanceConnector(
     private val get: (account: AccountId, request: BinanceRequest) -> String,
-) : SourceConnector {
+) : ExchangeConnector(ExchangeKind.BINANCE) {
     override val manifest = BINANCE_MANIFEST
 
-    override fun refresh(
-        app: PortfolioApplication,
-        options: SourceRefreshOptions,
-    ): SourceRefreshOutcome {
-        val jobs = mutableListOf<JobState>()
-        val notes = mutableListOf<String>()
-        app.exchanges.targets(ExchangeKind.BINANCE).forEach { (account, uid) ->
-            if (!app.exchanges.hasKey(ExchangeKind.BINANCE, account)) {
-                notes += "A Binance account needs its API key again"
-                return@forEach
-            }
-            options.onProgress("Binance")
-            jobs +=
-                try {
-                    if (options.recoverHistory) app.exchanges.forgetHistory(account)
-                    sync(app, account, uid, options)?.let { notes += it }
-                    JobState.COMPLETED
-                } catch (failure: Exception) {
-                    app.exchanges.recordError(account, message(failure))
-                    JobState.FAILED
-                }
-        }
-        return SourceRefreshOutcome(manifest.id, jobs, notes)
-    }
-
-    /** Returns a note when older history is still being read. */
-    private fun sync(
+    override fun sync(
         app: PortfolioApplication,
         account: AccountId,
         uid: String,
         options: SourceRefreshOptions,
-    ): String? {
-        val budget = Budget(MAX_REQUESTS) { get(account, it) }
+    ): Boolean {
+        val budget = RequestBudget<BinanceRequest>(MAX_REQUESTS) { get(account, it) }
         require(Binance.parseReadOnly(budget.send(Binance.restrictions()))) {
             "This API key can trade, transfer or withdraw; Valroot accepts only keys that can read"
         }
@@ -94,18 +65,22 @@ class BinanceConnector(
         var unfinished = false
         STREAMS.forEach { stream ->
             options.onProgress("Binance · ${stream.name}")
-            if (!readStream(app, account, stream, now, budget, ::save)) unfinished = true
+            val windows =
+                StreamWindows(stream.name, stream.windowMillis, maxOf(stream.oldest(now), Binance.LAUNCH_MILLIS), stream.stopAfterEmpty)
+            val complete =
+                readStream(app, account, windows, now) { from, to ->
+                    if (budget.spent) null else stream.read(budget::send, from, to).also(::save).size
+                }
+            if (!complete) unfinished = true
         }
-        if (budget.left >
-            0
-        ) {
+        if (!budget.spent) {
             save(
                 Binance.parseDust(budget.send(Binance.dust())).map { ExchangeRow(BinanceDecoder.DUST, it.id, it.atMillis, it.raw, "") },
             )
         }
 
         options.onProgress("Binance · trades")
-        val pairs = if (budget.left > 0) readTrades(app, account, balances, now, budget, ::save) else app.exchanges.pairs(account)
+        val pairs = if (!budget.spent) readTrades(app, account, balances, now, budget, ::save) else app.exchanges.pairs(account)
         if (pairs == null) unfinished = true
 
         // Symbols not matched to a coin yet: Binance's token contracts let CoinGecko's contract map name the coin.
@@ -116,20 +91,15 @@ class BinanceConnector(
                 app.exchanges.rowSymbols(ExchangeKind.BINANCE, account) + balances.keys,
             )
         val contracts =
-            if (unmatched.isNotEmpty() &&
-                budget.left > 0
-            ) {
+            if (unmatched.isNotEmpty() && !budget.spent) {
                 Binance.parseCoinContracts(budget.send(Binance.coins())).filterKeys { it in unmatched }
             } else {
                 emptyMap()
             }
-        app.exchanges.applyBinanceHistory(account, uid, balances, now, known, contracts)
-        app.exchanges.saveCursor(
-            account,
-            BALANCES_CURSOR,
-            balances.entries.sortedBy { it.key }.joinToString(";") { "${it.key}=${it.value}" },
-        )
-        return if (unfinished) "Older Binance history is still being read; it continues with the next refresh" else null
+        val snapshot = ExchangeSnapshot(now, balances.map { (coin, amount) -> ExchangeBalance("", coin, amount) }, known, contracts)
+        app.exchanges.applyHistory(ExchangeKind.BINANCE, account, uid, snapshot)
+        TradeSymbols.saveBalances(app, account, balances)
+        return unfinished
     }
 
     /**
@@ -137,7 +107,7 @@ class BinanceConnector(
      * value but no coin detail, come from their own requests instead.
      */
     private fun balances(
-        budget: Budget,
+        budget: RequestBudget<BinanceRequest>,
         spot: List<BinanceBalance>,
     ): Map<String, ExactDecimal> {
         val payload = budget.send(Binance.walletBalance())
@@ -166,51 +136,6 @@ class BinanceConnector(
             .mapValues { (_, list) -> list.map { it.amount }.reduce { a, b -> a + b } }
     }
 
-    /** Reads one stream forward and back; false when the budget ran out before it was complete. */
-    private fun readStream(
-        app: PortfolioApplication,
-        account: AccountId,
-        stream: BinanceStream,
-        now: Long,
-        budget: Budget,
-        save: (List<ExchangeRow>) -> Unit,
-    ): Boolean {
-        var state = app.exchanges.streams(account)[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
-        var from = maxOf(state.fromMillis, state.toMillis - Binance.DAY_MILLIS)
-        while (from < now) {
-            if (budget.left <= 0) return false
-            val to = minOf(from + stream.windowMillis, now)
-            save(stream.read(budget::send, from, to))
-            state = state.copy(toMillis = to)
-            app.exchanges.saveStream(account, state)
-            from = to
-        }
-        val limit = maxOf(stream.oldest(now), Binance.LAUNCH_MILLIS)
-        while (!state.complete) {
-            if (budget.left <= 0) return false
-            val start = maxOf(state.fromMillis - stream.windowMillis, limit)
-            val found =
-                try {
-                    if (start < state.fromMillis) stream.read(budget::send, start, state.fromMillis).also(save).size else 0
-                } catch (refused: BinanceException) {
-                    // Binance refuses windows older than it keeps: the history ends here.
-                    if (refused.rateLimited || refused.invalidKey || refused.clockSkew) throw refused
-                    state = state.copy(complete = true)
-                    app.exchanges.saveStream(account, state)
-                    break
-                }
-            val empty = if (found == 0) state.emptyWindows + 1 else 0
-            state =
-                state.copy(
-                    fromMillis = start,
-                    emptyWindows = empty,
-                    complete = start <= limit || (stream.stopAfterEmpty != null && empty >= stream.stopAfterEmpty),
-                )
-            app.exchanges.saveStream(account, state)
-        }
-        return true
-    }
-
     /**
      * Reads trades of every candidate symbol that is due; returns the symbols with their base and quote coins, or null
      * when the budget ran out first.
@@ -220,35 +145,13 @@ class BinanceConnector(
         account: AccountId,
         balances: Map<String, ExactDecimal>,
         now: Long,
-        budget: Budget,
+        budget: RequestBudget<BinanceRequest>,
         save: (List<ExchangeRow>) -> Unit,
     ): Map<String, Pair<String, String>>? {
         val listed = Binance.parseSymbols(budget.send(Binance.tickers()))
+        val candidates = TradeSymbols.candidates(app, ExchangeKind.BINANCE, account, balances, listed, QUOTES)
+        val changed = TradeSymbols.changedCoins(app, account, balances)
         val cursors = app.exchanges.cursors(account)
-        val coins =
-            app.exchanges.rowSymbols(ExchangeKind.BINANCE, account) + balances.keys +
-                app.exchanges
-                    .pairs(account)
-                    .values
-                    .flatMap { listOf(it.first, it.second) }
-        val candidates = mutableMapOf<String, Pair<String, String>>()
-        coins.forEach { base ->
-            (coins + QUOTES).forEach { quote ->
-                if (base != quote && base + quote in listed) candidates[base + quote] = base to quote
-            }
-        }
-        cursors.filterKeys { it.startsWith(USER_PAIR) }.forEach { (key, value) ->
-            val symbol = key.removePrefix(USER_PAIR)
-            value.split('/').takeIf { it.size == 2 }?.let { candidates[symbol] = it[0] to it[1] }
-        }
-        val previous =
-            cursors[BALANCES_CURSOR]
-                .orEmpty()
-                .split(';')
-                .mapNotNull { entry -> entry.split('=').takeIf { it.size == 2 }?.let { it[0] to it[1] } }
-                .toMap()
-        val changed = (balances.keys + previous.keys).filter { previous[it] != balances[it]?.toString() }.toSet()
-        candidates.forEach { (symbol, pair) -> app.exchanges.saveCursor(account, PAIR + symbol, "${pair.first}/${pair.second}") }
         for ((symbol, pair) in candidates.entries.sortedBy { it.key }) {
             val cursor = cursors[TRADE_CURSOR + symbol]?.split('|')
             val nextId = cursor?.getOrNull(0)?.toLongOrNull() ?: 0L
@@ -257,7 +160,7 @@ class BinanceConnector(
             if (!due) continue
             var fromId = nextId
             while (true) {
-                if (budget.left <= 0) return null
+                if (budget.spent) return null
                 val trades = Binance.parseTrades(budget.send(Binance.trades(symbol, fromId)))
                 save(trades.map { ExchangeRow(BinanceDecoder.TRADES, "$symbol:${it.id}", it.atMillis, it.raw, "") })
                 trades.maxOfOrNull { it.id }?.let { fromId = it + 1 }
@@ -272,39 +175,12 @@ class BinanceConnector(
         return app.exchanges.pairs(account)
     }
 
-    private fun message(failure: Exception): String =
-        when {
-            failure is BinanceException && failure.rateLimited -> "Binance asked to slow down; it is tried again later"
-            failure is BinanceException && failure.invalidKey -> "Binance did not accept this API key"
-            // Validation and the host's transport give short, fixed messages without keys or addresses.
-            failure is IllegalArgumentException || failure is IllegalStateException || failure is BinanceException ->
-                failure.message ?: "Could not read this Binance account"
-            else -> "Could not reach Binance"
-        }
-
-    /**
-     * Requests one refresh may still send for an account. Loops stop when it is spent; a window being read finishes
-     * its pages first, so the count can go slightly below zero.
-     */
-    private class Budget(
-        var left: Int,
-        private val get: (BinanceRequest) -> String,
-    ) {
-        fun send(request: BinanceRequest): String {
-            left--
-            return get(request)
-        }
-    }
-
     companion object {
         /** Requests per account and refresh; a first refresh takes a few. */
         const val MAX_REQUESTS = 600
 
-        /** Cursor keys: a symbol's base and quote, its next trade ID and last full read, symbols the user added. */
-        const val PAIR = "pair:"
+        /** Cursor key prefix of a symbol's next trade ID and last full read. */
         const val TRADE_CURSOR = "trades:"
-        const val USER_PAIR = "userpair:"
-        const val BALANCES_CURSOR = "balances"
 
         /** Coins Binance quotes markets in. */
         val QUOTES = listOf("USDT", "USDC", "FDUSD", "BUSD", "TUSD", "BTC", "ETH", "BNB", "EUR", "TRY", "BRL", "JPY", "DAI", "XRP")
@@ -414,5 +290,20 @@ class BinanceConnector(
             }
             return rows
         }
+    }
+}
+
+/** Binance: every wallet's balances and the records Binance keeps; keys report their restrictions. */
+object BinanceProvider : ExchangeProvider<BinanceRequest> {
+    override val kind = ExchangeKind.BINANCE
+    override val manifest = BINANCE_MANIFEST
+    override val history: ExchangeHistory = BinanceDecoder
+
+    override fun connector(transport: ExchangeTransport<BinanceRequest>) = BinanceConnector(transport::get)
+
+    override fun checkKey(send: (BinanceRequest) -> String): ExchangeKeyInfo {
+        val readOnly = Binance.parseReadOnly(send(Binance.restrictions()))
+        val (uid, _) = Binance.parseAccount(send(Binance.account()))
+        return ExchangeKeyInfo(uid, readOnly, null)
     }
 }

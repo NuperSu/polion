@@ -1,15 +1,12 @@
 package io.valroot.core.exchange
 
 import io.valroot.core.application.PortfolioApplication
-import io.valroot.core.application.SourceConnector
 import io.valroot.core.application.SourceRefreshOptions
-import io.valroot.core.application.SourceRefreshOutcome
 import io.valroot.core.connectors.Capability
 import io.valroot.core.connectors.Coverage
 import io.valroot.core.connectors.IntegrationManifest
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.NetworkId
-import io.valroot.core.sync.JobState
 
 /** Bybit accounts are tracked by their user ID on this network. */
 val BYBIT_NETWORK: NetworkId = ExchangeKind.BYBIT.network
@@ -49,41 +46,15 @@ private data class BybitStream(
  */
 class BybitConnector(
     private val get: (account: AccountId, request: BybitRequest) -> String,
-) : SourceConnector {
+) : ExchangeConnector(ExchangeKind.BYBIT) {
     override val manifest = BYBIT_MANIFEST
 
-    override fun refresh(
-        app: PortfolioApplication,
-        options: SourceRefreshOptions,
-    ): SourceRefreshOutcome {
-        val jobs = mutableListOf<JobState>()
-        val notes = mutableListOf<String>()
-        app.exchanges.targets(ExchangeKind.BYBIT).forEach { (account, uid) ->
-            if (!app.exchanges.hasKey(ExchangeKind.BYBIT, account)) {
-                notes += "A Bybit account needs its API key again"
-                return@forEach
-            }
-            options.onProgress("Bybit")
-            jobs +=
-                try {
-                    if (options.recoverHistory) app.exchanges.forgetHistory(account)
-                    sync(app, account, uid, options)?.let { notes += it }
-                    JobState.COMPLETED
-                } catch (failure: Exception) {
-                    app.exchanges.recordError(account, message(failure))
-                    JobState.FAILED
-                }
-        }
-        return SourceRefreshOutcome(manifest.id, jobs, notes)
-    }
-
-    /** Returns a note when older history is still being read. */
-    private fun sync(
+    override fun sync(
         app: PortfolioApplication,
         account: AccountId,
         uid: String,
         options: SourceRefreshOptions,
-    ): String? {
+    ): Boolean {
         val key = Bybit.parseKeyInfo(get(account, Bybit.keyInfo()))
         require(key.uid == uid) { "This API key belongs to another Bybit account" }
         require(key.readOnly) { "This API key can trade or withdraw; Valroot accepts only read-only keys" }
@@ -92,7 +63,7 @@ class BybitConnector(
             (if (key.unified) Bybit.parseUnifiedBalance(get(account, Bybit.unifiedBalance())) else emptyList()) +
                 Bybit.parseFundingBalance(get(account, Bybit.fundingBalance())) +
                 Bybit.parseOverview(get(account, Bybit.overview()))
-        val budget = Budget(MAX_REQUESTS) { get(account, it) }
+        val budget = RequestBudget<BybitRequest>(MAX_REQUESTS) { get(account, it) }
         val streams =
             listOfNotNull(
                 BybitStream(BybitDecoder.LOG, Bybit.LOG_WINDOW_MILLIS, Bybit.LOG_RETENTION_MILLIS, null).takeIf { key.unified },
@@ -102,53 +73,13 @@ class BybitConnector(
                 BybitStream(BybitDecoder.DEPOSITS, Bybit.RECORD_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 12),
                 BybitStream(BybitDecoder.WITHDRAWALS, Bybit.RECORD_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 12),
             )
-        val states = app.exchanges.streams(account)
         var unfinished = false
         streams.forEach { stream ->
             options.onProgress("Bybit · ${STREAM_LABELS.getValue(stream.name)}")
-            var state = states[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
-            // Forward from the last read, with a day of overlap for records Bybit adds late.
-            var from = maxOf(state.fromMillis, state.toMillis - Bybit.DAY_MILLIS)
-            while (from < now) {
-                val to = minOf(from + stream.windowMillis, now)
-                if (readWindow(app, account, uid, stream.name, from, to, budget) == null) {
-                    unfinished = true
-                    return@forEach
-                }
-                state = state.copy(toMillis = to)
-                app.exchanges.saveStream(account, state)
-                from = to
-            }
-            // Back towards the account's start.
-            val limit = now - stream.retentionMillis
-            while (!state.complete) {
-                val start = maxOf(state.fromMillis - stream.windowMillis, limit)
-                val found =
-                    try {
-                        if (start <
-                            state.fromMillis
-                        ) {
-                            readWindow(app, account, uid, stream.name, start, state.fromMillis, budget) ?: break
-                        } else {
-                            0
-                        }
-                    } catch (refused: BybitException) {
-                        // Bybit refuses windows older than it keeps: the history ends here.
-                        if (refused.rateLimited || refused.invalidKey || refused.clockSkew) throw refused
-                        state = state.copy(complete = true)
-                        app.exchanges.saveStream(account, state)
-                        break
-                    }
-                val empty = if (found == 0) state.emptyWindows + 1 else 0
-                state =
-                    state.copy(
-                        fromMillis = start,
-                        emptyWindows = empty,
-                        complete = start <= limit || (stream.stopAfterEmpty != null && empty >= stream.stopAfterEmpty),
-                    )
-                app.exchanges.saveStream(account, state)
-            }
-            if (!state.complete) unfinished = true
+            val windows = StreamWindows(stream.name, stream.windowMillis, now - stream.retentionMillis, stream.stopAfterEmpty)
+            val complete =
+                readStream(app, account, windows, now) { from, to -> readWindow(app, account, uid, stream.name, from, to, budget) }
+            if (!complete) unfinished = true
         }
         readConverts(app, account, uid, budget)
         // Symbols not matched to a coin yet: Bybit's token contracts let CoinGecko's contract map name the coin.
@@ -156,23 +87,32 @@ class BybitConnector(
         val unmatched = app.exchanges.unmatchedSymbols(BYBIT_EXCHANGE, app.exchanges.rowSymbols(ExchangeKind.BYBIT, account) + held)
         val contracts = mutableMapOf<String, List<ExchangeContract>>()
         unmatched.sorted().take(MAX_COIN_LOOKUPS).forEach { symbol ->
-            if (budget.left > 0) contracts += Bybit.parseCoinContracts(budget.send(Bybit.coin(symbol)))
+            if (!budget.spent) contracts += Bybit.parseCoinContracts(budget.send(Bybit.coin(symbol)))
         }
         val covered = app.exchanges.streams(account).filterKeys { it == BybitDecoder.LOG || it == BybitDecoder.FUNDING }
-        app.exchanges.applyBybitHistory(
-            account,
-            uid,
-            balances,
-            now,
+        val coveredFrom =
             covered
                 .map { (stream, state) ->
-                    (if (stream == BybitDecoder.LOG) BybitDecoder.UNIFIED else BybitDecoder.FUND) to
-                        state.fromMillis
-                }.toMap(),
-            key.expiresAtMillis,
-            contracts,
-        )
-        return if (unfinished) "Older Bybit history is still being read; it continues with the next refresh" else null
+                    (
+                        if (stream ==
+                            BybitDecoder.LOG
+                        ) {
+                            BybitDecoder.UNIFIED
+                        } else {
+                            BybitDecoder.FUND
+                        }
+                    ) to state.fromMillis
+                }.toMap()
+        val snapshot =
+            ExchangeSnapshot(
+                now,
+                balances.map { ExchangeBalance(it.accountType, it.coin, it.amount) },
+                contracts = contracts,
+                coveredFrom = coveredFrom,
+                keyExpiresAtMillis = key.expiresAtMillis,
+            )
+        app.exchanges.applyHistory(ExchangeKind.BYBIT, account, uid, snapshot)
+        return unfinished
     }
 
     /** Reads every page of one window and saves its records; returns how many there were, or null when the budget ran out. */
@@ -183,13 +123,13 @@ class BybitConnector(
         stream: String,
         from: Long,
         to: Long,
-        budget: Budget,
+        budget: RequestBudget<BybitRequest>,
     ): Int? {
         var cursor: String? = null
         var count = 0
         val rows = mutableListOf<ExchangeRow>()
         do {
-            if (budget.left == 0) return null
+            if (budget.spent) return null
             val request = budget::send
             val (page, next) =
                 when (stream) {
@@ -223,11 +163,11 @@ class BybitConnector(
         app: PortfolioApplication,
         account: AccountId,
         uid: String,
-        budget: Budget,
+        budget: RequestBudget<BybitRequest>,
     ) {
         val known = app.exchanges.rowKeys(account, BybitDecoder.CONVERTS)
         var page = 1
-        while (page <= MAX_CONVERT_PAGES && budget.left > 0) {
+        while (page <= MAX_CONVERT_PAGES && !budget.spent) {
             val converts = Bybit.parseConverts(budget.send(Bybit.converts(page)))
             app.exchanges.saveRows(
                 ExchangeKind.BYBIT,
@@ -242,28 +182,6 @@ class BybitConnector(
             page++
         }
     }
-
-    /** Requests one refresh may still send for an account. */
-    private class Budget(
-        var left: Int,
-        private val get: (BybitRequest) -> String,
-    ) {
-        fun send(request: BybitRequest): String {
-            check(left > 0)
-            left--
-            return get(request)
-        }
-    }
-
-    private fun message(failure: Exception): String =
-        when {
-            failure is BybitException && failure.rateLimited -> "Bybit asked to slow down; it is tried again later"
-            failure is BybitException && failure.invalidKey -> "Bybit did not accept this API key"
-            // Validation and the host's transport give short, fixed messages without keys or addresses.
-            failure is IllegalArgumentException || failure is IllegalStateException || failure is BybitException ->
-                failure.message ?: "Could not read this Bybit account"
-            else -> "Could not reach Bybit"
-        }
 
     companion object {
         /** Requests per account and refresh; a first refresh of two years of history takes a few refreshes. */
@@ -282,4 +200,16 @@ class BybitConnector(
                 BybitDecoder.WITHDRAWALS to "withdrawals",
             )
     }
+}
+
+/** Bybit: Unified and Funding wallets with both balance logs; keys report their permissions and expiry. */
+object BybitProvider : ExchangeProvider<BybitRequest> {
+    override val kind = ExchangeKind.BYBIT
+    override val manifest = BYBIT_MANIFEST
+    override val history: ExchangeHistory = BybitDecoder
+
+    override fun connector(transport: ExchangeTransport<BybitRequest>) = BybitConnector(transport::get)
+
+    override fun checkKey(send: (BybitRequest) -> String): ExchangeKeyInfo =
+        Bybit.parseKeyInfo(send(Bybit.keyInfo())).let { ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis) }
 }

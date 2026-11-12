@@ -29,7 +29,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *   below zero, the missing amount arrives 1 ms before (history Binance no longer keeps, or trades in pairs it no
  *   longer lists). Whatever then differs from Binance's balance is one adjustment after the latest record.
  */
-object BinanceDecoder {
+object BinanceDecoder : ExchangeHistory {
     const val VERSION = "binance-1"
     const val TRADES = "trades"
     const val DEPOSITS = "deposits"
@@ -53,7 +53,7 @@ object BinanceDecoder {
     )
 
     /** Coins the saved records move; trades name theirs through [pairs] (symbol → base and quote). */
-    fun coins(
+    override fun coins(
         rows: List<ExchangeRow>,
         pairs: Map<String, Pair<String, String>>,
     ): Set<String> {
@@ -186,4 +186,24 @@ object BinanceDecoder {
     private fun negate(value: ExactDecimal) = ExactDecimal(-value.coefficient, value.scale)
 
     private val ZERO = ExactDecimal.parse("0")
+
+    override val version: String get() = VERSION
+
+    override fun balanceRecord(snapshot: ExchangeSnapshot): String = totalsRecord(ExchangeKind.BINANCE, snapshot)
+
+    override fun recordsFrom(
+        streams: Map<String, ExchangeStreamState>,
+        snapshot: ExchangeSnapshot,
+    ): Long? = transfersFrom(streams, DEPOSITS, WITHDRAWALS)
+
+    override fun decode(
+        account: AccountId,
+        uid: String,
+        rows: List<ExchangeRow>,
+        assets: Map<String, AssetId>,
+        snapshot: ExchangeSnapshot,
+        source: SourceRecordId,
+        recordsFrom: Long?,
+        decimals: (AssetId) -> Int,
+    ): ExchangeDecoded = decode(account, uid, rows, assets, snapshot.pairs, Balances(snapshot.atMillis, snapshot.totals, source), decimals)
 }

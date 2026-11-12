@@ -111,14 +111,14 @@ data class MexcDust(
 }
 
 class MexcException(
-    val code: Int,
+    code: Int,
     message: String,
-) : Exception(message) {
-    val rateLimited: Boolean get() = code == 429 || code == 510
+) : ExchangeApiException(code, message) {
+    override val rateLimited: Boolean get() = code == 429 || code == 510
 
     /** Invalid key (10072), bad signature (700002), IP not allowed (700006), no permission (700007). */
-    val invalidKey: Boolean get() = code == 10072 || code == 700002 || code == 700006 || code == 700007
-    val clockSkew: Boolean get() = code == 700003
+    override val invalidKey: Boolean get() = code == 10072 || code == 700002 || code == 700006 || code == 700007
+    override val clockSkew: Boolean get() = code == 700003
 }
 
 /**

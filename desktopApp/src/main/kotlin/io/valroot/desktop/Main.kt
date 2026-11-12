@@ -542,66 +542,21 @@ internal class DesktopHost(
         kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.ExchangeKeyInfo =
-        when (kind) {
+    ): io.valroot.core.exchange.ExchangeKeyInfo {
+        val credentials: (io.valroot.core.model.AccountId) -> Pair<String, String>? = { key to secret }
+        val account = io.valroot.core.exchange.KEY_CHECK_ACCOUNT
+        return when (kind) {
             io.valroot.core.exchange.ExchangeKind.BYBIT ->
-                io.valroot.core.exchange.Bybit
-                    .parseKeyInfo(
-                        BybitTransport({ key to secret })
-                            .get(
-                                io.valroot.core.model
-                                    .AccountId("key-check"),
-                                io.valroot.core.exchange.Bybit
-                                    .keyInfo(),
-                            ),
-                    ).let {
-                        io.valroot.core.exchange
-                            .ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis)
-                    }
-            io.valroot.core.exchange.ExchangeKind.MEXC -> {
-                // MEXC does not report a key's permissions: the key is trusted to be read-only.
-                val uid =
-                    io.valroot.core.exchange.Mexc
-                        .parseUid(
-                            MexcTransport(
-                                { key to secret },
-                            ).get(
-                                io.valroot.core.model
-                                    .AccountId("key-check"),
-                                io.valroot.core.exchange.Mexc
-                                    .uid(),
-                            ),
-                        )
-                io.valroot.core.exchange
-                    .ExchangeKeyInfo(uid, true, null)
-            }
-            io.valroot.core.exchange.ExchangeKind.BINANCE -> {
-                val transport = BinanceTransport({ key to secret })
-                val check =
-                    io.valroot.core.model
-                        .AccountId("key-check")
-                val readOnly =
-                    io.valroot.core.exchange.Binance
-                        .parseReadOnly(
-                            transport.get(
-                                check,
-                                io.valroot.core.exchange.Binance
-                                    .restrictions(),
-                            ),
-                        )
-                val (uid, _) =
-                    io.valroot.core.exchange.Binance
-                        .parseAccount(
-                            transport.get(
-                                check,
-                                io.valroot.core.exchange.Binance
-                                    .account(),
-                            ),
-                        )
-                io.valroot.core.exchange
-                    .ExchangeKeyInfo(uid, readOnly, null)
-            }
+                io.valroot.core.exchange.BybitProvider
+                    .checkKey { BybitTransport(credentials).get(account, it) }
+            io.valroot.core.exchange.ExchangeKind.BINANCE ->
+                io.valroot.core.exchange.BinanceProvider
+                    .checkKey { BinanceTransport(credentials).get(account, it) }
+            io.valroot.core.exchange.ExchangeKind.MEXC ->
+                io.valroot.core.exchange.MexcProvider
+                    .checkKey { MexcTransport(credentials).get(account, it) }
         }
+    }
 
     private fun refresh(
         recoverHistory: Boolean,
