@@ -2,6 +2,33 @@ package io.valroot.core.reconcile
 
 import io.valroot.core.ledger.ActivityStatus
 import io.valroot.core.ledger.MovementRole
+import io.valroot.core.model.AtomicAmount
+import io.valroot.core.model.ExactDecimal
+
+/**
+ * Puts amounts of equivalent assets on one scale: the coin an asset is, and the amount as a decimal. An exchange's
+ * USDT and USDT on a chain are one coin, so a withdrawal and its arrival match when their decimal amounts are equal.
+ */
+fun interface AmountScale {
+    fun of(amount: AtomicAmount): Pair<String, ExactDecimal>
+
+    companion object {
+        /** Only the same asset matches, unit for unit. */
+        val SAME_ASSET = AmountScale { it.assetId.value to ExactDecimal(it.atomicUnits, 0) }
+    }
+}
+
+/** True when [left] and [right] are opposite, non-zero amounts of the same coin. */
+internal fun AmountScale.opposite(
+    left: AtomicAmount,
+    right: AtomicAmount,
+): Boolean {
+    if (left.atomicUnits.sign == 0 || left.atomicUnits.sign == right.atomicUnits.sign) return false
+    if (left.assetId == right.assetId) return left.atomicUnits == -right.atomicUnits
+    val (leftCoin, leftValue) = of(left)
+    val (rightCoin, rightValue) = of(right)
+    return leftCoin == rightCoin && (leftValue + rightValue).coefficient.sign == 0
+}
 
 internal sealed interface TransferResolution {
     data class Conflict(
@@ -19,6 +46,7 @@ internal fun resolveTransfer(
     second: EffectiveActivity?,
     firstExists: Boolean,
     secondExists: Boolean,
+    scale: AmountScale = AmountScale.SAME_ASSET,
 ): TransferResolution {
     if (first == null || second == null) {
         return TransferResolution.Conflict(if (!firstExists || !secondExists) "activity missing" else "no matching movements")
@@ -34,9 +62,7 @@ internal fun resolveTransfer(
             if (left.role == MovementRole.FEE ||
                 right.role == MovementRole.FEE ||
                 left.accountId == right.accountId ||
-                left.amount.assetId != right.amount.assetId ||
-                left.amount.atomicUnits.sign == 0 ||
-                left.amount.atomicUnits != -right.amount.atomicUnits
+                !scale.opposite(left.amount, right.amount)
             ) {
                 continue
             } else if (left.amount.atomicUnits.sign < 0) {

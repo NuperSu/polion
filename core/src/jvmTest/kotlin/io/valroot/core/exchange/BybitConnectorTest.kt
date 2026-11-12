@@ -339,4 +339,66 @@ class BybitConnectorTest {
             assertEquals(units("7"), balances(app)["coin:zzz-coin"])
         }
     }
+
+    @Test
+    fun aWithdrawalIsSuggestedWithItsArrivalOnChainByTransaction() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = setUp(db)
+            app.setMarketDataConsent(true)
+
+            fun fixture(name: String) = requireNotNull(javaClass.getResource("/coingecko/$name")).readText()
+            val contract = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+            val token =
+                io.valroot.core.evm.EvmAssets
+                    .token(1, contract)
+            app.registerAsset(
+                io.valroot.core.market.AssetDefinition(
+                    token,
+                    io.valroot.core.market.AssetIdentity(
+                        io.valroot.core.market.AssetKind.TOKEN,
+                        io.valroot.core.evm
+                            .evmNetwork(1),
+                        contract,
+                    ),
+                ),
+                io.valroot.core.market
+                    .AssetMetadata("USDT", "Tether", 6, 0),
+            )
+            app.refreshEvmCatalog(
+                { url, _ -> if (url.contains("asset_platforms")) fixture("asset_platforms.json") else fixture("coins_list.json") },
+            )
+            BybitConnector { _, request -> FakeBybit().get(request) }.refresh(app, SourceRefreshOptions())
+            val wallet = AccountId("wallet")
+            app.saveAccount(Account(wallet, OwnerId("owner"), "Wallet", AccountKind.WALLET))
+            // The arrival three hours later: outside the one-hour bonus, but the same transaction.
+            app.saveManualActivity(
+                io.valroot.core.ledger.Activity(
+                    ActivityId("eip155:1:0xdef:0x" + "1".repeat(40)),
+                    at(7),
+                    "x",
+                    ActivityKind.DEPOSIT,
+                    io.valroot.core.ledger.ActivityStatus.CONFIRMED,
+                    listOf(
+                        io.valroot.core.ledger.Movement(
+                            io.valroot.core.model
+                                .EventId("in"),
+                            wallet,
+                            io.valroot.core.model
+                                .AtomicAmount(token, ExactInteger.parse("50000000")),
+                            MovementRole.TRANSFER,
+                        ),
+                    ),
+                    emptySet(),
+                    null,
+                    manual = true,
+                ),
+            )
+            val candidate = app.reconciliationCandidates(Bybit.DAY_MILLIS).single()
+            assertEquals(
+                setOf("bybit:$uid:funding:f2", "eip155:1:0xdef:0x" + "1".repeat(40)),
+                setOf(candidate.first.value, candidate.second.value),
+            )
+            assertEquals(100, candidate.score)
+        }
+    }
 }

@@ -410,7 +410,46 @@ class PortfolioApplication(
     private var cachedLedger: EffectiveLedger? = null
     private var holdingsCurrent = false
 
-    private fun ledger(): EffectiveLedger = cachedLedger ?: overlays.replayForLedger(activities.current()).also { cachedLedger = it }
+    private fun ledger(): EffectiveLedger =
+        cachedLedger ?: overlays.replayForLedger(activities.current(), amountScale()).also { cachedLedger = it }
+
+    /**
+     * Amounts of one CoinGecko coin in any asset compare as decimals, so an exchange withdrawal can be linked to its
+     * arrival as a token. Assets without a coin or without known decimals compare only with themselves.
+     */
+    private fun amountScale(): io.valroot.core.reconcile.AmountScale {
+        val links = assetLinks.links()
+        val decimals = mutableMapOf<AssetId, Int?>()
+        return io.valroot.core.reconcile.AmountScale { amount ->
+            val asset = amount.assetId
+            val coin = links[asset] ?: if (asset == BITCOIN_ASSET) "bitcoin" else null
+            val places = decimals.getOrPut(asset) { market.metadataAt(asset, Long.MAX_VALUE)?.decimals }
+            if (coin == null || places == null) {
+                asset.value to ExactDecimal(amount.atomicUnits, 0)
+            } else {
+                "coin:$coin" to ExactDecimal(amount.atomicUnits, places)
+            }
+        }
+    }
+
+    /** The on-chain transaction behind an activity: its own for Bitcoin and EVM, the exchange's record for exchanges. */
+    private fun transactionOf(
+        activity: Activity,
+        exchange: Map<ActivityId, io.valroot.core.exchange.ExchangeTransfer>,
+    ): String? {
+        val id = activity.id.value
+        return when {
+            activity.id in exchange -> exchange.getValue(activity.id).txId.lowercase()
+            id.startsWith("bitcoin:") -> id.removePrefix("bitcoin:").lowercase()
+            id.startsWith("eip155:") ->
+                id
+                    .split(':')
+                    .getOrNull(2)
+                    ?.takeIf { it.startsWith("0x") }
+                    ?.lowercase()
+            else -> null
+        }
+    }
 
     private fun invalidate() {
         cachedLedger = null
@@ -1621,6 +1660,8 @@ class PortfolioApplication(
                                                         into.accountId,
                                                         into.amount.assetId,
                                                         into.amount.atomicUnits,
+                                                        out.amount.assetId,
+                                                        -out.amount.atomicUnits,
                                                     ),
                                                 )
                                             }
@@ -1818,11 +1859,13 @@ class PortfolioApplication(
     }
 
     fun reconciliationCandidates(windowMillis: Long): List<ReconciliationCandidate> {
+        val exchange = exchangeSync.transfers()
         val reviewedPairs = overlays.decisions().map { it.first to it.second }.toSet()
         val pending =
             Reconciliation
-                .suggest(ledger().activities.map { it.activity }, windowMillis)
-                .filterNot { (it.first to it.second) in reviewedPairs }
+                .suggest(ledger().activities.map { it.activity }, windowMillis, amountScale()) { activity ->
+                    transactionOf(activity, exchange)
+                }.filterNot { (it.first to it.second) in reviewedPairs }
         val counts = pending.flatMap { listOf(it.first, it.second) }.groupingBy { it }.eachCount()
         return pending.map {
             it.copy(ambiguous = it.matchedMovements > 1 || counts.getValue(it.first) > 1 || counts.getValue(it.second) > 1)

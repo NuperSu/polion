@@ -265,7 +265,10 @@ class OverlayRepository(
             ).map { DuplicateDecision(ActivityId(it[0]!!), ActivityId(it[1]!!), ActivityId(it[2]!!), LinkState.valueOf(it[3]!!)) }
 
     /** Explicit duplicate decisions suppress only unique equal movements; all original records remain available. */
-    fun replayForLedger(activities: Collection<Activity>): EffectiveLedger =
+    fun replayForLedger(
+        activities: Collection<Activity>,
+        scale: AmountScale = AmountScale.SAME_ASSET,
+    ): EffectiveLedger =
         db.transaction {
             val replayed = replayInTransaction(activities)
             val byId = replayed.associateBy { it.activity.id }
@@ -294,13 +297,14 @@ class OverlayRepository(
                     val movements = item.activity.movements.filter { it.id !in removed[item.activity.id].orEmpty() }
                     if (movements.isEmpty()) null else item.copy(activity = item.activity.copy(movements = movements))
                 }
-            val (links, linkConflicts) = resolveTransferLinks(projected, byId.keys)
+            val (links, linkConflicts) = resolveTransferLinks(projected, byId.keys, scale)
             EffectiveLedger(projected, suppressed, conflicts, links, linkConflicts)
         }
 
     private fun resolveTransferLinks(
         activities: List<EffectiveActivity>,
         originalIds: Set<ActivityId>,
+        scale: AmountScale,
     ): Pair<List<TransferLink>, List<TransferLinkConflict>> {
         val byId = activities.associateBy { it.activity.id }
         val conflicts = mutableListOf<TransferLinkConflict>()
@@ -309,7 +313,7 @@ class OverlayRepository(
             val first = byId[decision.first]
             val second = byId[decision.second]
 
-            when (val resolution = resolveTransfer(first, second, decision.first in originalIds, decision.second in originalIds)) {
+            when (val resolution = resolveTransfer(first, second, decision.first in originalIds, decision.second in originalIds, scale)) {
                 is TransferResolution.Conflict -> conflicts.add(TransferLinkConflict(decision.first, decision.second, resolution.reason))
                 is TransferResolution.Match -> candidates.add(decision to resolution.link)
             }

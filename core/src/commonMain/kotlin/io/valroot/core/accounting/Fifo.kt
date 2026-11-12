@@ -46,10 +46,46 @@ sealed interface AccountingAction {
         override val order: String,
         val from: AccountId,
         val to: AccountId,
+        /** What arrives: the incoming asset and its units. */
         val asset: AssetId,
         val quantity: ExactInteger,
+        /**
+         * What leaves, when it is a different asset of the same coin (an exchange balance withdrawn as a token): the
+         * same amount in that asset's units, so the two quantities differ only by a power of ten.
+         */
+        val fromAsset: AssetId = asset,
+        val fromQuantity: ExactInteger = quantity,
     ) : AccountingAction
 }
+
+/**
+ * The power of ten that turns [from] units into [to] units of the same amount: positive when [to] has more decimals.
+ * Null when the two are not the same amount at any power of ten.
+ */
+internal fun decimalShift(
+    from: ExactInteger,
+    to: ExactInteger,
+): Int? {
+    if (from.sign <= 0 || to.sign <= 0) return null
+    val a = from.toString()
+    val b = to.toString()
+    return when {
+        a.length <= b.length && from.timesPowerOfTen(b.length - a.length) == to -> b.length - a.length
+        b.length < a.length && to.timesPowerOfTen(a.length - b.length) == from -> b.length - a.length
+        else -> null
+    }
+}
+
+/** [units] at a power of ten, rounding down when [shift] removes digits. */
+internal fun shiftUnits(
+    units: ExactInteger,
+    shift: Int,
+): ExactInteger =
+    if (shift >= 0) {
+        units.timesPowerOfTen(shift)
+    } else {
+        ExactInteger.parse(units.toString().dropLast(-shift).ifEmpty { "0" })
+    }
 
 data class Lot(
     val id: String,
@@ -213,7 +249,17 @@ object FifoAccounting {
                     require(action.quantity.sign > 0 && action.from != action.to)
                     val owner = requireNotNull(owners[action.from])
                     require(owners[action.to] == owner) { "Transfer requires same owner" }
-                    take(action.from, action.asset, action.quantity).forEachIndexed { index, (lot, part) ->
+                    val shift = requireNotNull(decimalShift(action.fromQuantity, action.quantity)) { "Transfer amounts differ" }
+                    // Lots keep their basis and dates; each part's units follow the incoming asset's decimals, and
+                    // the last part takes what rounding left, so the parts add up to the incoming quantity exactly.
+                    var taken = ExactInteger.ZERO
+                    var given = ExactInteger.ZERO
+                    take(action.from, action.fromAsset, action.fromQuantity).forEachIndexed { index, (lot, sent) ->
+                        taken += sent.first
+                        val received = shiftUnits(taken, shift) - given
+                        given += received
+                        val part = received to sent.second
+                        if (received.sign == 0) return@forEachIndexed
                         lotRanks["$key:$index"] = lot?.let { lotRanks.getValue(it.id) } ?: rank
                         lots +=
                             Lot(

@@ -75,9 +75,16 @@ data class ReconciliationCandidate(
 
 /** Suggestions require review: matching never deletes or merges source records. */
 object Reconciliation {
+    /**
+     * Pairs of activities in different accounts that move opposite equal amounts of one coin ([scale]) within
+     * [maxWindowMillis]. Pairs that share an on-chain transaction ([transaction] gives an activity's, if known) score
+     * highest.
+     */
     fun suggest(
         activities: Collection<Activity>,
         maxWindowMillis: Long,
+        scale: AmountScale = AmountScale.SAME_ASSET,
+        transaction: (Activity) -> String? = { null },
     ): List<ReconciliationCandidate> {
         require(maxWindowMillis >= 0)
         require(activities.map { it.id }.distinct().size == activities.size)
@@ -101,14 +108,18 @@ object Reconciliation {
                             left.role != MovementRole.FEE &&
                                 right.role != MovementRole.FEE &&
                                 left.accountId != right.accountId &&
-                                left.amount.assetId == right.amount.assetId &&
-                                left.amount.atomicUnits.sign != 0 &&
-                                left.amount.atomicUnits == -right.amount.atomicUnits
+                                scale.opposite(left.amount, right.amount)
                         }
                     }
                 if (pairs == 0) continue
+                val shared = transaction(first)?.let { it == transaction(second) } == true
                 val score =
-                    80 + (if (distance <= 3_600_000UL) 10 else 0) + (if (first.sources.intersect(second.sources).isNotEmpty()) 10 else 0)
+                    if (shared) {
+                        100
+                    } else {
+                        80 + (if (distance <= 3_600_000UL) 10 else 0) +
+                            (if (first.sources.intersect(second.sources).isNotEmpty()) 10 else 0)
+                    }
                 candidates += ReconciliationCandidate(first.id, second.id, score, pairs, pairs > 1)
             }
         }
