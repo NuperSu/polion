@@ -793,15 +793,5 @@ class ReliabilityInstrumentation : Instrumentation() {
         finish(if (failures == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED, results)
     }
 
-    private fun fixture(block: (File) -> Unit) {
-        val file = File.createTempFile("valroot-reliability-", ".sqlite", targetContext.cacheDir)
-        try {
-            block(file)
-        } finally {
-            file.delete()
-            File(file.path + "-journal").delete()
-            File(file.path + "-wal").delete()
-            File(file.path + "-shm").delete()
-        }
-    }
+    private fun fixture(block: (File) -> Unit) = withTemporaryDatabase(targetContext.cacheDir, block)
 }

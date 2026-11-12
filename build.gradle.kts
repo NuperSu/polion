@@ -11,12 +11,11 @@ subprojects {
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
 }
 
-/** Kotlin files longer than this fail the build; split them by responsibility instead. */
-val maxKotlinFileLines = 800
-
 val checkFileSizes by tasks.registering {
     group = "verification"
-    description = "Fails when a Kotlin source file exceeds $maxKotlinFileLines lines."
+    description = "Fails when a Kotlin source file exceeds 800 lines; split such files by responsibility."
+    val limit = 800
+    val root = rootDir
     val sources =
         fileTree(rootDir) {
             include("**/src/**/*.kt")
@@ -27,11 +26,14 @@ val checkFileSizes by tasks.registering {
         val tooLong =
             sources.files
                 .map { it to it.readLines().size }
-                .filter { it.second > maxKotlinFileLines }
+                .filter { it.second > limit }
                 .sortedByDescending { it.second }
         check(tooLong.isEmpty()) {
-            "Kotlin files over $maxKotlinFileLines lines:\n" +
-                tooLong.joinToString("\n") { (file, lines) -> "  ${file.relativeTo(rootDir)}: $lines" }
+            "Kotlin files over $limit lines:\n" + tooLong.joinToString("\n") { (file, lines) -> "  ${file.relativeTo(root)}: $lines" }
         }
     }
+}
+
+subprojects {
+    tasks.matching { it.name == "ktlintCheck" }.configureEach { dependsOn(rootProject.tasks.named("checkFileSizes")) }
 }
