@@ -26,6 +26,31 @@ interface ExchangeProvider<R> {
 
     /** Whose account the key behind [send] reads, and whether it can only read. */
     fun checkKey(send: (R) -> String): ExchangeKeyInfo
+
+    /** Export files of this exchange that can be imported to reach history its API no longer returns. */
+    val exportFormats: List<ExchangeExportFormat> get() = emptyList()
+}
+
+/**
+ * An exchange's own export file (for example a trade history or a deposit list), read into the same rows the API
+ * gives, so imported and fetched records go through one decoder and settle together.
+ *
+ * Each row's stream and key must be the ones the API would give the same record, so a record both imported and
+ * fetched is stored once. Where the file has no record ID, the key is built from the record's time, coin, amount and
+ * side in the way the decoder builds it for the API record.
+ */
+interface ExchangeExportFormat {
+    /** Stable identifier, saved with the import. */
+    val id: String
+
+    /** Name the user picks, such as "Spot trade history (CSV)". */
+    val label: String
+
+    /** Whether a file starting with [header] (its first line) is in this format. */
+    fun detect(header: String): Boolean
+
+    /** The file's records as rows; an unreadable line fails with its line number. */
+    fun parse(text: String): List<ExchangeRow>
 }
 
 /** The exchanges Valroot supports. */

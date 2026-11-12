@@ -175,3 +175,15 @@ Balance check: as for Binance, each coin's running balance fills gaps 1 ms befor
 
 - Futures balances and results.
 - History older than MEXC's retention, except as openings. MEXC's web export (three years) can fill it through a later CSV importer.
+
+## Importing exchange exports (planned)
+
+APIs return only recent history: MEXC keeps a month of trades and Binance needs a request per trading pair. Exchanges' own export files reach further back. An import turns such a file into the same rows the API gives (`exchange_rows`: stream, record key, raw record). Imported rows go through the same decoder and balance settlement as fetched ones:
+
+- **Seam:** `ExchangeExportFormat` (`id`, `label`, `detect(header)`, `parse(text)`), listed in each provider's `exportFormats`.
+- **Deduplication:** a row's stream and key are those the API gives the same record, so a record both imported and fetched is stored once. Where an export has no record ID, the key is built from time, coin, amount and side, the way the decoder builds it for the API record.
+- **Coverage:** imported rows move the start of the records earlier, so openings move with them. Settlement needs no change.
+- **First formats:** Bybit's asset-change and trade exports; Binance's "Transaction History" statement (one file covering trades, transfers, Earn and converts, which spares the per-pair trade requests); MEXC's spot order, deposit and withdrawal exports (three years).
+- **UI:** a step in the existing CSV import flow that recognises the file's format and the account.
+
+No format is implemented yet.
