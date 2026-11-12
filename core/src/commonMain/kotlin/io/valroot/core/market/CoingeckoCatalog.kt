@@ -25,7 +25,15 @@ class CoingeckoCatalog(
     private val contracts: Map<String, Map<String, String>>,
     /** Native coin ID → symbol and name. */
     private val natives: Map<String, Pair<String, String>> = emptyMap(),
+    /** Upper-case symbol → every coin with that symbol, as ID and name. */
+    private val symbols: Map<String, List<Pair<String, String>>> = emptyMap(),
 ) {
+    /** True when the catalog carries coin symbols; catalogs cached before symbols were kept do not. */
+    val hasSymbols: Boolean get() = symbols.isNotEmpty()
+
+    /** Every coin whose symbol is [symbol] (any case), as ID and name. */
+    fun coinsWithSymbol(symbol: String): List<Pair<String, String>> = symbols[symbol.uppercase()].orEmpty()
+
     /** The upper-case symbol and the name of a chain's native coin, when CoinGecko knows the chain. */
     fun nativeLabel(chainId: Long): Pair<String, String>? = nativeCoin(chainId)?.let { natives[it] }
 
@@ -46,6 +54,7 @@ class CoingeckoCatalog(
             platforms.forEach { append("P\t${it.platformId}\t${it.chainId}\t${it.nativeCoinId.orEmpty()}\t${it.name}\n") }
             contracts.forEach { (platform, map) -> map.forEach { (contract, coin) -> append("C\t$platform\t$contract\t$coin\n") } }
             natives.forEach { (coin, label) -> append("N\t$coin\t${label.first}\t${label.second}\n") }
+            symbols.forEach { (symbol, coins) -> coins.forEach { (id, name) -> append("S\t$symbol\t$id\t$name\n") } }
         }
 
     companion object {
@@ -53,6 +62,7 @@ class CoingeckoCatalog(
         const val COINS_PATH = "/coins/list?include_platform=true"
         private val ID = Regex("[a-z0-9][a-z0-9-]{0,99}")
         private val CONTRACT = Regex("0x[0-9a-fA-F]{40}")
+        private val SYMBOL = Regex("[A-Z0-9]{1,20}")
 
         fun parsePlatforms(payload: String): List<EvmPlatform> =
             Json
@@ -121,19 +131,36 @@ class CoingeckoCatalog(
                 }.toMap()
         }
 
+        /** Every coin by upper-case symbol, from the same `/coins/list` payload. Symbols are letters and digits only. */
+        fun parseSymbols(payload: String): Map<String, List<Pair<String, String>>> =
+            Json
+                .parseToJsonElement(payload)
+                .jsonArray
+                .mapNotNull { element ->
+                    runCatching {
+                        val coin = element.jsonObject
+                        val id = coin.text("id")!!.also { require(it.matches(ID)) }
+                        val symbol = coin.text("symbol")!!.uppercase()
+                        require(symbol.matches(SYMBOL))
+                        Triple(symbol, id, coin.text("name")!!.take(100).filter { it != '\t' && it != '\n' })
+                    }.getOrNull()
+                }.groupBy({ it.first }, { it.second to it.third })
+
         fun decode(text: String): CoingeckoCatalog {
             val platforms = mutableListOf<EvmPlatform>()
             val contracts = mutableMapOf<String, MutableMap<String, String>>()
             val natives = mutableMapOf<String, Pair<String, String>>()
+            val symbols = mutableMapOf<String, MutableList<Pair<String, String>>>()
             text.lineSequence().filter { it.isNotEmpty() }.forEach { line ->
                 val parts = line.split('\t')
                 when (parts[0]) {
                     "P" -> platforms += EvmPlatform(parts[1], parts[2].toLong(), parts[4], parts[3].ifEmpty { null })
                     "C" -> contracts.getOrPut(parts[1]) { mutableMapOf() }[parts[2]] = parts[3]
                     "N" -> natives[parts[1]] = parts[2] to parts[3]
+                    "S" -> symbols.getOrPut(parts[1]) { mutableListOf() } += parts[2] to parts[3]
                 }
             }
-            return CoingeckoCatalog(platforms, contracts, natives)
+            return CoingeckoCatalog(platforms, contracts, natives, symbols)
         }
 
         private fun JsonObject.text(key: String): String? =

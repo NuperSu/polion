@@ -356,6 +356,9 @@ private const val ONE_INCH_LISTING_MARGIN_MILLIS = 3_600_000L
 /** US dollars, the only currency DefiLlama quotes. */
 private val USD = AssetId("USD")
 
+/** A CoinGecko coin ID. */
+private val COIN_ID = Regex("[a-z0-9][a-z0-9-]{0,99}")
+
 /** Saved linked-coin logo URLs are refetched after a week. */
 private const val LINKED_LOGO_MAX_AGE_MILLIS = 7 * 86_400_000L
 
@@ -391,6 +394,9 @@ class PortfolioApplication(
     private val assetLinks =
         io.valroot.core.market
             .AssetLinkRepository(db)
+    private val exchangeCoins =
+        io.valroot.core.exchange
+            .ExchangeCoinRepository(db)
     private val bitcoinStage = BitcoinScanStage(db, store, activities)
     private val bitcoinGraph =
         io.valroot.core.bitcoin
@@ -600,7 +606,7 @@ class PortfolioApplication(
     ) {
         require(marketDataConsent()) { "Market data consent required" }
         val cached = marketFeeds.catalog()
-        if (cached == null || now() - cached.first > 7 * 86_400_000L) {
+        if (cached == null || now() - cached.first > 7 * 86_400_000L || !cached.second.hasSymbols) {
             val key = coingeckoApiKey()
             val platforms = CoingeckoCatalog.parsePlatforms(transport(baseUrl + CoingeckoCatalog.PLATFORMS_PATH, key))
             require(platforms.isNotEmpty()) { "CoinGecko returned no chains" }
@@ -610,6 +616,7 @@ class PortfolioApplication(
                     platforms,
                     CoingeckoCatalog.parseContracts(coins, platforms),
                     CoingeckoCatalog.parseNatives(coins, platforms),
+                    CoingeckoCatalog.parseSymbols(coins),
                 )
             marketFeeds.saveCatalog(catalog, now())
         }
@@ -964,6 +971,85 @@ class PortfolioApplication(
             }
         }
         return count
+    }
+
+    /**
+     * The coin each of an exchange's [symbols] is, as its shared exchange asset. Symbols matched before keep their coin;
+     * new ones are matched by [io.valroot.core.exchange.ExchangeAssets.resolve] and saved. A symbol that cannot be matched
+     * is saved without a coin and left out of the result until the user chooses one with [chooseExchangeCoin].
+     */
+    fun exchangeAssets(
+        exchange: String,
+        symbols: Set<String>,
+    ): Map<String, AssetId> {
+        val saved = exchangeCoins.coins(exchange)
+        val catalog = marketFeeds.catalog()?.second
+        val ranked =
+            marketFeeds
+                .markets(currency().value.lowercase())
+                ?.items
+                .orEmpty()
+                .sortedBy { it.rank ?: Int.MAX_VALUE }
+                .map { it.coinId }
+        val result = mutableMapOf<String, AssetId>()
+        db.transaction {
+            symbols.forEach { symbol ->
+                val known = saved[symbol]?.first?.takeIf { it.isNotEmpty() }
+                val coin =
+                    known ?: io.valroot.core.exchange.ExchangeAssets
+                        .resolve(symbol, catalog, ranked)
+                if (known == null && (coin != null || symbol !in saved)) {
+                    exchangeCoins.save(exchange, symbol, coin.orEmpty(), io.valroot.core.exchange.CoinChoice.AUTOMATIC)
+                }
+                if (coin != null) result[symbol] = registerExchangeAsset(symbol, coin, catalog)
+            }
+        }
+        return result
+    }
+
+    /** An exchange's symbols that have no coin yet, with the catalog coins that carry each symbol. */
+    fun unresolvedExchangeCoins(exchange: String): Map<String, List<Pair<String, String>>> {
+        val catalog = marketFeeds.catalog()?.second
+        return exchangeCoins
+            .coins(exchange)
+            .filterValues { it.first.isEmpty() }
+            .keys
+            .sorted()
+            .associateWith { catalog?.coinsWithSymbol(it).orEmpty() }
+    }
+
+    /** The user's coin for an exchange symbol; it replaces any automatic match and takes effect on the next refresh. */
+    fun chooseExchangeCoin(
+        exchange: String,
+        symbol: String,
+        coinId: String,
+    ) {
+        require(COIN_ID.matches(coinId)) { "Unknown coin" }
+        exchangeCoins.save(exchange, symbol, coinId, io.valroot.core.exchange.CoinChoice.USER)
+    }
+
+    private fun registerExchangeAsset(
+        symbol: String,
+        coinId: String,
+        catalog: CoingeckoCatalog?,
+    ): AssetId {
+        val definition =
+            io.valroot.core.exchange.ExchangeAssets
+                .definition(coinId)
+        if (market.metadataAt(definition.id, Long.MAX_VALUE) == null) {
+            val name = catalog?.coinsWithSymbol(symbol)?.firstOrNull { it.first == coinId }?.second ?: symbol.uppercase()
+            market.registerAssetInTransaction(
+                definition,
+                io.valroot.core.market.AssetMetadata(
+                    symbol.uppercase(),
+                    name,
+                    io.valroot.core.exchange.ExchangeAssets.DECIMALS,
+                    0,
+                ),
+            )
+        }
+        if (assetLinks.coinOf(definition.id) != coinId) assetLinks.link(definition.id, coinId)
+        return definition.id
     }
 
     /** Match the current activity's raw source IDs; manual records have no inferred network. */
