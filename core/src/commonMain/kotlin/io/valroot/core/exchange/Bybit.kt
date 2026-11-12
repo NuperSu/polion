@@ -67,6 +67,8 @@ data class BybitLogEntry(
     val tradeId: String,
     val orderId: String,
     val atMillis: Long,
+    /** Bybit's row as received. */
+    val raw: String = "",
 ) {
     /** The log's `id` is shared by related rows, so identity also includes the type, coin, trade and time. */
     val key: String get() = listOf(id, type, currency, tradeId, atMillis.toString()).joinToString("|")
@@ -83,6 +85,7 @@ data class BybitFundingEntry(
     val atMillis: Long,
     val business: String,
     val description: String,
+    val raw: String = "",
 )
 
 data class BybitDeposit(
@@ -93,6 +96,7 @@ data class BybitDeposit(
     val txId: String,
     val status: Int,
     val atMillis: Long,
+    val raw: String = "",
 ) {
     /** Credited and not rolled back (status 3, or 70012 after a rollback review). */
     val credited: Boolean get() = status == 3 || status == 70012
@@ -108,6 +112,7 @@ data class BybitWithdrawal(
     val status: String,
     val atMillis: Long,
     val onChain: Boolean,
+    val raw: String = "",
 ) {
     val done: Boolean get() = status == "success" || status == "BlockchainConfirmed"
     val failed: Boolean get() = status in setOf("CancelByUser", "Reject", "Fail") || status.startsWith("HighValueReviewRejected")
@@ -121,6 +126,7 @@ data class BybitConvert(
     val toAmount: ExactDecimal,
     val status: String,
     val atMillis: Long,
+    val raw: String = "",
 )
 
 /** A coin's balance in one Bybit account type (FUND, UNIFIED, Earn, TradingBot, …). */
@@ -339,113 +345,96 @@ object Bybit {
                 row.jsonObject.let { it.text("coin") to it.text("name") }
             }.filterKeys { it.isNotBlank() }
 
-    fun parseTransactionLog(payload: String): BybitPage<BybitLogEntry> {
-        val result = result(payload)
-        return BybitPage(
-            result.array("list").map { element ->
-                val o = element.jsonObject
-                BybitLogEntry(
-                    id = o.text("id"),
-                    type = o.text("type"),
-                    category = o.text("category"),
-                    symbol = o.text("symbol"),
-                    currency = o.text("currency"),
-                    change = required(o, "change"),
-                    cashFlow = decimal(o.text("cashFlow")) ?: ExactDecimal.parse("0"),
-                    funding = decimal(o.text("funding")) ?: ExactDecimal.parse("0"),
-                    fee = decimal(o.text("fee")) ?: ExactDecimal.parse("0"),
-                    balanceAfter = required(o, "cashBalance"),
-                    tradeId = o.text("tradeId"),
-                    orderId = o.text("orderId"),
-                    atMillis = millis(o, "transactionTime"),
-                )
-            },
-            next(result),
+    fun parseTransactionLog(payload: String): BybitPage<BybitLogEntry> =
+        result(payload).let { result -> BybitPage(result.array("list").map { logEntry(it.jsonObject) }, next(result)) }
+
+    fun parseFundingHistory(payload: String): BybitPage<BybitFundingEntry> =
+        result(payload).let { result -> BybitPage(result.array("list").map { fundingEntry(it.jsonObject) }, next(result)) }
+
+    fun parseDeposits(payload: String): BybitPage<BybitDeposit> =
+        result(payload).let { result -> BybitPage(result.array("rows").map { deposit(it.jsonObject) }, next(result)) }
+
+    fun parseWithdrawals(payload: String): BybitPage<BybitWithdrawal> =
+        result(payload).let { result -> BybitPage(result.array("rows").map { withdrawal(it.jsonObject) }, next(result)) }
+
+    fun parseConverts(payload: String): List<BybitConvert> = result(payload).array("list").map { convert(it.jsonObject) }
+
+    /** A row saved as [BybitLogEntry.raw] and the like, parsed again. */
+    fun row(raw: String): JsonObject = json.parseToJsonElement(raw).jsonObject
+
+    fun logEntry(o: JsonObject) =
+        BybitLogEntry(
+            id = o.text("id"),
+            type = o.text("type"),
+            category = o.text("category"),
+            symbol = o.text("symbol"),
+            currency = o.text("currency").also { require(it.isNotBlank()) { "Log entry without coin" } },
+            change = required(o, "change"),
+            cashFlow = decimal(o.text("cashFlow")) ?: ZERO,
+            funding = decimal(o.text("funding")) ?: ZERO,
+            fee = decimal(o.text("fee")) ?: ZERO,
+            balanceAfter = required(o, "cashBalance"),
+            tradeId = o.text("tradeId"),
+            orderId = o.text("orderId"),
+            atMillis = millis(o, "transactionTime"),
+            raw = o.toString(),
+        )
+
+    fun fundingEntry(o: JsonObject): BybitFundingEntry {
+        val amount = required(o, "txnAmt")
+        val direction = o.text("ioDirection")
+        require(direction == "I" || direction == "O") { "Unexpected funding direction" }
+        return BybitFundingEntry(
+            id = o.text("currcCursor").also { require(it.isNotBlank()) { "Funding entry without ID" } },
+            currency = o.text("currency").also { require(it.isNotBlank()) { "Funding entry without coin" } },
+            change = if (direction == "O" && amount.coefficient.sign > 0) ExactDecimal(-amount.coefficient, amount.scale) else amount,
+            balanceAfter = required(o, "afterAmt"),
+            atMillis = millis(o, "createTime") * 1000,
+            business = o.text("showBusiTypeEn"),
+            description = o.text("descriptionEn"),
+            raw = o.toString(),
         )
     }
 
-    fun parseFundingHistory(payload: String): BybitPage<BybitFundingEntry> {
-        val result = result(payload)
-        return BybitPage(
-            result.array("list").map { element ->
-                val o = element.jsonObject
-                val amount = required(o, "txnAmt")
-                val direction = o.text("ioDirection")
-                require(direction == "I" || direction == "O") { "Unexpected funding direction" }
-                BybitFundingEntry(
-                    id = o.text("currcCursor").also { require(it.isNotBlank()) { "Funding entry without ID" } },
-                    currency = o.text("currency"),
-                    change =
-                        if (direction == "O" &&
-                            amount.coefficient.sign > 0
-                        ) {
-                            ExactDecimal(-amount.coefficient, amount.scale)
-                        } else {
-                            amount
-                        },
-                    balanceAfter = required(o, "afterAmt"),
-                    atMillis = millis(o, "createTime") * 1000,
-                    business = o.text("showBusiTypeEn"),
-                    description = o.text("descriptionEn"),
-                )
-            },
-            next(result),
+    fun deposit(o: JsonObject) =
+        BybitDeposit(
+            id = o.text("id"),
+            coin = o.text("coin"),
+            chain = o.text("chain"),
+            amount = required(o, "amount"),
+            txId = o.text("txID"),
+            status = o.int("status") ?: 0,
+            atMillis = millis(o, "successAt"),
+            raw = o.toString(),
         )
-    }
 
-    fun parseDeposits(payload: String): BybitPage<BybitDeposit> {
-        val result = result(payload)
-        return BybitPage(
-            result.array("rows").map { element ->
-                val o = element.jsonObject
-                BybitDeposit(
-                    id = o.text("id"),
-                    coin = o.text("coin"),
-                    chain = o.text("chain"),
-                    amount = required(o, "amount"),
-                    txId = o.text("txID"),
-                    status = o.int("status") ?: 0,
-                    atMillis = millis(o, "successAt"),
-                )
-            },
-            next(result),
+    fun withdrawal(o: JsonObject) =
+        BybitWithdrawal(
+            id = o.text("withdrawId"),
+            coin = o.text("coin"),
+            chain = o.text("chain"),
+            amount = required(o, "amount"),
+            fee = decimal(o.text("withdrawFee")) ?: ZERO,
+            txId = o.text("txID"),
+            status = o.text("status"),
+            atMillis = millis(o, "createTime"),
+            onChain = o.int("withdrawType") != 1,
+            raw = o.toString(),
         )
-    }
 
-    fun parseWithdrawals(payload: String): BybitPage<BybitWithdrawal> {
-        val result = result(payload)
-        return BybitPage(
-            result.array("rows").map { element ->
-                val o = element.jsonObject
-                BybitWithdrawal(
-                    id = o.text("withdrawId"),
-                    coin = o.text("coin"),
-                    chain = o.text("chain"),
-                    amount = required(o, "amount"),
-                    fee = decimal(o.text("withdrawFee")) ?: ExactDecimal.parse("0"),
-                    txId = o.text("txID"),
-                    status = o.text("status"),
-                    atMillis = millis(o, "createTime"),
-                    onChain = o.int("withdrawType") != 1,
-                )
-            },
-            next(result),
+    fun convert(o: JsonObject) =
+        BybitConvert(
+            id = o.text("exchangeTxId"),
+            fromCoin = o.text("fromCoin"),
+            fromAmount = required(o, "fromAmount"),
+            toCoin = o.text("toCoin"),
+            toAmount = required(o, "toAmount"),
+            status = o.text("exchangeStatus"),
+            atMillis = millis(o, "createdAt"),
+            raw = o.toString(),
         )
-    }
 
-    fun parseConverts(payload: String): List<BybitConvert> =
-        result(payload).array("list").map { element ->
-            val o = element.jsonObject
-            BybitConvert(
-                id = o.text("exchangeTxId"),
-                fromCoin = o.text("fromCoin"),
-                fromAmount = required(o, "fromAmount"),
-                toCoin = o.text("toCoin"),
-                toAmount = required(o, "toAmount"),
-                status = o.text("exchangeStatus"),
-                atMillis = millis(o, "createdAt"),
-            )
-        }
+    private val ZERO = ExactDecimal.parse("0")
 
     private fun cursorOf(cursor: String?) = if (cursor.isNullOrEmpty()) emptyList() else listOf("cursor" to cursor)
 
