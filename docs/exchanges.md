@@ -20,7 +20,7 @@ Every request is a signed GET (HMAC-SHA256 over timestamp, key, receive window o
 | `/v5/account/wallet-balance?accountType=UNIFIED` | — | Unified Trading wallet balances |
 | `/v5/asset/transfer/query-account-coins-balance?accountType=FUND` | — | Funding wallet balances |
 | `/v5/asset/asset-overview` | — | Balances in Earn, bots, copy trading, loans and other account types |
-| `/v5/account/transaction-log` | 7 days, 2 years back | Every Unified wallet balance change, with the balance after it |
+| `/v5/account/transaction-log` | 7 days, 2 years back (729 days; Bybit refuses older windows) | Every Unified wallet balance change, with the balance after it |
 | `/v5/asset/fundinghistory` | 7 days | Every Funding wallet balance change, with the balance after it |
 | `/v5/asset/deposit/query-record` | under 30 days | On-chain transaction and chain of deposits |
 | `/v5/asset/withdraw/query-record` | under 30 days | On-chain transaction, chain and fee of withdrawals |
@@ -33,33 +33,39 @@ Requests are spaced 150 ms apart across the process, and deposit records 650 ms 
 ## What a refresh reads
 
 1. The key check, then the three balance requests.
-2. Each history stream forward from where it stopped, with one day of overlap for records Bybit adds late; then further back until the stream's start: two years for the Unified log (Bybit's retention), and for the other streams until half a year (Funding history) or a year (deposits, withdrawals) passes without a record, at most five years.
+2. Each history stream forward from where it stopped, with one day of overlap for records Bybit adds late; then further back until the stream's start: two years for the Unified log (Bybit's retention), five years for the Funding history (it can be quiet for months while deposits and withdrawals happen), and for deposits and withdrawals until a year passes without a record, at most five years. A window Bybit refuses as too old ends that stream's history.
 3. Convert history, newest first, until a page holds only known converts.
 4. Token contracts of symbols not matched to a coin yet.
 
-At most 400 requests are made per account and refresh; a first refresh of two years usually needs about 180. Whatever remains continues with the next refresh, and the account says older history is still being read. Each record is saved as it arrives, as Bybit's JSON row (table `exchange_rows`) and as a raw provider record, so an interrupted refresh resumes and a record Bybit changes (a withdrawal that completes) replaces the saved one. Read progress per stream is in `exchange_sync`.
+At most 400 requests are made per account and refresh; a first refresh needs about 500 and so takes two refreshes. Whatever remains continues with the next refresh, and the account says older history is still being read. Each record is saved as it arrives, as Bybit's JSON row (table `exchange_rows`) and as a raw provider record, so an interrupted refresh resumes and a record Bybit changes (a withdrawal that completes) replaces the saved one. Read progress per stream is in `exchange_sync`.
 
 ## From records to activities
 
 The account's activities are derived again from every saved record on each refresh. Activity IDs are `bybit:<user ID>:<kind>:<record>`, so they stay the same across refreshes; activities no longer produced are superseded.
 
 - **The two balance logs are the ledger.** Every balance change of the Unified wallet and the Funding wallet is one of them.
+- **Moves between the wallets:** a Unified log transfer and a Funding row of the same coin and opposite amount, at most 10 minutes apart, are the two sides of one move and produce no activity. A side without its pair (before one wallet's history starts) is a transfer.
 - **Trades:** Unified log rows of one spot trade (one per coin, sharing a trade ID) become one trade. Each leg is the row's change before its fee; the fee is its own movement, and a negative fee (a rebate) is a reward. Conversions inside the Unified wallet (`CURRENCY_BUY`/`SELL` and similar) are grouped by order.
 - **Converts in the Funding wallet:** the two rows that match a successful convert record by coin, amount and time become one trade.
 - **Deposits and withdrawals:** Funding rows are matched to deposit and withdrawal records by coin, amount and time (within 6 hours). The record adds the on-chain transaction and chain. A withdrawal whose debit equals amount plus fee becomes a transfer of the amount and a separate fee movement, so its amount equals what arrives on chain.
-- **Rewards:** airdrops, bonuses, fee refunds and interest (including Earn interest paid to the Funding wallet) are rewards.
-- **Moves within Bybit** (between Funding, Unified, Earn and other products) change nothing for the account and produce no activity.
+- **Rewards:** airdrops, bonuses, fee refunds, Earn interest and Launchpool yield are rewards.
+- **Moves into and out of Bybit products** (Earn, Launchpool, trading bots, copy trading, MT5 and the old Spot account) are transfers. These products have no history of their own, and coins do not always return the way they went (Earn principal can be spent by the card or sold), so recording each move keeps the two wallets' balances exact over time. What the products hold now is the remainder.
+- **Card spending and ATM withdrawals** are payments. P2P sales and purchases, Dual Asset plans and their settlement are kept as other activity.
 - **Everything else** (derivatives settlement and funding, borrowing, unknown types) is kept as it is, as other activity, never dropped.
 
 ### Opening balances and remainder
 
-Each log records the balance after every row, so each wallet's balance before its first row is known: the current balance less every change since. It is recorded as one opening amount per wallet and coin, 1 ms before that wallet's first row. Coins held where there is no history (Earn, bots, copy trading, loans), and anything the records do not explain, are one adjustment per coin just after the latest record, derived again on each refresh. With complete logs the remainder is what sits in those products.
+Each log records the balance after every row, so each wallet's balance before its first row is known: the current balance less every change since. It is recorded as one opening amount per wallet and coin, 1 ms before that wallet's first row. Coins held where there is no history (Earn, bots, copy trading, loans), and anything the records do not explain, are one adjustment per coin just after the latest record, derived again on each refresh. With complete logs the remainder is what sits in those products. An activity that moves a coin still waiting for the user's choice is left out until then, so its other side shows in the remainder meanwhile.
 
 ## Coins
 
 An exchange balance is a claim on a coin, not a token of one chain, so every exchange shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 18 decimals. Bybit reports BTC to 14 decimals, so Bybit BTC is `coin:bitcoin`, not the 8-decimal `bitcoin:btc` of Bitcoin wallets. Prices and logos come through the asset's coin link.
 
-Every coin Bybit holds is tracked once it is matched to a CoinGecko coin. A symbol becomes a coin through a short list of well-known symbols (BTC, ETH, USDT, USDC, …); else through its token contracts: Bybit's coin information lists each chain the coin can be deposited on with its contract, and CoinGecko's contract map names the coin when all of them agree (EVM networks, found by Bybit's chain code or by the chain's name); else the only CoinGecko coin with that symbol; else the one ranked highest by market capitalization in the cached market list. Up to 50 unmatched symbols are looked up per refresh. A symbol none of these decides waits for the user, who picks the coin on the account; its records are left out until then. Matches are saved in `exchange_coin_map`; a user's choice is never replaced. An amount finer than 18 decimals fails that record, with a note on the account.
+Every coin Bybit holds is tracked once it is matched to a CoinGecko coin. A symbol becomes a coin through a short list of well-known symbols (BTC, ETH, USDT, USDC, …); else through its token contracts: Bybit's coin information lists each chain the coin can be deposited on with its contract, and CoinGecko's contract map names the coin when all of them agree (EVM networks, found by Bybit's chain code or by the chain's name); else the only CoinGecko coin with that symbol; else the one ranked highest by market capitalization in the cached market list; else the one whose CoinGecko ID is the symbol itself. Up to 50 unmatched symbols are looked up per refresh. Non-EVM contracts are matched on TON, Solana, Tron, NEAR, Sui and Aptos.
+
+A symbol no CoinGecko coin carries is counted as `unlisted:<exchange>:<SYMBOL>`, without a price. When several coins carry a symbol and none of the rules decides, the account asks which coin it is, or "none of these", which counts it without a price.
+
+Currencies (EUR, USD, GBP) are `fiat:<CODE>` with 18 decimals, since Bybit counts EUR to 8 decimals; each is worth one of the portfolio currency of the same code. A symbol none of these decides waits for the user, who picks the coin on the account; its records are left out until then. Matches are saved in `exchange_coin_map`; a user's choice is never replaced. An amount finer than 18 decimals fails that record, with a note on the account.
 
 ## Transfers between Bybit and wallets
 

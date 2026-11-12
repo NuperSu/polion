@@ -68,10 +68,17 @@ object BybitDecoder {
     const val UNIFIED = "UNIFIED"
     const val FUND = "FUND"
 
+    /** The two sides of a move between the Funding and Unified wallets are at most this far apart. */
+    private const val PAIR_MILLIS = 10 * 60_000L
+
     /** Records may be dated up to this far from the log row they describe. */
     private const val MATCH_MILLIS = 6 * 3_600_000L
 
-    private val INTERNAL_LOG_TYPES =
+    /** Moves between the Unified wallet and the Funding wallet; internal when both sides are in the history. */
+    private val WALLET_TRANSFER_TYPES = setOf("TRANSFER_IN", "TRANSFER_OUT")
+
+    /** Moves between the Unified wallet and Bybit products (Earn, bonus funds and others), which have no history. */
+    private val PRODUCT_LOG_TYPES =
         setOf(
             "TRANSFER_IN",
             "TRANSFER_OUT",
@@ -115,21 +122,33 @@ object BybitDecoder {
     private val REWARD_LOG_TYPES =
         setOf("AIRDROP", "BONUS", "FEE_REFUND", "BYUSDT_INTEREST", "PEF_PROFIT_SHARE", "STOCK_CORPORATE_ACTION_DIVIDEND")
 
-    private val INTERNAL_WORDS = listOf("transfer", "subscription", "subscribe", "redemption", "redeem", "unstake", "stake", "principal")
     private val REWARD_WORDS =
-        listOf(
-            "interest",
-            "reward",
-            "airdrop",
-            "bonus",
-            "distribution",
-            "yield",
-            "rebate",
-            "commission",
-            "cashback",
-            "dividend",
-            "launchpool",
-        )
+        listOf("interest", "reward", "airdrop", "bonus", "distribution", "yield", "rebate", "commission", "cashback", "dividend")
+
+    /** Earn moves of principal into and out of a product. */
+    private val EARN_MOVES = listOf("subscription", "subscribe", "redemption", "redeem", "auto-earn", "auto-withdrawal", "unstake", "stake")
+
+    /** What a Funding history row is, from Bybit's English business type and description. */
+    private enum class FundingKind { DEPOSIT, WITHDRAWAL, CONVERT, INTERNAL, REWARD, PAYMENT, TRANSFER, OTHER }
+
+    private fun classify(entry: BybitFundingEntry): FundingKind {
+        val business = entry.business.lowercase()
+        val description = entry.description.lowercase()
+        val text = "$business $description"
+        val incoming = entry.change.coefficient.sign > 0
+        return when {
+            "deposit" in business && incoming -> FundingKind.DEPOSIT
+            "withdraw" in business && !incoming -> FundingKind.WITHDRAWAL
+            "convert" in text || business == "exchange" -> FundingKind.CONVERT
+            // Moves into and out of Earn and other products, which have no history of their own: their coins stay
+            // in the account, held where the remainder counts them.
+            business == "earn" && "dual asset" !in description && EARN_MOVES.any { it in description } -> FundingKind.TRANSFER
+            incoming && REWARD_WORDS.any { it in text } -> FundingKind.REWARD
+            "transfer" in text -> FundingKind.TRANSFER
+            "card" in business && !incoming -> FundingKind.PAYMENT
+            else -> FundingKind.OTHER
+        }
+    }
 
     fun decode(
         account: AccountId,
@@ -139,8 +158,10 @@ object BybitDecoder {
         balances: BybitBalances?,
         /** Earliest moment each wallet's log covers, for coins it holds without any row. */
         coveredFrom: Map<String, Long> = emptyMap(),
+        /** Decimals of each asset: 18 for exchange coins, 2 for currencies. */
+        decimals: (AssetId) -> Int = { ExchangeAssets.DECIMALS },
     ): BybitDecoded {
-        val context = Context(account, uid, assets)
+        val context = Context(account, uid, assets, decimals)
         val byStream = rows.groupBy { it.stream }
         val logs = byStream[LOG].orEmpty().map { Bybit.logEntry(Bybit.row(it.payload)) to SourceRecordId(it.source) }
         val funding = byStream[FUNDING].orEmpty().map { Bybit.fundingEntry(Bybit.row(it.payload)) to SourceRecordId(it.source) }
@@ -148,19 +169,46 @@ object BybitDecoder {
         val withdrawals = byStream[WITHDRAWALS].orEmpty().map { Bybit.withdrawal(Bybit.row(it.payload)) to SourceRecordId(it.source) }
         val converts = byStream[CONVERTS].orEmpty().map { Bybit.convert(Bybit.row(it.payload)) to SourceRecordId(it.source) }
 
-        decodeLog(context, logs)
-        decodeFunding(context, funding, deposits, withdrawals, converts)
+        val paired = pairWalletTransfers(logs.map { it.first }, funding.map { it.first })
+        decodeLog(context, logs, paired)
+        decodeFunding(context, funding, deposits, withdrawals, converts, paired)
         if (balances != null) settle(context, logs, funding, balances, coveredFrom, rows.maxOfOrNull { it.atMillis })
         return BybitDecoded(context.activities.sortedBy { it.orderingKey }, context.transfers, context.unresolved, context.failures)
+    }
+
+    /**
+     * Unified log transfers and Funding rows that are the two sides of one move between the wallets: the same coin and
+     * opposite amounts, at most [PAIR_MILLIS] apart, nearest first. Returns the paired log keys and Funding row IDs.
+     */
+    private fun pairWalletTransfers(
+        logs: List<BybitLogEntry>,
+        funding: List<BybitFundingEntry>,
+    ): Set<String> {
+        val candidates = funding.filter { "unified trading account" in it.description.lowercase() }.toMutableList()
+        val paired = mutableSetOf<String>()
+        logs.filter { it.type in WALLET_TRANSFER_TYPES }.sortedBy { it.atMillis }.forEach { entry ->
+            val match =
+                candidates
+                    .filter { it.currency == entry.currency && (it.change + entry.change).coefficient.sign == 0 }
+                    .minByOrNull { kotlin.math.abs(it.atMillis - entry.atMillis) }
+                    ?.takeIf { kotlin.math.abs(it.atMillis - entry.atMillis) <= PAIR_MILLIS }
+            if (match != null) {
+                candidates -= match
+                paired += "log:" + entry.key
+                paired += "funding:" + match.id
+            }
+        }
+        return paired
     }
 
     private fun decodeLog(
         context: Context,
         logs: List<Pair<BybitLogEntry, SourceRecordId>>,
+        paired: Set<String>,
     ) {
         val groups = linkedMapOf<String, MutableList<Pair<BybitLogEntry, SourceRecordId>>>()
         logs.forEach { (entry, source) ->
-            if (entry.type in INTERNAL_LOG_TYPES) return@forEach
+            if ("log:" + entry.key in paired) return@forEach
             val group =
                 when {
                     entry.type == "TRADE" && entry.category == "spot" -> "trade:" + entry.tradeId.ifBlank { entry.key }
@@ -186,7 +234,11 @@ object BybitDecoder {
                     )
                     fee(entry.currency, entry.fee)
                 }
-                if (reward) ActivityKind.REWARD else null
+                when {
+                    reward -> ActivityKind.REWARD
+                    first.type in WALLET_TRANSFER_TYPES || first.type in PRODUCT_LOG_TYPES -> ActivityKind.TRANSFER
+                    else -> null
+                }
             }
         }
     }
@@ -197,16 +249,16 @@ object BybitDecoder {
         deposits: List<Pair<BybitDeposit, SourceRecordId>>,
         withdrawals: List<Pair<BybitWithdrawal, SourceRecordId>>,
         converts: List<Pair<BybitConvert, SourceRecordId>>,
+        paired: Set<String>,
     ) {
         val usedDeposits = mutableSetOf<String>()
         val usedWithdrawals = mutableSetOf<String>()
         val convertRows = mutableMapOf<String, MutableList<Pair<BybitFundingEntry, SourceRecordId>>>()
         val doneConverts = converts.filter { it.first.status == "success" }
         funding.forEach { (entry, source) ->
-            val text = (entry.business + " " + entry.description).lowercase()
             val incoming = entry.change.coefficient.sign > 0
-            when {
-                "deposit" in text && incoming -> {
+            when (if ("funding:" + entry.id in paired) FundingKind.INTERNAL else classify(entry)) {
+                FundingKind.DEPOSIT -> {
                     val record =
                         deposits
                             .filter { (d, _) ->
@@ -226,7 +278,7 @@ object BybitDecoder {
                         context.transfers[id] = ExchangeTransfer(record.first.chain, record.first.txId)
                     }
                 }
-                "withdraw" in text && !incoming -> {
+                FundingKind.WITHDRAWAL -> {
                     val paid = ExactDecimal(-entry.change.coefficient, entry.change.scale)
                     val record =
                         withdrawals
@@ -253,7 +305,7 @@ object BybitDecoder {
                         context.transfers[id] = ExchangeTransfer(record.first.chain, record.first.txId)
                     }
                 }
-                "convert" in text || "exchange" in text -> {
+                FundingKind.CONVERT -> {
                     val record =
                         doneConverts
                             .filter { (c, _) ->
@@ -269,9 +321,11 @@ object BybitDecoder {
                         single(context, entry, source, null)
                     }
                 }
-                INTERNAL_WORDS.any { it in text } && REWARD_WORDS.none { it in text } -> Unit
-                REWARD_WORDS.any { it in text } && incoming -> single(context, entry, source, ActivityKind.REWARD)
-                else -> single(context, entry, source, null)
+                FundingKind.INTERNAL -> Unit
+                FundingKind.REWARD -> single(context, entry, source, ActivityKind.REWARD)
+                FundingKind.PAYMENT -> single(context, entry, source, ActivityKind.PAYMENT)
+                FundingKind.TRANSFER -> single(context, entry, source, ActivityKind.TRANSFER)
+                FundingKind.OTHER -> single(context, entry, source, null)
             }
         }
         convertRows.forEach { (convertId, entries) ->
@@ -343,6 +397,7 @@ object BybitDecoder {
         val account: AccountId,
         val uid: String,
         val assets: Map<String, AssetId>,
+        val decimalsOf: (AssetId) -> Int,
     ) {
         val activities = mutableListOf<Activity>()
         val transfers = mutableMapOf<ActivityId, ExchangeTransfer>()
@@ -371,12 +426,12 @@ object BybitDecoder {
                         Movement(
                             EventId("${id.value}:$index"),
                             account,
-                            AtomicAmount.fromDecimal(assets.getValue(coin), amount, ExchangeAssets.DECIMALS),
+                            assets.getValue(coin).let { AtomicAmount.fromDecimal(it, amount, decimalsOf(it)) },
                             role,
                         )
                     }
                 } catch (_: IllegalArgumentException) {
-                    failures += "An amount in Bybit record $key is finer than ${ExchangeAssets.DECIMALS} decimals"
+                    failures += "An amount in Bybit record $key is finer than its coin's decimals"
                     return null
                 }
             if (built.isEmpty()) return null

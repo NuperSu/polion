@@ -29,6 +29,41 @@ object ExchangeAssets {
 
     fun definition(coinId: String) = AssetDefinition(asset(coinId), AssetIdentity(AssetKind.CUSTOM, null, "coingecko:$coinId"))
 
+    /** A coin CoinGecko does not list: counted on its exchange without a price. */
+    fun unlisted(
+        exchange: String,
+        symbol: String,
+    ) = AssetId("unlisted:$exchange:${symbol.uppercase()}")
+
+    fun unlistedDefinition(
+        exchange: String,
+        symbol: String,
+    ) = AssetDefinition(unlisted(exchange, symbol), AssetIdentity(AssetKind.CUSTOM, null, "unlisted:$exchange:${symbol.uppercase()}"))
+
+    /** Currencies held on exchanges (EUR, USD, GBP), which exchanges count to 8 decimals rather than cents. */
+    const val CURRENCY_PREFIX = "fiat:"
+    val CURRENCIES = setOf("USD", "EUR", "GBP")
+
+    fun currency(code: String) = AssetId(CURRENCY_PREFIX + code.uppercase())
+
+    /** The portfolio currency an exchange currency asset is worth one of, or null for other assets. */
+    fun currencyOf(asset: AssetId): AssetId? =
+        asset.value
+            .takeIf { it.startsWith(CURRENCY_PREFIX) }
+            ?.removePrefix(CURRENCY_PREFIX)
+            ?.takeIf { it in CURRENCIES }
+            ?.let(::AssetId)
+
+    fun currencyDefinition(code: String) =
+        AssetDefinition(
+            currency(code),
+            AssetIdentity(
+                AssetKind.CUSTOM,
+                null,
+                CURRENCY_PREFIX + code.uppercase(),
+            ),
+        )
+
     /**
      * Symbols that many CoinGecko coins share (bridged copies, imitations), fixed to the coin exchanges mean by them.
      * Other symbols resolve through the catalog.
@@ -46,6 +81,8 @@ object ExchangeAssets {
             "ADA" to "cardano",
             "TRX" to "tron",
             "TON" to "the-open-network",
+            // Toncoin's new ticker on exchanges.
+            "GRAM" to "the-open-network",
             "MNT" to "mantle",
             "DOT" to "polkadot",
             "LTC" to "litecoin",
@@ -96,13 +133,27 @@ object ExchangeAssets {
             "OPBNB" to 204L,
             "GNO" to 100L,
             "XDAI" to 100L,
+            "XAVAX" to 43114L,
+        )
+
+    /** Exchange chain codes of non-EVM networks, by CoinGecko platform ID. */
+    val OTHER_CHAIN_CODES =
+        mapOf(
+            "TON" to "the-open-network",
+            "SOL" to "solana",
+            "TRX" to "tron",
+            "NEAR" to "near-protocol",
+            "SUI" to "sui",
+            "APTOS" to "aptos",
+            "APT" to "aptos",
         )
 
     /**
      * The coin an exchange [symbol] stands for, in this order: a well-known symbol; the coin CoinGecko maps the
      * exchange's token [contracts] to, when they all agree; the only catalog coin with that symbol; the one among
-     * several that ranks highest by market capitalization in [ranked] (coin IDs, largest first). Null when none of
-     * these decides; the user then chooses.
+     * several that ranks highest by market capitalization in [ranked] (coin IDs, largest first); the one among several
+     * whose ID is the symbol itself, which CoinGecko gives the original coin. Null when none of these decides; the user
+     * then chooses.
      */
     fun resolve(
         symbol: String,
@@ -119,6 +170,7 @@ object ExchangeAssets {
                             EVM_CHAIN_CODES[contract.chain.uppercase()]
                                 ?: catalog.platforms.firstOrNull { it.name.equals(contract.chainType.trim(), ignoreCase = true) }?.chainId
                         chain?.let { catalog.tokenCoin(it, contract.address) }
+                            ?: OTHER_CHAIN_CODES[contract.chain.uppercase()]?.let { catalog.platformCoin(it, contract.address) }
                     }.distinct()
             if (byContract.size == 1) return byContract.single()
         }
@@ -126,7 +178,7 @@ object ExchangeAssets {
         return when {
             candidates.size == 1 -> candidates.single()
             candidates.isEmpty() -> null
-            else -> ranked.firstOrNull { it in candidates }
+            else -> ranked.firstOrNull { it in candidates } ?: candidates.firstOrNull { it == symbol.lowercase() }
         }
     }
 }

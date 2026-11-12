@@ -276,7 +276,15 @@ internal fun BybitAccountDetails(
         CoinChoiceDialog(symbol, unresolved[symbol].orEmpty(), close = { choosing = null }) { coin ->
             choosing = null
             scope.launch {
-                withContext(host.dispatcher) { app.chooseExchangeCoin(BYBIT_EXCHANGE, symbol, coin) }
+                withContext(host.dispatcher) {
+                    if (coin ==
+                        null
+                    ) {
+                        app.markExchangeCoinUnlisted(BYBIT_EXCHANGE, symbol)
+                    } else {
+                        app.chooseExchangeCoin(BYBIT_EXCHANGE, symbol, coin)
+                    }
+                }
                 onChanged()
                 host.refreshWithoutBitcoin {}
             }
@@ -329,13 +337,13 @@ private fun BybitKeyDialog(
     }
 }
 
-/** Picks which CoinGecko coin an exchange symbol is, among the coins that carry the symbol. */
+/** Picks which CoinGecko coin an exchange symbol is, among the coins that carry the symbol, or none (null). */
 @Composable
 private fun CoinChoiceDialog(
     symbol: String,
     candidates: List<Pair<String, String>>,
     close: () -> Unit,
-    choose: (String) -> Unit,
+    choose: (String?) -> Unit,
 ) {
     AccountFlowDialog("Which coin is $symbol?", false, close) {
         if (candidates.isEmpty()) {
@@ -345,6 +353,9 @@ private fun CoinChoiceDialog(
             TextButton(onClick = { choose(id) }, modifier = Modifier.fillMaxWidth().testTag("bybit-coin-$id")) {
                 Text("$name ($id)")
             }
+        }
+        TextButton(onClick = { choose(null) }, modifier = Modifier.fillMaxWidth().testTag("bybit-coin-none")) {
+            Text("None of these · count it without a price")
         }
     }
 }

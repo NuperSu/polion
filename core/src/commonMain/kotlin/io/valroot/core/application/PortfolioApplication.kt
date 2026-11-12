@@ -359,6 +359,12 @@ private val USD = AssetId("USD")
 /** Bybit API keys and secrets: letters and digits. */
 private val BYBIT_KEY = Regex("[A-Za-z0-9]{10,128}")
 
+/** Currencies exchanges hold; each is an exchange currency asset worth one of the portfolio currency. */
+private val EXCHANGE_CURRENCIES = io.valroot.core.exchange.ExchangeAssets.CURRENCIES
+
+/** Saved in place of a coin ID when the user says an exchange symbol is no CoinGecko coin; not a valid ID. */
+private const val UNLISTED_COIN = ":unlisted"
+
 /** A CoinGecko coin ID. */
 private val COIN_ID = Regex("[a-z0-9][a-z0-9-]{0,99}")
 
@@ -651,7 +657,7 @@ class PortfolioApplication(
     ) {
         require(marketDataConsent()) { "Market data consent required" }
         val cached = marketFeeds.catalog()
-        if (cached == null || now() - cached.first > 7 * 86_400_000L || !cached.second.hasSymbols) {
+        if (cached == null || now() - cached.first > 7 * 86_400_000L || !cached.second.hasSymbols || !cached.second.hasOtherPlatforms) {
             val key = coingeckoApiKey()
             val platforms = CoingeckoCatalog.parsePlatforms(transport(baseUrl + CoingeckoCatalog.PLATFORMS_PATH, key))
             require(platforms.isNotEmpty()) { "CoinGecko returned no chains" }
@@ -1040,6 +1046,28 @@ class PortfolioApplication(
         val result = mutableMapOf<String, AssetId>()
         db.transaction {
             symbols.forEach { symbol ->
+                if (symbol.uppercase() in EXCHANGE_CURRENCIES) {
+                    val definition =
+                        io.valroot.core.exchange.ExchangeAssets
+                            .currencyDefinition(symbol)
+                    if (market.metadataAt(definition.id, Long.MAX_VALUE) == null) {
+                        market.registerAssetInTransaction(
+                            definition,
+                            io.valroot.core.market.AssetMetadata(
+                                symbol.uppercase(),
+                                symbol.uppercase(),
+                                io.valroot.core.exchange.ExchangeAssets.DECIMALS,
+                                0,
+                            ),
+                        )
+                    }
+                    result[symbol] = definition.id
+                    return@forEach
+                }
+                if (saved[symbol]?.first == UNLISTED_COIN) {
+                    result[symbol] = registerUnlistedAsset(exchange, symbol)
+                    return@forEach
+                }
                 val known = saved[symbol]?.first?.takeIf { it.isNotEmpty() }
                 val coin =
                     known ?: io.valroot.core.exchange.ExchangeAssets
@@ -1047,7 +1075,12 @@ class PortfolioApplication(
                 if (known == null && (coin != null || symbol !in saved)) {
                     exchangeCoins.save(exchange, symbol, coin.orEmpty(), io.valroot.core.exchange.CoinChoice.AUTOMATIC)
                 }
-                if (coin != null) result[symbol] = registerExchangeAsset(symbol, coin, catalog)
+                if (coin != null) {
+                    result[symbol] = registerExchangeAsset(symbol, coin, catalog)
+                } else if (catalog != null && catalog.hasSymbols && catalog.coinsWithSymbol(symbol).isEmpty()) {
+                    // CoinGecko lists no coin with this symbol: it is counted without a price rather than left out.
+                    result[symbol] = registerUnlistedAsset(exchange, symbol)
+                }
             }
         }
         return result
@@ -1060,8 +1093,11 @@ class PortfolioApplication(
     ): Set<String> {
         val saved = exchangeCoins.coins(exchange)
         return symbols
-            .filter { saved[it]?.first.isNullOrEmpty() && it.uppercase() !in io.valroot.core.exchange.ExchangeAssets.WELL_KNOWN }
-            .toSet()
+            .filter {
+                saved[it]?.first.isNullOrEmpty() &&
+                    it.uppercase() !in io.valroot.core.exchange.ExchangeAssets.WELL_KNOWN &&
+                    it.uppercase() !in EXCHANGE_CURRENCIES
+            }.toSet()
     }
 
     /** The coin symbols in an exchange account's saved records. */
@@ -1081,15 +1117,20 @@ class PortfolioApplication(
             }.filter { it.isNotBlank() }
             .toSet()
 
-    /** An exchange's symbols that have no coin yet, with the catalog coins that carry each symbol. */
+    /**
+     * An exchange's symbols that have no coin yet, with the catalog coins that carry each symbol. Symbols no CoinGecko
+     * coin carries are left out once the catalog has symbols, since they are counted without a price.
+     */
     fun unresolvedExchangeCoins(exchange: String): Map<String, List<Pair<String, String>>> {
         val catalog = marketFeeds.catalog()?.second
         return exchangeCoins
             .coins(exchange)
             .filterValues { it.first.isEmpty() }
             .keys
+            .filter { it.uppercase() !in EXCHANGE_CURRENCIES }
             .sorted()
             .associateWith { catalog?.coinsWithSymbol(it).orEmpty() }
+            .filterValues { it.isNotEmpty() || catalog?.hasSymbols != true }
     }
 
     /** The user's coin for an exchange symbol; it replaces any automatic match and takes effect on the next refresh. */
@@ -1100,6 +1141,33 @@ class PortfolioApplication(
     ) {
         require(COIN_ID.matches(coinId)) { "Unknown coin" }
         exchangeCoins.save(exchange, symbol, coinId, io.valroot.core.exchange.CoinChoice.USER)
+    }
+
+    /** The user's answer that an exchange symbol is no CoinGecko coin: it is counted without a price. */
+    fun markExchangeCoinUnlisted(
+        exchange: String,
+        symbol: String,
+    ) = exchangeCoins.save(exchange, symbol, UNLISTED_COIN, io.valroot.core.exchange.CoinChoice.USER)
+
+    private fun registerUnlistedAsset(
+        exchange: String,
+        symbol: String,
+    ): AssetId {
+        val definition =
+            io.valroot.core.exchange.ExchangeAssets
+                .unlistedDefinition(exchange, symbol)
+        if (market.metadataAt(definition.id, Long.MAX_VALUE) == null) {
+            market.registerAssetInTransaction(
+                definition,
+                io.valroot.core.market.AssetMetadata(
+                    symbol.uppercase(),
+                    symbol.uppercase(),
+                    io.valroot.core.exchange.ExchangeAssets.DECIMALS,
+                    0,
+                ),
+            )
+        }
+        return definition.id
     }
 
     private fun registerExchangeAsset(
@@ -2210,7 +2278,7 @@ class PortfolioApplication(
                             source,
                         ),
                         coveredFrom,
-                    )
+                    ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
                 val wanted = decoded.activities.map { it.id }.toSet()
                 val prefix = "bybit:$uid:"
                 activities
@@ -4010,7 +4078,10 @@ class PortfolioApplication(
     ): QuoteValue? {
         val decimals = market.metadataAt(asset, atMillis)?.decimals ?: return null
         val wholeUnitPrice =
-            if (asset == quote) {
+            if (asset == quote ||
+                io.valroot.core.exchange.ExchangeAssets
+                    .currencyOf(asset) == quote
+            ) {
                 Rational.units(ExactInteger.parse("1"))
             } else {
                 val result = market.lookup(asset, quote, atMillis, atMillis, pricePolicy(current = true))
@@ -4045,18 +4116,19 @@ class PortfolioApplication(
                 val units = rows.fold(io.valroot.core.model.ExactInteger.ZERO) { sum, row -> sum + row.value }
                 val amount = AtomicAmount(asset, units)
                 val metadata = if (metadataAt != null) metadataAt(asset) else market.metadataAt(asset, balance.atMillis)
+                // A currency held on an exchange is worth one of the same currency.
+                val own =
+                    asset == currency ||
+                        io.valroot.core.exchange.ExchangeAssets
+                            .currencyOf(asset) == currency
                 val result =
-                    if (asset ==
-                        currency
-                    ) {
+                    if (own) {
                         null
                     } else {
                         priceAt?.invoke(asset) ?: market.lookup(asset, currency, balance.atMillis, knownAt, policy)
                     }
                 val value =
-                    if (asset ==
-                        currency
-                    ) {
+                    if (own) {
                         metadata?.let { amount.decimal(it.decimals) }
                     } else {
                         metadata?.let { result?.value(amount, it.decimals) }
@@ -4065,9 +4137,7 @@ class PortfolioApplication(
                     asset,
                     amount,
                     metadata,
-                    if (asset == currency &&
-                        metadata != null
-                    ) {
+                    if (own && metadata != null) {
                         PriceStatus.FRESH
                     } else {
                         result?.status ?: PriceStatus.MISSING

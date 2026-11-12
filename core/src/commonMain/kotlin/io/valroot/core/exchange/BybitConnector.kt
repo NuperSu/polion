@@ -96,7 +96,9 @@ class BybitConnector(
         val streams =
             listOfNotNull(
                 BybitStream(BybitDecoder.LOG, Bybit.LOG_WINDOW_MILLIS, Bybit.LOG_RETENTION_MILLIS, null).takeIf { key.unified },
-                BybitStream(BybitDecoder.FUNDING, Bybit.LOG_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 26),
+                // The Funding history can be quiet for months while deposits and withdrawals happened, so it is read
+                // back fully, until Bybit refuses older windows.
+                BybitStream(BybitDecoder.FUNDING, Bybit.LOG_WINDOW_MILLIS, MAX_RETENTION_MILLIS, null),
                 BybitStream(BybitDecoder.DEPOSITS, Bybit.RECORD_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 12),
                 BybitStream(BybitDecoder.WITHDRAWALS, Bybit.RECORD_WINDOW_MILLIS, MAX_RETENTION_MILLIS, 12),
             )
@@ -122,12 +124,20 @@ class BybitConnector(
             while (!state.complete) {
                 val start = maxOf(state.fromMillis - stream.windowMillis, limit)
                 val found =
-                    if (start <
-                        state.fromMillis
-                    ) {
-                        readWindow(app, account, uid, stream.name, start, state.fromMillis, budget) ?: break
-                    } else {
-                        0
+                    try {
+                        if (start <
+                            state.fromMillis
+                        ) {
+                            readWindow(app, account, uid, stream.name, start, state.fromMillis, budget) ?: break
+                        } else {
+                            0
+                        }
+                    } catch (refused: BybitException) {
+                        // Bybit refuses windows older than it keeps: the history ends here.
+                        if (refused.rateLimited || refused.invalidKey || refused.clockSkew) throw refused
+                        state = state.copy(complete = true)
+                        app.saveExchangeStream(account, state)
+                        break
                     }
                 val empty = if (found == 0) state.emptyWindows + 1 else 0
                 state =

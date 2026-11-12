@@ -48,6 +48,15 @@ class CoingeckoCatalog(
         contract: String,
     ): String? = byChain[chainId]?.let { contracts[it.platformId]?.get(contract.lowercase()) }
 
+    /** The coin of a token on a CoinGecko platform by its ID, including the non-EVM ones in [OTHER_PLATFORMS]. */
+    fun platformCoin(
+        platformId: String,
+        contract: String,
+    ): String? = contracts[platformId]?.get(contract.lowercase())
+
+    /** True when the catalog carries non-EVM token contracts; catalogs cached before they were kept do not. */
+    val hasOtherPlatforms: Boolean get() = OTHER_PLATFORMS.any { it in contracts }
+
     /** Compact text for the device cache: one `P platform chain native name` or `C platform contract coin` line each. */
     fun encode(): String =
         buildString {
@@ -63,6 +72,10 @@ class CoingeckoCatalog(
         private val ID = Regex("[a-z0-9][a-z0-9-]{0,99}")
         private val CONTRACT = Regex("0x[0-9a-fA-F]{40}")
         private val SYMBOL = Regex("[A-Z0-9]{1,20}")
+
+        /** Non-EVM platforms whose token contracts are kept, so exchange coins on them can be matched. */
+        val OTHER_PLATFORMS = setOf("the-open-network", "solana", "tron", "near-protocol", "sui", "aptos")
+        private val OTHER_CONTRACT = Regex("[A-Za-z0-9_:.\\-]{3,120}")
 
         fun parsePlatforms(payload: String): List<EvmPlatform> =
             Json
@@ -94,9 +107,17 @@ class CoingeckoCatalog(
                     val id = coin.text("id")!!.also { require(it.matches(ID)) }
                     (coin["platforms"] as? JsonObject)?.forEach { (platform, value) ->
                         val contract = (value as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
-                        if (platform in evm && contract != null && contract.matches(CONTRACT)) {
+                        val known =
+                            contract != null &&
+                                (
+                                    platform in evm &&
+                                        contract.matches(CONTRACT) ||
+                                        platform in OTHER_PLATFORMS &&
+                                        contract.matches(OTHER_CONTRACT)
+                                )
+                        if (known) {
                             val map = seen.getOrPut(platform) { mutableMapOf() }
-                            val key = contract.lowercase()
+                            val key = contract!!.lowercase()
                             map[key] = if (key in map && map[key] != id) null else id
                         }
                     }

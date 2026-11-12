@@ -149,14 +149,18 @@ class BybitConnectorTest {
                         "list",
                     )
                 "/v5/asset/fundinghistory" ->
-                    paged(
-                        funding,
-                        { millis(it, "createTime") * 1000 },
-                        request,
-                        q.getValue("createTimeFrom").toLong() * 1000,
-                        q.getValue("createTimeTo").toLong() * 1000,
-                        "list",
-                    )
+                    if (q.getValue("createTimeFrom").toLong() * 1000 < now - 3 * 365 * Bybit.DAY_MILLIS) {
+                        """{"retCode":10001,"retMsg":"Can't query earlier than 3 years","result":{}}"""
+                    } else {
+                        paged(
+                            funding,
+                            { millis(it, "createTime") * 1000 },
+                            request,
+                            q.getValue("createTimeFrom").toLong() * 1000,
+                            q.getValue("createTimeTo").toLong() * 1000,
+                            "list",
+                        )
+                    }
                 "/v5/asset/deposit/query-record" ->
                     paged(
                         deposits,
@@ -244,9 +248,20 @@ class BybitConnectorTest {
             val withdrawal = activities.getValue("bybit:$uid:funding:f2").activity
             assertEquals(listOf(MovementRole.TRANSFER, MovementRole.FEE), withdrawal.movements.map { it.role })
             assertEquals(ActivityKind.REWARD, activities.getValue("bybit:$uid:funding:f4").activity.kind)
-            // Moves within Bybit leave no activity; the Unified wallet's balance before its first row is an opening.
-            assertTrue("bybit:$uid:funding:f1" !in activities && "bybit:$uid:funding:f3" !in activities)
+            // The two sides of a move between the wallets leave no activity; a move into Earn is a transfer out, and
+            // what Earn holds now comes back as the remainder. The Unified wallet's balance before its first row is an opening.
+            assertTrue("bybit:$uid:funding:f1" !in activities)
             assertTrue(activities.keys.none { it.contains("TRANSFER_IN") })
+            assertEquals(ActivityKind.TRANSFER, activities.getValue("bybit:$uid:funding:f3").activity.kind)
+            assertEquals(
+                "${units("200")}",
+                activities
+                    .getValue("bybit:$uid:balance:USDT")
+                    .activity.movements
+                    .single()
+                    .amount.atomicUnits
+                    .toString(),
+            )
             assertEquals(
                 "${units("400")}",
                 activities
@@ -256,7 +271,7 @@ class BybitConnectorTest {
                     .amount.atomicUnits
                     .toString(),
             )
-            assertTrue(activities.keys.none { it.startsWith("bybit:$uid:balance:") })
+            assertTrue(activities.keys.none { it.startsWith("bybit:$uid:balance:") && !it.endsWith(":USDT") })
             assertEquals(
                 mapOf(
                     ActivityId("bybit:$uid:funding:f0") to ExchangeTransfer("ETH", "0xabc"),
@@ -264,9 +279,12 @@ class BybitConnectorTest {
                 ),
                 app.exchangeTransfers(),
             )
-            // The log is read back two years, the other streams until half a year (funding) or a year without records.
+            // The log is read back two years, the Funding history until Bybit refuses older windows, deposits and
+            // withdrawals until a year without records.
             assertTrue(app.exchangeStreams(account).values.all { it.complete })
             assertTrue(bybit.requests.size < BybitConnector.MAX_REQUESTS)
+            val funding = app.exchangeStreams(account).getValue(BybitDecoder.FUNDING)
+            assertTrue(funding.fromMillis <= now - 3 * 365 * Bybit.DAY_MILLIS + Bybit.LOG_WINDOW_MILLIS)
             assertTrue(bybit.requests.none { it.queryString.contains("SECRET") })
         }
     }

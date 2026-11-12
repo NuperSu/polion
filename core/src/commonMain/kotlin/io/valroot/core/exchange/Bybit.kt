@@ -174,8 +174,8 @@ object Bybit {
     /** Deposit and withdrawal records accept less than 30 days per request. */
     const val RECORD_WINDOW_MILLIS = 30 * DAY_MILLIS - 1_000
 
-    /** The transaction log keeps two years. */
-    const val LOG_RETENTION_MILLIS = 730 * DAY_MILLIS
+    /** The transaction log keeps two years and refuses windows that start earlier; a day of margin keeps clear of it. */
+    const val LOG_RETENTION_MILLIS = 729 * DAY_MILLIS
 
     private val json = Json { ignoreUnknownKeys = true }
 
