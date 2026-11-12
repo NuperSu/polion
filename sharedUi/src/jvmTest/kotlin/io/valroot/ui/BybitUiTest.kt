@@ -9,7 +9,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import io.valroot.core.application.PortfolioApplication
-import io.valroot.core.exchange.BybitKeyInfo
+import io.valroot.core.exchange.ExchangeKeyInfo
+import io.valroot.core.exchange.ExchangeKind
 import io.valroot.core.model.AssetId
 import io.valroot.core.model.TrackingTargetId
 import io.valroot.core.storage.JvmSqliteDatabase
@@ -31,23 +32,34 @@ class BybitUiTest {
                 val host = BybitTestHost(executor.asCoroutineDispatcher())
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
                 runDesktopComposeUiTest(width = 800, height = 1400) {
-                    setContent { BybitConnectDialog(app, host, app.snapshot(), null, close = {}, onSaved = {}, notify = {}) }
+                    setContent {
+                        ExchangeConnectDialog(
+                            ExchangeKind.BYBIT,
+                            app,
+                            host,
+                            app.snapshot(),
+                            null,
+                            close = {},
+                            onSaved = {},
+                            notify = {},
+                        )
+                    }
                     onNodeWithTag("bybit-connect-confirm").assertIsNotEnabled()
                     onNodeWithTag("bybit-key").performTextInput("KEYKEYKEYKEY")
                     onNodeWithTag("bybit-secret").performTextInput("SECRETSECRETSECRET")
                     // A key that can trade is refused, and nothing is saved.
-                    host.info = BybitKeyInfo("1001", readOnly = false, unified = true, ipBound = false, expiresAtMillis = null)
+                    host.info = ExchangeKeyInfo("1001", readOnly = false, expiresAtMillis = null)
                     onNodeWithTag("bybit-connect-confirm").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("bybit-connect-error").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithTag("bybit-connect-error").assertIsDisplayed()
-                    assertTrue(app.bybitTargets().isEmpty())
+                    assertTrue(app.exchangeTargets(ExchangeKind.BYBIT).isEmpty())
                     // A read-only key adds the account it belongs to, keeps the key on the device and starts a refresh.
-                    host.info = BybitKeyInfo("1001", readOnly = true, unified = true, ipBound = false, expiresAtMillis = null)
+                    host.info = ExchangeKeyInfo("1001", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("bybit-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.bybitTargets().isNotEmpty() }
-                    val (account, uid) = app.bybitTargets().single()
+                    waitUntil(timeoutMillis = 10_000) { app.exchangeTargets(ExchangeKind.BYBIT).isNotEmpty() }
+                    val (account, uid) = app.exchangeTargets(ExchangeKind.BYBIT).single()
                     assertEquals("1001", uid)
-                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.bybitKey(account))
+                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchangeKey(ExchangeKind.BYBIT, account))
                     waitUntil(timeoutMillis = 10_000) { host.refreshRequests > 0 }
                     assertEquals(listOf("KEYKEYKEYKEY" to "SECRETSECRETSECRET"), host.checked.distinct())
                 }
@@ -61,16 +73,17 @@ class BybitUiTest {
         override val dispatcher: CoroutineDispatcher,
     ) : PlatformActions {
         var refreshRequests = 0
-        var info: BybitKeyInfo? = null
+        var info: ExchangeKeyInfo? = null
         val checked = mutableListOf<Pair<String, String>>()
         override val dataRevision = MutableStateFlow(0L)
         override val syncStatus = MutableStateFlow(SyncStatus())
         override val hasLock = false
 
-        override fun bybitKeyInfo(
+        override fun exchangeKeyInfo(
+            kind: ExchangeKind,
             key: String,
             secret: String,
-        ): BybitKeyInfo {
+        ): ExchangeKeyInfo {
             checked += key to secret
             return info ?: throw IllegalStateException("Bybit did not accept this API key.")
         }

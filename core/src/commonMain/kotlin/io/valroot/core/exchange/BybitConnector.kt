@@ -12,7 +12,7 @@ import io.valroot.core.model.NetworkId
 import io.valroot.core.sync.JobState
 
 /** Bybit accounts are tracked by their user ID on this network. */
-val BYBIT_NETWORK = NetworkId("bybit")
+val BYBIT_NETWORK: NetworkId = ExchangeKind.BYBIT.network
 
 const val BYBIT_EXCHANGE = "bybit"
 
@@ -58,8 +58,8 @@ class BybitConnector(
     ): SourceRefreshOutcome {
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
-        app.bybitTargets().forEach { (account, uid) ->
-            if (!app.hasBybitKey(account)) {
+        app.exchangeTargets(ExchangeKind.BYBIT).forEach { (account, uid) ->
+            if (!app.hasExchangeKey(ExchangeKind.BYBIT, account)) {
                 notes += "A Bybit account needs its API key again"
                 return@forEach
             }

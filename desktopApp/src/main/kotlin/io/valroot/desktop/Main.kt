@@ -538,18 +538,28 @@ internal class DesktopHost(
 
     override fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(false, onResult, withoutBitcoin = true)
 
-    override fun bybitKeyInfo(
+    override fun exchangeKeyInfo(
+        kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.BybitKeyInfo =
-        io.valroot.core.exchange.Bybit.parseKeyInfo(
-            BybitTransport({ key to secret }).get(
-                io.valroot.core.model
-                    .AccountId("bybit-key-check"),
+    ): io.valroot.core.exchange.ExchangeKeyInfo =
+        when (kind) {
+            io.valroot.core.exchange.ExchangeKind.BYBIT ->
                 io.valroot.core.exchange.Bybit
-                    .keyInfo(),
-            ),
-        )
+                    .parseKeyInfo(
+                        BybitTransport({ key to secret })
+                            .get(
+                                io.valroot.core.model
+                                    .AccountId("key-check"),
+                                io.valroot.core.exchange.Bybit
+                                    .keyInfo(),
+                            ),
+                    ).let {
+                        io.valroot.core.exchange
+                            .ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis)
+                    }
+            io.valroot.core.exchange.ExchangeKind.BINANCE -> throw IllegalStateException("Binance accounts are not available yet.")
+        }
 
     private fun refresh(
         recoverHistory: Boolean,
@@ -564,7 +574,7 @@ internal class DesktopHost(
                 // Each source refreshes only with its own consent; with neither, nothing is fetched.
                 val bitcoinOn = application.sourceConsent() && !withoutBitcoin
                 val evmOn = application.evmConsent() && application.evmTargets().isNotEmpty()
-                val bybitOn = application.bybitTargets().isNotEmpty()
+                val bybitOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
                 if (!bitcoinOn && !evmOn && !bybitOn) return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                 // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
                 val connectors = mutableListOf<SourceConnector>()
@@ -606,7 +616,7 @@ internal class DesktopHost(
                     if (application.marketDataConsent()) runCatching { application.refreshEvmCatalog(priceTransport::feed) }
                     val transport =
                         BybitTransport(
-                            credentials = { application.bybitKey(it) },
+                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.BYBIT, it) },
                             beforeRequest = { check(!closing.get()) { "Bybit refresh was cancelled. Retry if needed." } },
                         )
                     connectors += BybitConnector(transport::get)

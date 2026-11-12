@@ -477,16 +477,20 @@ private class AndroidHost(
 
     override fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(false, onResult, withoutBitcoin = true)
 
-    override fun bybitKeyInfo(
+    override fun exchangeKeyInfo(
+        kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.BybitKeyInfo =
-        io.valroot.core.exchange.Bybit.parseKeyInfo(
-            BybitTransport({ key to secret }).get(
-                io.valroot.core.model.AccountId("bybit-key-check"),
-                io.valroot.core.exchange.Bybit.keyInfo(),
-            ),
-        )
+    ): io.valroot.core.exchange.ExchangeKeyInfo =
+        when (kind) {
+            io.valroot.core.exchange.ExchangeKind.BYBIT ->
+                io.valroot.core.exchange.Bybit
+                    .parseKeyInfo(
+                        BybitTransport({ key to secret })
+                            .get(io.valroot.core.model.AccountId("key-check"), io.valroot.core.exchange.Bybit.keyInfo()),
+                    ).let { io.valroot.core.exchange.ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis) }
+            io.valroot.core.exchange.ExchangeKind.BINANCE -> throw IllegalStateException("Binance accounts are not available yet.")
+        }
 
     private fun refresh(
         recoverHistory: Boolean,

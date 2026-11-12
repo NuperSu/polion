@@ -211,7 +211,7 @@ internal fun WalletKindDialog(
     onBitcoin: () -> Unit,
     onEvm: () -> Unit,
     onDismiss: () -> Unit,
-    onBybit: (() -> Unit)? = null,
+    onExchange: ((io.valroot.core.exchange.ExchangeKind) -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -230,11 +230,13 @@ internal fun WalletKindDialog(
                         Text("One public address on Ethereum, Base, Arbitrum and other chains", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                onBybit?.let { open ->
-                    OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth().testTag("connect-kind-bybit")) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Bybit account", style = MaterialTheme.typography.titleSmall)
-                            Text("Balances and history through a read-only API key", style = MaterialTheme.typography.bodySmall)
+                onExchange?.let { open ->
+                    io.valroot.core.exchange.ExchangeKind.entries.forEach { kind ->
+                        OutlinedButton(onClick = { open(kind) }, modifier = Modifier.fillMaxWidth().testTag("connect-kind-${kind.id}")) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("${kind.label} account", style = MaterialTheme.typography.titleSmall)
+                                Text("Balances and history through a read-only API key", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }

@@ -356,8 +356,8 @@ private const val ONE_INCH_LISTING_MARGIN_MILLIS = 3_600_000L
 /** US dollars, the only currency DefiLlama quotes. */
 private val USD = AssetId("USD")
 
-/** Bybit API keys and secrets: letters and digits. */
-private val BYBIT_KEY = Regex("[A-Za-z0-9]{10,128}")
+/** Exchange API keys and secrets: letters and digits. */
+private val EXCHANGE_KEY = Regex("[A-Za-z0-9]{10,128}")
 
 /** Currencies exchanges hold; each is an exchange currency asset worth one of the portfolio currency. */
 private val EXCHANGE_CURRENCIES = io.valroot.core.exchange.ExchangeAssets.CURRENCIES
@@ -2127,25 +2127,32 @@ class PortfolioApplication(
         coverage: String?,
     ) = evmChains.recordCoverage(address, chainId, coverage)
 
-    /** Enabled Bybit accounts with their Bybit user IDs. */
-    fun bybitTargets(): List<Pair<AccountId, String>> =
+    /** Enabled accounts of an exchange with their user IDs there. */
+    fun exchangeTargets(kind: io.valroot.core.exchange.ExchangeKind): List<Pair<AccountId, String>> =
         ownership
             .load()
             .targets
-            .filter { it.enabled && it.identity.networkId == io.valroot.core.exchange.BYBIT_NETWORK && it.identity.kind == "uid" }
+            .filter { it.enabled && it.identity.networkId == kind.network && it.identity.kind == "uid" }
             .map { it.accountId to it.identity.canonicalKey }
 
-    fun hasBybitKey(account: AccountId): Boolean = bybitKey(account) != null
+    fun hasExchangeKey(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+    ): Boolean = exchangeKey(kind, account) != null
 
-    /** A Bybit account's API key and secret; device settings, not part of backups. */
-    fun bybitKey(account: AccountId): Pair<String, String>? {
-        val key = marketFeeds.deviceSetting("bybit_key:${account.value}") ?: return null
-        val secret = marketFeeds.deviceSetting("bybit_secret:${account.value}") ?: return null
+    /** An exchange account's API key and secret; device settings, not part of backups. */
+    fun exchangeKey(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+    ): Pair<String, String>? {
+        val key = marketFeeds.deviceSetting("${kind.id}_key:${account.value}") ?: return null
+        val secret = marketFeeds.deviceSetting("${kind.id}_secret:${account.value}") ?: return null
         return key to secret
     }
 
-    /** Saves or (with null) removes a Bybit account's API key and secret on this device. */
-    fun setBybitKey(
+    /** Saves or (with null) removes an exchange account's API key and secret on this device. */
+    fun setExchangeKey(
+        kind: io.valroot.core.exchange.ExchangeKind,
         account: AccountId,
         key: String?,
         secret: String?,
@@ -2153,11 +2160,11 @@ class PortfolioApplication(
         val k = key?.trim()?.takeIf { it.isNotEmpty() }
         val s = secret?.trim()?.takeIf { it.isNotEmpty() }
         require((k == null) == (s == null)) { "Enter both the API key and its secret" }
-        require(k == null || k.matches(BYBIT_KEY)) { "That does not look like a Bybit API key" }
-        require(s == null || s.matches(BYBIT_KEY)) { "That does not look like a Bybit API secret" }
+        require(k == null || k.matches(EXCHANGE_KEY)) { "That does not look like a ${kind.label} API key" }
+        require(s == null || s.matches(EXCHANGE_KEY)) { "That does not look like a ${kind.label} API secret" }
         db.transaction {
-            marketFeeds.putDeviceSetting("bybit_key:${account.value}", k)
-            marketFeeds.putDeviceSetting("bybit_secret:${account.value}", s)
+            marketFeeds.putDeviceSetting("${kind.id}_key:${account.value}", k)
+            marketFeeds.putDeviceSetting("${kind.id}_secret:${account.value}", s)
         }
     }
 
@@ -2236,7 +2243,9 @@ class PortfolioApplication(
         /** Bybit's token contracts for symbols not matched yet, so CoinGecko's contract map can name their coins. */
         contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
     ): io.valroot.core.exchange.BybitDecoded {
-        require(bybitTargets().any { it.first == account && it.second == uid }) { "Unknown Bybit account" }
+        require(exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).any { it.first == account && it.second == uid }) {
+            "Unknown Bybit account"
+        }
         val rows = exchangeSync.rows(account)
         val held = balances.filter { it.amount.coefficient.sign != 0 }
         val symbols = exchangeRowSymbols(account) + held.map { it.coin }
@@ -4286,9 +4295,11 @@ class PortfolioApplication(
                                 .evmAddress(value.identity.canonicalKey),
                     ),
             )
-        } else if (value.identity.networkId == io.valroot.core.exchange.BYBIT_NETWORK) {
+        } else if (io.valroot.core.exchange.ExchangeKind
+                .ofNetwork(value.identity.networkId) != null
+        ) {
             require(value.identity.kind == "uid" && value.role == TargetRole.LEAF && value.identity.canonicalKey.all(Char::isDigit)) {
-                "Track a Bybit account by its user ID"
+                "Track an exchange account by its user ID"
             }
             value
         } else if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "wallet") {

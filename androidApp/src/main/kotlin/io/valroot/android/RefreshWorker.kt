@@ -77,7 +77,7 @@ class RefreshWorker(
                     // Each source needs its own consent. Wallet discovery and order verification are Bitcoin-only.
                     val bitcoinOn = app.sourceConsent() && !withoutBitcoin
                     val evmOn = app.evmConsent() && app.evmTargets().isNotEmpty()
-                    val bybitOn = app.bybitTargets().isNotEmpty()
+                    val bybitOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
                     if (!bitcoinOn && (!(evmOn || bybitOn) || walletId != null || verifyOrder)) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
@@ -173,7 +173,7 @@ class RefreshWorker(
                         if (bybitOn) {
                             // Exchange symbols are matched to coins through the catalog, so it is current before Bybit's records.
                             MarketFeedRefresher.refreshCatalog(app)
-                            val bybit = BybitTransport(credentials = { app.bybitKey(it) }, beforeRequest = ensureActive)
+                            val bybit = BybitTransport(credentials = { app.exchangeKey(io.valroot.core.exchange.ExchangeKind.BYBIT, it) }, beforeRequest = ensureActive)
                             connectors += BybitConnector(bybit::get)
                         }
                         val outcomes =

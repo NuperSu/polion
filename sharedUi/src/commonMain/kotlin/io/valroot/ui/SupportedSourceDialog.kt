@@ -33,8 +33,8 @@ internal fun SupportedSourceDialog(
     onDismiss: () -> Unit,
     /** Opens the EVM address flow; null hides the choice. */
     onEvm: (() -> Unit)? = null,
-    /** Opens the Bybit account flow; null hides the choice. */
-    onBybit: (() -> Unit)? = null,
+    /** Opens an exchange account flow; null hides the choices. */
+    onExchange: ((io.valroot.core.exchange.ExchangeKind) -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -73,14 +73,14 @@ internal fun SupportedSourceDialog(
                         }
                     }
                 }
-                onBybit?.let { openBybit ->
-                    item {
+                onExchange?.let { openExchange ->
+                    items(io.valroot.core.exchange.ExchangeKind.entries, key = { it.id }) { kind ->
                         OutlinedButton(
-                            onClick = openBybit,
-                            modifier = Modifier.fillMaxWidth().testTag("source-choice-bybit"),
+                            onClick = { openExchange(kind) },
+                            modifier = Modifier.fillMaxWidth().testTag("source-choice-${kind.id}"),
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("Bybit account", style = MaterialTheme.typography.titleSmall)
+                                Text("${kind.label} account", style = MaterialTheme.typography.titleSmall)
                                 Text("Balances and history through a read-only API key.", style = MaterialTheme.typography.bodySmall)
                             }
                         }

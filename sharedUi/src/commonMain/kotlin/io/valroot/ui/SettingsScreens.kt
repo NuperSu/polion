@@ -214,7 +214,7 @@ internal fun ColumnScope.ProductSettings(
             SettingsSubHeader("API Keys", back)
             SettingsSectionLabel("Exchanges")
             SettingsNote(
-                "Each Bybit account has its own read-only key: add the account from Add, then Bybit account, and replace " +
+                "Each Bybit or Binance account has its own read-only key: add the account from Add, and replace " +
                     "its key from the account. Kraken prices need no key.",
             )
             SettingsActionRow("Binance", enabled = false)

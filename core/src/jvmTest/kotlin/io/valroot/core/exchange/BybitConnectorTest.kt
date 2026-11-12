@@ -197,7 +197,7 @@ class BybitConnectorTest {
             Account(account, OwnerId("owner"), "Bybit", AccountKind.ACCOUNT),
             TrackingTarget(TrackingTargetId("bybit"), account, TargetIdentity(BYBIT_NETWORK, "uid", uid), TargetRole.LEAF, "Bybit"),
         )
-        app.setBybitKey(account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
+        app.setExchangeKey(ExchangeKind.BYBIT, account, "KEYKEYKEYKEY", "SECRETSECRETSECRET")
         return app
     }
 
@@ -339,7 +339,7 @@ class BybitConnectorTest {
             connector.refresh(app, SourceRefreshOptions())
             assertEquals("This API key belongs to another Bybit account", app.exchangeStatus(account).error)
             assertEquals(2, bybit.requests.count { it.path == "/v5/user/query-api" })
-            app.setBybitKey(account, null, null)
+            app.setExchangeKey(ExchangeKind.BYBIT, account, null, null)
             val outcome = connector.refresh(app, SourceRefreshOptions())
             assertEquals(emptyList(), outcome.jobs)
             assertEquals(listOf("A Bybit account needs its API key again"), outcome.notes)
