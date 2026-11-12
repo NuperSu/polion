@@ -217,7 +217,6 @@ internal fun ColumnScope.ProductSettings(
                 "Each Bybit or Binance account has its own read-only key: add the account from Add, and replace " +
                     "its key from the account. Kraken prices need no key.",
             )
-            SettingsActionRow("Binance", enabled = false)
             SettingsActionRow("MEXC", enabled = false)
             SettingsSectionLabel("External services")
             var editing by remember { mutableStateOf(false) }

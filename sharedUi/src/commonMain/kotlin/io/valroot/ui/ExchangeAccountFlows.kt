@@ -247,7 +247,10 @@ internal fun ExchangeAccountDetails(
     var unresolved by remember(account) { mutableStateOf<Map<String, List<Pair<String, String>>>>(emptyMap()) }
     var replacing by remember(account) { mutableStateOf(false) }
     var choosing by remember(account) { mutableStateOf<String?>(null) }
+    var pairs by remember(account) { mutableStateOf<List<String>>(emptyList()) }
+    var addingPair by remember(account) { mutableStateOf(false) }
     LaunchedEffect(account, revision) {
+        if (kind == ExchangeKind.BINANCE) pairs = withContext(host.dispatcher) { app.binancePairs(account).keys.sorted() }
         withContext(host.dispatcher) {
             Triple(app.exchangeStatus(account), app.hasExchangeKey(kind, account), app.unresolvedExchangeCoins(kind.id))
         }.let { (loaded, key, coins) ->
@@ -279,8 +282,39 @@ internal fun ExchangeAccountDetails(
             )
             TextButton(onClick = { choosing = symbol }, modifier = Modifier.testTag("${kind.id}-choose-$symbol")) { Text("Choose coin") }
         }
+        if (kind == ExchangeKind.BINANCE) {
+            Text("Trading pairs", fontWeight = FontWeight.SemiBold)
+            Text(
+                if (pairs.isEmpty()) {
+                    "Pairs are chosen on the first sync from the coins this account holds or moved."
+                } else {
+                    pairs
+                        .joinToString(
+                            ", ",
+                        )
+                },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("binance-pairs"),
+            )
+            Text(
+                "Trades in pairs Binance no longer lists cannot be read; their effect shows as a balance adjustment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = { addingPair = true }, modifier = Modifier.testTag("binance-add-pair")) { Text("Add pair") }
+        }
         TextButton(onClick = { replacing = true }, modifier = Modifier.testTag("${kind.id}-replace-key")) {
             Text(if (hasKey) "Replace API key" else "Enter API key")
+        }
+    }
+    if (addingPair) {
+        AddPairDialog(close = { addingPair = false }) { base, quote ->
+            addingPair = false
+            scope.launch {
+                withContext(host.dispatcher) { app.addBinancePair(account, base, quote) }
+                onChanged()
+                host.refreshWithoutBitcoin {}
+            }
         }
     }
     if (replacing) {
@@ -376,6 +410,34 @@ private fun CoinChoiceDialog(
         }
         TextButton(onClick = { choose(null) }, modifier = Modifier.fillMaxWidth().testTag("${kind.id}-coin-none")) {
             Text("None of these · count it without a price")
+        }
+    }
+}
+
+/** Adds a Binance trading pair to read, as its two coins (for example SOL and USDT for SOLUSDT). */
+@Composable
+private fun AddPairDialog(
+    close: () -> Unit,
+    add: (String, String) -> Unit,
+) {
+    var base by remember { mutableStateOf("") }
+    var quote by remember { mutableStateOf("") }
+    val symbol = Regex("[A-Za-z0-9]{1,20}")
+    val ready = base.trim().matches(symbol) && quote.trim().matches(symbol) && !base.trim().equals(quote.trim(), ignoreCase = true)
+    AccountFlowDialog("Add trading pair", false, close) {
+        Text("The coin you traded and the coin you paid or received, for example SOL and USDT.")
+        OutlinedTextField(base, {
+            base = it
+        }, singleLine = true, label = { Text("Coin") }, modifier = Modifier.fillMaxWidth().testTag("binance-pair-base"))
+        OutlinedTextField(quote, {
+            quote = it
+        }, singleLine = true, label = { Text("Paid or received in") }, modifier = Modifier.fillMaxWidth().testTag("binance-pair-quote"))
+        Button(
+            enabled = ready,
+            modifier = Modifier.fillMaxWidth().testTag("binance-pair-save"),
+            onClick = { add(base.trim(), quote.trim()) },
+        ) {
+            Text("Add pair")
         }
     }
 }

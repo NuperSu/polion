@@ -69,6 +69,54 @@ class BybitUiTest {
         }
     }
 
+    @Test
+    fun binanceConnectUsesTheSameChecksAndShowsTradingPairs() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val host = BybitTestHost(executor.asCoroutineDispatcher())
+                val app = PortfolioApplication(db) { 1_800_000_000_000L }
+                runDesktopComposeUiTest(width = 800, height = 1400) {
+                    setContent {
+                        ExchangeConnectDialog(
+                            ExchangeKind.BINANCE,
+                            app,
+                            host,
+                            app.snapshot(),
+                            null,
+                            close = {},
+                            onSaved = {},
+                            notify = {},
+                        )
+                    }
+                    onNodeWithTag("binance-key").performTextInput("KEYKEYKEYKEY")
+                    onNodeWithTag("binance-secret").performTextInput("SECRETSECRETSECRET")
+                    host.info = ExchangeKeyInfo("777", readOnly = false, expiresAtMillis = null)
+                    onNodeWithTag("binance-connect-confirm").performClick()
+                    waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("binance-connect-error").fetchSemanticsNodes().isNotEmpty() }
+                    assertTrue(app.exchangeTargets(ExchangeKind.BINANCE).isEmpty())
+                    host.info = ExchangeKeyInfo("777", readOnly = true, expiresAtMillis = null)
+                    onNodeWithTag("binance-connect-confirm").performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.exchangeTargets(ExchangeKind.BINANCE).isNotEmpty() }
+                    val (account, _) = app.exchangeTargets(ExchangeKind.BINANCE).single()
+                    assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchangeKey(ExchangeKind.BINANCE, account))
+                    assertTrue(app.exchangeTargets(ExchangeKind.BYBIT).isEmpty())
+                }
+                runDesktopComposeUiTest(width = 800, height = 1400) {
+                    val (account, _) = app.exchangeTargets(ExchangeKind.BINANCE).single()
+                    setContent { ExchangeAccountDetails(ExchangeKind.BINANCE, app, host, account, 0, onChanged = {}) }
+                    onNodeWithTag("binance-add-pair").performClick()
+                    onNodeWithTag("binance-pair-base").performTextInput("sol")
+                    onNodeWithTag("binance-pair-quote").performTextInput("usdt")
+                    onNodeWithTag("binance-pair-save").performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.binancePairs(account).containsKey("SOLUSDT") }
+                }
+            } finally {
+                executor.shutdown()
+            }
+        }
+    }
+
     private class BybitTestHost(
         override val dispatcher: CoroutineDispatcher,
     ) : PlatformActions {
