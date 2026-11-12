@@ -9,22 +9,21 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import io.valroot.core.ApplicationInfo
 import io.valroot.core.alerts.NotificationMessage
-import io.valroot.core.application.BitcoinConnector
+import io.valroot.core.application.HostRefresh
 import io.valroot.core.application.PortfolioApplication
-import io.valroot.core.application.SourceConnector
-import io.valroot.core.application.SourceRefreshOptions
-import io.valroot.core.application.SourceRegistry
+import io.valroot.core.application.RefreshSummary
+import io.valroot.core.backup.LockPassword
 import io.valroot.core.bitcoin.BitcoinProviderException
 import io.valroot.core.bitcoin.BitcoinProviderFailure
+import io.valroot.core.bitcoin.BlockstreamTransport
 import io.valroot.core.bitcoin.EsploraTransport
-import io.valroot.core.evm.EVM_MANIFEST
-import io.valroot.core.evm.EvmConnector
-import io.valroot.core.exchange.binance.BinanceConnector
-import io.valroot.core.exchange.bybit.BYBIT_MANIFEST
-import io.valroot.core.exchange.bybit.BybitConnector
-import io.valroot.core.exchange.mexc.MexcConnector
+import io.valroot.core.market.DefiLlamaTransport
+import io.valroot.core.market.HttpCoingeckoTransport
+import io.valroot.core.market.KrakenPriceTransport
 import io.valroot.core.model.TrackingTargetId
 import io.valroot.core.storage.JvmSqliteDatabase
+import io.valroot.core.storage.readBoundedText
+import io.valroot.core.storage.walIsEmpty
 import io.valroot.core.sync.JobState
 import io.valroot.ui.MARKET_SCHEDULED_AGE_MILLIS
 import io.valroot.ui.OrderBookResult
@@ -146,7 +145,7 @@ internal class DesktopHost(
     @Volatile private var priceRestorePaused = false
     internal val priceReplacementInProgress: Boolean get() = priceRestorePaused
     private val syncQueue = BitcoinSyncQueue()
-    private val priceTransport = DesktopCoingeckoTransport()
+    private val priceTransport = HttpCoingeckoTransport()
     private val defiLlamaTransport = DefiLlamaTransport()
     override val dataRevision = MutableStateFlow(0L)
     override val syncStatus = MutableStateFlow(SyncStatus())
@@ -253,7 +252,7 @@ internal class DesktopHost(
                 return@invokeLater
             }
             executor.execute {
-                val text = runCatching { readText(Files.newInputStream(path), maxChars) }.getOrNull()
+                val text = runCatching { readBoundedText(Files.newInputStream(path), maxChars) }.getOrNull()
                 SwingUtilities.invokeLater { onResult(path.fileName.toString(), text) }
             }
         }
@@ -544,21 +543,10 @@ internal class DesktopHost(
         kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.ExchangeKeyInfo {
-        val credentials: (io.valroot.core.model.AccountId) -> Pair<String, String>? = { key to secret }
-        val account = io.valroot.core.exchange.KEY_CHECK_ACCOUNT
-        return when (kind) {
-            io.valroot.core.exchange.ExchangeKind.BYBIT ->
-                io.valroot.core.exchange.bybit.BybitProvider
-                    .checkKey { BybitTransport(credentials).get(account, it) }
-            io.valroot.core.exchange.ExchangeKind.BINANCE ->
-                io.valroot.core.exchange.binance.BinanceProvider
-                    .checkKey { BinanceTransport(credentials).get(account, it) }
-            io.valroot.core.exchange.ExchangeKind.MEXC ->
-                io.valroot.core.exchange.mexc.MexcProvider
-                    .checkKey { MexcTransport(credentials).get(account, it) }
-        }
-    }
+    ): io.valroot.core.exchange.ExchangeKeyInfo =
+        io.valroot.core.exchange.JvmExchanges
+            .of(kind)
+            .checkKey(key, secret)
 
     private fun refresh(
         recoverHistory: Boolean,
@@ -570,144 +558,26 @@ internal class DesktopHost(
             onResult,
         ) { application ->
             runCatching {
-                // Each source refreshes only with its own consent; with neither, nothing is fetched.
-                val bitcoinOn = application.sources.consent() && !withoutBitcoin
-                val evmOn = application.evm.consent() && application.evm.targets().isNotEmpty()
-                val bybitOn = application.exchanges.targets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
-                val binanceOn = application.exchanges.targets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
-                val mexcOn = application.exchanges.targets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
-                if (!bitcoinOn && !evmOn && !bybitOn && !binanceOn && !mexcOn) {
-                    return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
-                }
-                // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
-                val connectors = mutableListOf<SourceConnector>()
-                if (bitcoinOn) {
-                    val endpoint = application.sources.endpoint()
-                    connectors +=
-                        BitcoinConnector(bitcoinTransport(application, endpoint), endpoint) { progress ->
-                            syncStatus.value =
-                                SyncStatus(
-                                    SyncPhase.SYNCING,
-                                    "Bitcoin · " +
-                                        when (progress.phase) {
-                                            "blocks" -> "Checking blocks ${progress.blocksResolved}/${progress.totalBlocks}"
-                                            "verify" -> "Checking chain consistency…"
-                                            "apply" -> "Applying verified history…"
-                                            else ->
-                                                "Address ${progress.addressIndex}/${progress.totalAddresses} · " +
-                                                    "${progress.pages} pages · ${progress.transactions} transactions"
-                                        },
-                                )
-                        }
-                }
-                if (evmOn) {
-                    val oneInch =
-                        application.evm.oneInchApiKey()?.let {
-                            OneInchTransport(
-                                apiKey = { application.evm.oneInchApiKey() },
-                                beforeRequest = {
-                                    check(
-                                        !closing.get() && application.evm.consent(),
-                                    ) { "EVM refresh was cancelled. Retry if needed." }
-                                },
-                            )
-                        }
-                    connectors += EvmConnector(alchemyTransport(application)::post, oneInch?.let { it::get })
-                }
-                // Exchange symbols are matched to coins through the catalog, so it is current before their records.
-                if ((bybitOn || binanceOn || mexcOn) &&
-                    application.market.consent()
-                ) {
-                    runCatching { application.evm.refreshCatalog(priceTransport::feed) }
-                }
-                if (mexcOn) {
-                    val transport =
-                        MexcTransport(
-                            credentials = { application.exchanges.key(io.valroot.core.exchange.ExchangeKind.MEXC, it) },
-                            beforeRequest = { check(!closing.get()) { "MEXC refresh was cancelled. Retry if needed." } },
-                        )
-                    connectors +=
-                        io.valroot.core.exchange.mexc
-                            .MexcConnector(transport::get)
-                }
-                if (binanceOn) {
-                    val transport =
-                        BinanceTransport(
-                            credentials = { application.exchanges.key(io.valroot.core.exchange.ExchangeKind.BINANCE, it) },
-                            beforeRequest = { check(!closing.get()) { "Binance refresh was cancelled. Retry if needed." } },
-                        )
-                    connectors +=
-                        io.valroot.core.exchange.binance
-                            .BinanceConnector(transport::get)
-                }
-                if (bybitOn) {
-                    val transport =
-                        BybitTransport(
-                            credentials = { application.exchanges.key(io.valroot.core.exchange.ExchangeKind.BYBIT, it) },
-                            beforeRequest = { check(!closing.get()) { "Bybit refresh was cancelled. Retry if needed." } },
-                        )
-                    connectors += BybitConnector(transport::get)
-                }
-                val outcomes =
-                    application.sources.refresh(
-                        SourceRegistry(connectors),
-                        SourceRefreshOptions(
-                            recoverHistory = recoverHistory,
-                            onProgress = {
-                                syncStatus.value =
-                                    SyncStatus(
-                                        SyncPhase.SYNCING,
-                                        if (listOf("Bybit", "Binance", "MEXC").any { label -> it.startsWith(label) }) it else "EVM · $it",
-                                    )
-                            },
-                            withoutConsent =
-                                setOfNotNull(
-                                    io.valroot.core.bitcoin.BITCOIN_MAINNET
-                                        .takeIf { !application.sources.consent() },
-                                    io.valroot.core.evm.EVM_FAMILY
-                                        .takeIf { !application.evm.consent() },
-                                ),
-                        ),
-                    )
-                val states = outcomes.flatMap { it.jobs }
-                val discoveryNotes = outcomes.flatMap { it.notes }
-                // Once a chain has refreshed, new tokens are linked to coins and priced.
-                if (outcomes.any {
-                        it.connector in
-                            setOf(
-                                EVM_MANIFEST.id,
-                                BYBIT_MANIFEST.id,
-                                io.valroot.core.exchange.binance.BINANCE_MANIFEST.id,
-                                io.valroot.core.exchange.mexc.MEXC_MANIFEST.id,
-                            ) &&
-                            it.jobs.contains(JobState.COMPLETED)
+                val plan =
+                    HostRefresh(application, withoutBitcoin) { source ->
+                        check(!closing.get()) { "$source refresh was cancelled. Retry if needed." }
                     }
-                ) {
-                    refreshEvmCatalogAndPrices(application)
-                }
-                when {
-                    states.isEmpty() ->
-                        SyncStatus(
-                            SyncPhase.IDLE,
-                            if (bitcoinOn) {
-                                "Add a public address to sync"
-                            } else {
-                                discoveryNotes.joinToString(" ").ifEmpty { "Add a public address to sync" }
-                            },
-                        )
-                    states.any {
-                        it != io.valroot.core.sync.JobState.COMPLETED
-                    } -> SyncStatus(SyncPhase.ERROR, application.sources.failureMessage() ?: "History is incomplete; retry.")
-                    else ->
-                        SyncStatus(
-                            SyncPhase.SUCCESS,
-                            when {
-                                recoverHistory -> "History recovery complete; coverage remains unverified"
-                                application.sources.lastRefreshSkipped() -> "Checked for new activity; none found."
-                                else -> "Sync complete; coverage remains unverified"
-                            } + discoveryNotes.joinToString("") { " $it" },
-                        )
-                }
+                if (!plan.anySource) return@runCatching SyncStatus(SyncPhase.IDLE, HostRefresh.NO_PROVIDER)
+                val connectors =
+                    plan.connectors(
+                        bitcoin = {
+                            val endpoint = application.sources.endpoint()
+                            HostRefresh.bitcoinConnector(bitcoinTransport(application, endpoint), endpoint) {
+                                syncStatus.value = SyncStatus(SyncPhase.SYNCING, it)
+                            }
+                        },
+                        refreshCatalog = { if (application.market.consent()) application.evm.refreshCatalog(priceTransport::feed) },
+                    )
+                val outcomes =
+                    plan.run(connectors, recoverHistory) { syncStatus.value = SyncStatus(SyncPhase.SYNCING, it) }
+                // Once a chain has refreshed, new tokens are linked to coins and priced.
+                if (plan.catalogChanged(outcomes)) refreshEvmCatalogAndPrices(application)
+                plan.summary(outcomes, recoverHistory).toSyncStatus()
             }.getOrElse {
                 SyncStatus(
                     SyncPhase.ERROR,
@@ -717,13 +587,6 @@ internal class DesktopHost(
             }
         }
     }
-
-    /** Alchemy requests for EVM history; a refresh stops at its next request once the app closes or EVM consent is withdrawn. */
-    private fun alchemyTransport(application: PortfolioApplication): AlchemyTransport =
-        AlchemyTransport(
-            apiKey = { application.evm.alchemyApiKey() },
-            beforeRequest = { check(!closing.get() && application.evm.consent()) { "EVM refresh was cancelled. Retry if needed." } },
-        )
 
     /**
      * Refreshes the CoinGecko chain catalog, then linked-coin prices (USD from DefiLlama, other currencies from
@@ -1277,41 +1140,6 @@ fun main(args: Array<String>) {
     }
 }
 
-/** True when [database] has no pending write-ahead log, so the file alone holds every committed change. */
-internal fun walIsEmpty(database: java.nio.file.Path): Boolean {
-    val wal = database.resolveSibling("${database.fileName}-wal")
-    return !java.nio.file.Files
-        .exists(wal) ||
-        java.nio.file.Files
-            .size(wal) == 0L
-}
-
-/** Strict UTF-8 text of at most [maxChars] characters, or null; reads at most four bytes per allowed character. */
-internal fun readText(
-    input: java.io.InputStream,
-    maxChars: Int,
-): String? =
-    input.use {
-        val limit = maxChars.toLong() * 4
-        val out = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(64 * 1024)
-        while (true) {
-            val count = it.read(buffer)
-            if (count < 0) break
-            out.write(buffer, 0, count)
-            if (out.size() > limit) return null
-        }
-        val bytes = out.toByteArray()
-        val text =
-            runCatching {
-                java.nio.charset.StandardCharsets.UTF_8
-                    .newDecoder()
-                    .decode(java.nio.ByteBuffer.wrap(bytes))
-                    .toString()
-            }.getOrNull()
-        text?.takeIf { value -> value.length <= maxChars }
-    }
-
 /**
  * The data folder under [share]. The folder of the app's former name, Polion, is moved to it once, when it does not exist
  * yet; an existing Valroot folder is never merged with it.
@@ -1330,3 +1158,13 @@ internal fun appIconImage(): androidx.compose.ui.graphics.ImageBitmap =
     org.jetbrains.skia.Image
         .makeFromEncoded(requireNotNull(DesktopHost::class.java.getResourceAsStream("/valroot.png")).use { it.readAllBytes() })
         .toComposeImageBitmap()
+
+private fun RefreshSummary.toSyncStatus() =
+    SyncStatus(
+        when (state) {
+            RefreshSummary.State.IDLE -> SyncPhase.IDLE
+            RefreshSummary.State.SUCCESS -> SyncPhase.SUCCESS
+            RefreshSummary.State.ERROR -> SyncPhase.ERROR
+        },
+        message,
+    )

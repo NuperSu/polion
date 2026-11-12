@@ -56,7 +56,10 @@ class BybitUiTest {
                     // A read-only key adds the account it belongs to, keeps the key on the device and starts a refresh.
                     host.info = ExchangeKeyInfo("1001", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("bybit-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchanges.targets(ExchangeKind.BYBIT).isNotEmpty() }
+                    // The account is saved before its key: wait for both.
+                    waitUntil(timeoutMillis = 10_000) {
+                        app.exchanges.targets(ExchangeKind.BYBIT).any { app.exchanges.key(ExchangeKind.BYBIT, it.first) != null }
+                    }
                     val (account, uid) = app.exchanges.targets(ExchangeKind.BYBIT).single()
                     assertEquals("1001", uid)
                     assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchanges.key(ExchangeKind.BYBIT, account))
@@ -93,7 +96,10 @@ class BybitUiTest {
                     onNodeWithTag("mexc-secret").performTextInput("SECRETSECRETSECRET")
                     host.info = ExchangeKeyInfo("12345678", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("mexc-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchanges.targets(ExchangeKind.MEXC).isNotEmpty() }
+                    // The account is saved before its key: wait for both.
+                    waitUntil(timeoutMillis = 10_000) {
+                        app.exchanges.targets(ExchangeKind.MEXC).any { app.exchanges.key(ExchangeKind.MEXC, it.first) != null }
+                    }
                     val (account, uid) = app.exchanges.targets(ExchangeKind.MEXC).single()
                     assertEquals("12345678", uid)
                     assertEquals("mx0vglKEYKEYKEY" to "SECRETSECRETSECRET", app.exchanges.key(ExchangeKind.MEXC, account))
@@ -132,7 +138,10 @@ class BybitUiTest {
                     assertTrue(app.exchanges.targets(ExchangeKind.BINANCE).isEmpty())
                     host.info = ExchangeKeyInfo("777", readOnly = true, expiresAtMillis = null)
                     onNodeWithTag("binance-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.exchanges.targets(ExchangeKind.BINANCE).isNotEmpty() }
+                    // The account is saved before its key: wait for both.
+                    waitUntil(timeoutMillis = 10_000) {
+                        app.exchanges.targets(ExchangeKind.BINANCE).any { app.exchanges.key(ExchangeKind.BINANCE, it.first) != null }
+                    }
                     val (account, _) = app.exchanges.targets(ExchangeKind.BINANCE).single()
                     assertEquals("KEYKEYKEYKEY" to "SECRETSECRETSECRET", app.exchanges.key(ExchangeKind.BINANCE, account))
                     assertTrue(app.exchanges.targets(ExchangeKind.BYBIT).isEmpty())

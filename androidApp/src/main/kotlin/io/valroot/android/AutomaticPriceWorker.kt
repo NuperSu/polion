@@ -1,5 +1,6 @@
 package io.valroot.android
 
+import io.valroot.core.market.KrakenPriceTransport
 import android.content.Context
 import androidx.work.Worker
 import androidx.work.WorkerParameters

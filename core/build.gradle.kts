@@ -23,6 +23,16 @@ kotlin {
         withHostTestBuilder {}
     }
     sourceSets.named("jvmTest") { kotlin.srcDir(rootProject.file("testSupport/src/main/kotlin")) }
+    // jvmSharedMain: code for both JVM hosts (desktop and Android), such as HTTP transports and platform cryptography.
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi::class)
+    applyDefaultHierarchyTemplate {
+        common {
+            group("jvmShared") {
+                withJvm()
+                withCompilations { it.platformType == org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.androidJvm }
+            }
+        }
+    }
     sourceSets.jvmMain.dependencies {
         implementation("org.xerial:sqlite-jdbc:3.49.1.0")
         // libsecp256k1 (Bitcoin Core's curve library) for bitcoin-kmp, with natives for Linux, macOS and Windows.

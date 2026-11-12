@@ -1,5 +1,8 @@
 package io.valroot.android
 
+import io.valroot.core.market.DefiLlamaTransport
+import io.valroot.core.market.HttpCoingeckoTransport
+import io.valroot.core.market.KrakenPriceTransport
 import android.content.Context
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.storage.AndroidSqliteDatabase
@@ -12,7 +15,7 @@ import java.util.concurrent.Executors
 /** On-demand CoinGecko market refreshes on their own connection, so network waits never hold the UI database thread. */
 internal object MarketFeedRefresher {
     private val executor = Executors.newSingleThreadExecutor()
-    val transport = AndroidCoingeckoTransport()
+    val transport = HttpCoingeckoTransport()
     private val defiLlama = DefiLlamaTransport()
 
     fun refresh(

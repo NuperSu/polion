@@ -1,5 +1,12 @@
 package io.valroot.android
 
+import io.valroot.core.storage.readBoundedText
+import io.valroot.core.storage.walIsEmpty
+import io.valroot.core.exchange.binance.BinanceTransport
+import io.valroot.core.bitcoin.BlockstreamTransport
+import io.valroot.core.exchange.bybit.BybitTransport
+import io.valroot.core.backup.LockPassword
+import io.valroot.core.exchange.mexc.MexcTransport
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
@@ -281,7 +288,7 @@ private class AndroidHost(
                                     if (it.moveToFirst()) it.getString(0) else null
                                 }
                             }.getOrNull() ?: "import.csv"
-                        val text = runCatching { resolver.openInputStream(uri)?.let { readText(it, maxChars) } }.getOrNull()
+                        val text = runCatching { resolver.openInputStream(uri)?.let { readBoundedText(it, maxChars) } }.getOrNull()
                         main.post { if (!closed) onResult(name, text) }
                     }
                 }
@@ -481,18 +488,10 @@ private class AndroidHost(
         kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.ExchangeKeyInfo {
-        val credentials: (io.valroot.core.model.AccountId) -> Pair<String, String>? = { key to secret }
-        val account = io.valroot.core.exchange.KEY_CHECK_ACCOUNT
-        return when (kind) {
-            io.valroot.core.exchange.ExchangeKind.BYBIT ->
-                io.valroot.core.exchange.bybit.BybitProvider.checkKey { BybitTransport(credentials).get(account, it) }
-            io.valroot.core.exchange.ExchangeKind.BINANCE ->
-                io.valroot.core.exchange.binance.BinanceProvider.checkKey { BinanceTransport(credentials).get(account, it) }
-            io.valroot.core.exchange.ExchangeKind.MEXC ->
-                io.valroot.core.exchange.mexc.MexcProvider.checkKey { MexcTransport(credentials).get(account, it) }
-        }
-    }
+    ): io.valroot.core.exchange.ExchangeKeyInfo =
+        io.valroot.core.exchange.JvmExchanges
+            .of(kind)
+            .checkKey(key, secret)
 
     private fun refresh(
         recoverHistory: Boolean,
@@ -707,35 +706,3 @@ private class AndroidHost(
         executor.execute { if (::db.isInitialized) db.close() }
     }
 }
-
-/** True when [database] has no pending write-ahead log, so the file alone holds every committed change. */
-internal fun walIsEmpty(database: java.nio.file.Path): Boolean {
-    val wal = database.resolveSibling("${database.fileName}-wal")
-    return !java.nio.file.Files.exists(wal) || java.nio.file.Files.size(wal) == 0L
-}
-
-/** Strict UTF-8 text of at most [maxChars] characters, or null; reads at most four bytes per allowed character. */
-internal fun readText(
-    input: java.io.InputStream,
-    maxChars: Int,
-): String? =
-    input.use {
-        val limit = maxChars.toLong() * 4
-        val out = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(64 * 1024)
-        while (true) {
-            val count = it.read(buffer)
-            if (count < 0) break
-            out.write(buffer, 0, count)
-            if (out.size() > limit) return null
-        }
-        val bytes = out.toByteArray()
-        val text =
-            runCatching {
-                java.nio.charset.StandardCharsets.UTF_8
-                    .newDecoder()
-                    .decode(java.nio.ByteBuffer.wrap(bytes))
-                    .toString()
-            }.getOrNull()
-        text?.takeIf { value -> value.length <= maxChars }
-    }

@@ -1,5 +1,8 @@
 package io.valroot.android
 
+import io.valroot.core.market.KrakenPricePacer
+import io.valroot.core.market.KrakenPriceTransport
+import io.valroot.core.backup.LockPassword
 import android.app.Activity
 import android.app.Instrumentation
 import android.os.Bundle
