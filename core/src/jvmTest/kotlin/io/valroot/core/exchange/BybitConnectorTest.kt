@@ -176,6 +176,10 @@ class BybitConnectorTest {
                         "rows",
                     )
                 "/v5/asset/exchange/query-convert-history" -> ok("""{"list":[]}""")
+                "/v5/asset/coin/query-info" ->
+                    ok(
+                        """{"rows":[{"coin":"${q.getValue("coin")}","name":"${q.getValue("coin")}","chains":[]}]}""",
+                    )
                 else -> error("Unexpected ${request.path}")
             }
         }

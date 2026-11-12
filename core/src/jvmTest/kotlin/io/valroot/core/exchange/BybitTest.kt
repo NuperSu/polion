@@ -194,8 +194,15 @@ class BybitTest {
                 ).single()
         assertEquals(d("0.00534882723991"), convert.toAmount)
         assertEquals(
-            mapOf("BTC" to "Bitcoin"),
-            Bybit.parseCoins("""{"retCode":0,"result":{"rows":[{"name":"Bitcoin","coin":"BTC","chains":[]}]}}"""),
+            mapOf(
+                "MNT" to listOf(ExchangeContract("ETH", "Ethereum", "0x3c3a81e81dc49a522a592e7622a7e711c06bf354")),
+            ),
+            Bybit.parseCoinContracts(
+                """{"retCode":0,"result":{"rows":[{"name":"MNT","coin":"MNT","chains":[
+                {"chainType":"Ethereum","chain":"ETH","contractAddress":"0x3c3a81e81dc49a522a592e7622a7e711c06bf354"},
+                {"chainType":"Mantle Network","chain":"MANTLE","contractAddress":""}]}]}}""",
+            ),
         )
+        assertEquals(listOf("coin" to "MNT"), Bybit.coin("mnt").query)
     }
 }

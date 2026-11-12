@@ -189,7 +189,8 @@ object Bybit {
 
     fun overview() = BybitRequest("/v5/asset/asset-overview")
 
-    fun coins() = BybitRequest("/v5/asset/coin/query-info")
+    /** One coin's chains and contract addresses. */
+    fun coin(symbol: String) = BybitRequest("/v5/asset/coin/query-info", listOf("coin" to symbol.uppercase()))
 
     fun transactionLog(
         fromMillis: Long,
@@ -337,12 +338,21 @@ object Bybit {
             }
         }
 
-    /** Coin symbol to full name, used to tell apart coins that share a symbol. */
-    fun parseCoins(payload: String): Map<String, String> =
+    /** Each coin's contracts: the chains it can be deposited on, with the token contract where there is one. */
+    fun parseCoinContracts(payload: String): Map<String, List<ExchangeContract>> =
         result(payload)
             .array("rows")
             .associate { row ->
-                row.jsonObject.let { it.text("coin") to it.text("name") }
+                val o = row.jsonObject
+                o.text("coin") to
+                    o.array("chains").mapNotNull { element ->
+                        val chain = element.jsonObject
+                        chain
+                            .text("contractAddress")
+                            .trim()
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { ExchangeContract(chain.text("chain"), chain.text("chainType"), it) }
+                    }
             }.filterKeys { it.isNotBlank() }
 
     fun parseTransactionLog(payload: String): BybitPage<BybitLogEntry> =

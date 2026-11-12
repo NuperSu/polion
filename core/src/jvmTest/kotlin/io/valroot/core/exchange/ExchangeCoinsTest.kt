@@ -35,6 +35,67 @@ class ExchangeCoinsTest {
     }
 
     @Test
+    fun tokenContractsNameTheCoinWhenSymbolsAreShared() {
+        val withContracts =
+            CoingeckoCatalog(
+                listOf(
+                    io.valroot.core.market
+                        .EvmPlatform("ethereum", 1, "Ethereum", "ethereum"),
+                    io.valroot.core.market
+                        .EvmPlatform("arbitrum-one", 42161, "Arbitrum One", "ethereum"),
+                ),
+                mapOf(
+                    "ethereum" to mapOf("0x" + "a".repeat(40) to "alpha-two"),
+                    "arbitrum-one" to mapOf("0x" + "b".repeat(40) to "alpha-two", "0x" + "c".repeat(40) to "alpha-one"),
+                ),
+                emptyMap(),
+                CoingeckoCatalog.parseSymbols(coins),
+            )
+        // Bybit's chain code, or its chain name, finds the network; mixed-case contracts match.
+        assertEquals(
+            "alpha-two",
+            ExchangeAssets.resolve(
+                "ABC",
+                withContracts,
+                emptyList(),
+                listOf(
+                    ExchangeContract(
+                        "ETH",
+                        "Ethereum",
+                        "0x" + "A".repeat(40),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(
+            "alpha-two",
+            ExchangeAssets.resolve(
+                "ABC",
+                withContracts,
+                emptyList(),
+                listOf(ExchangeContract("ARB1", "Arbitrum One", "0x" + "b".repeat(40))),
+            ),
+        )
+        // Contracts that point at different coins decide nothing; unknown chains are ignored.
+        assertNull(
+            ExchangeAssets.resolve(
+                "ABC",
+                withContracts,
+                emptyList(),
+                listOf(
+                    ExchangeContract("ETH", "Ethereum", "0x" + "a".repeat(40)),
+                    ExchangeContract(
+                        "ARBI",
+                        "Arbitrum One",
+                        "0x" + "c".repeat(40),
+                    ),
+                ),
+            ),
+        )
+        assertNull(ExchangeAssets.resolve("ABC", withContracts, emptyList(), listOf(ExchangeContract("SOL", "Solana", "So1ana"))))
+    }
+
+    @Test
     fun catalogKeepsSymbolsThroughItsCache() {
         val decoded = CoingeckoCatalog.decode(catalog.encode())
         assertTrue(decoded.hasSymbols)

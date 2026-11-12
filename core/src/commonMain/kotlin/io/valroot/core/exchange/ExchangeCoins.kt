@@ -7,6 +7,13 @@ import io.valroot.core.market.CoingeckoCatalog
 import io.valroot.core.model.AssetId
 import io.valroot.core.storage.SqliteDatabase
 
+/** A token contract an exchange lists for a coin: the exchange's chain code and name, and the contract address. */
+data class ExchangeContract(
+    val chain: String,
+    val chainType: String,
+    val address: String,
+)
+
 /**
  * Coins held on exchanges. An exchange balance is a claim on a coin, not on a token of one chain, so every exchange
  * shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 18 decimals, which fits the amounts exchanges
@@ -65,17 +72,56 @@ object ExchangeAssets {
             "WBTC" to "wrapped-bitcoin",
         )
 
+    /** Exchange chain codes of EVM networks, by chain ID; other chains are recognized by their name in the catalog. */
+    val EVM_CHAIN_CODES =
+        mapOf(
+            "ETH" to 1L,
+            "BSC" to 56L,
+            "BEP20" to 56L,
+            "ARBI" to 42161L,
+            "ARBITRUM" to 42161L,
+            "OP" to 10L,
+            "OPTIMISM" to 10L,
+            "BASE" to 8453L,
+            "MATIC" to 137L,
+            "POL" to 137L,
+            "POLYGON" to 137L,
+            "AVAXC" to 43114L,
+            "MANTLE" to 5000L,
+            "ZKSYNC" to 324L,
+            "LINEA" to 59144L,
+            "CELO" to 42220L,
+            "SCROLL" to 534352L,
+            "BLAST" to 81457L,
+            "OPBNB" to 204L,
+            "GNO" to 100L,
+            "XDAI" to 100L,
+        )
+
     /**
-     * The coin an exchange [symbol] stands for: a well-known symbol, the only catalog coin with that symbol, or the one
-     * among several that ranks highest by market capitalization in [ranked] (coin IDs, largest first). Null when none
-     * of these decides; the user then chooses.
+     * The coin an exchange [symbol] stands for, in this order: a well-known symbol; the coin CoinGecko maps the
+     * exchange's token [contracts] to, when they all agree; the only catalog coin with that symbol; the one among
+     * several that ranks highest by market capitalization in [ranked] (coin IDs, largest first). Null when none of
+     * these decides; the user then chooses.
      */
     fun resolve(
         symbol: String,
         catalog: CoingeckoCatalog?,
         ranked: List<String>,
+        contracts: List<ExchangeContract> = emptyList(),
     ): String? {
         WELL_KNOWN[symbol.uppercase()]?.let { return it }
+        if (catalog != null) {
+            val byContract =
+                contracts
+                    .mapNotNull { contract ->
+                        val chain =
+                            EVM_CHAIN_CODES[contract.chain.uppercase()]
+                                ?: catalog.platforms.firstOrNull { it.name.equals(contract.chainType.trim(), ignoreCase = true) }?.chainId
+                        chain?.let { catalog.tokenCoin(it, contract.address) }
+                    }.distinct()
+            if (byContract.size == 1) return byContract.single()
+        }
         val candidates = catalog?.coinsWithSymbol(symbol).orEmpty().map { it.first }
         return when {
             candidates.size == 1 -> candidates.single()

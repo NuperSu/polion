@@ -25,6 +25,7 @@ Every request is a signed GET (HMAC-SHA256 over timestamp, key, receive window o
 | `/v5/asset/deposit/query-record` | under 30 days | On-chain transaction and chain of deposits |
 | `/v5/asset/withdraw/query-record` | under 30 days | On-chain transaction, chain and fee of withdrawals |
 | `/v5/asset/exchange/query-convert-history` | pages | The two sides of converts |
+| `/v5/asset/coin/query-info?coin=…` | — | Token contracts of a coin not matched yet |
 | `/v5/market/time` | — | Bybit's clock, after it rejects a timestamp (unsigned) |
 
 Requests are spaced 150 ms apart across the process, and deposit records 650 ms (Bybit allows 100 a minute). HTTP 403 means too many requests from the IP address; nothing is sent for 10 minutes. A `10006` answer waits a second and tries once more; a `10002` answer reads Bybit's time, keeps the offset and tries once more.
@@ -34,6 +35,7 @@ Requests are spaced 150 ms apart across the process, and deposit records 650 ms 
 1. The key check, then the three balance requests.
 2. Each history stream forward from where it stopped, with one day of overlap for records Bybit adds late; then further back until the stream's start: two years for the Unified log (Bybit's retention), and for the other streams until half a year (Funding history) or a year (deposits, withdrawals) passes without a record, at most five years.
 3. Convert history, newest first, until a page holds only known converts.
+4. Token contracts of symbols not matched to a coin yet.
 
 At most 400 requests are made per account and refresh; a first refresh of two years usually needs about 180. Whatever remains continues with the next refresh, and the account says older history is still being read. Each record is saved as it arrives, as Bybit's JSON row (table `exchange_rows`) and as a raw provider record, so an interrupted refresh resumes and a record Bybit changes (a withdrawal that completes) replaces the saved one. Read progress per stream is in `exchange_sync`.
 
@@ -57,7 +59,7 @@ Each log records the balance after every row, so each wallet's balance before it
 
 An exchange balance is a claim on a coin, not a token of one chain, so every exchange shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 18 decimals. Bybit reports BTC to 14 decimals, so Bybit BTC is `coin:bitcoin`, not the 8-decimal `bitcoin:btc` of Bitcoin wallets. Prices and logos come through the asset's coin link.
 
-A symbol becomes a coin through a short list of well-known symbols (BTC, ETH, USDT, USDC, …), else the only CoinGecko coin with that symbol, else the one ranked highest by market capitalization in the cached market list. A symbol none of these decides waits for the user, who picks the coin on the account; its records are left out until then. Matches are saved in `exchange_coin_map`; a user's choice is never replaced. An amount finer than 18 decimals fails that record, with a note on the account.
+Every coin Bybit holds is tracked once it is matched to a CoinGecko coin. A symbol becomes a coin through a short list of well-known symbols (BTC, ETH, USDT, USDC, …); else through its token contracts: Bybit's coin information lists each chain the coin can be deposited on with its contract, and CoinGecko's contract map names the coin when all of them agree (EVM networks, found by Bybit's chain code or by the chain's name); else the only CoinGecko coin with that symbol; else the one ranked highest by market capitalization in the cached market list. Up to 50 unmatched symbols are looked up per refresh. A symbol none of these decides waits for the user, who picks the coin on the account; its records are left out until then. Matches are saved in `exchange_coin_map`; a user's choice is never replaced. An amount finer than 18 decimals fails that record, with a note on the account.
 
 ## Transfers between Bybit and wallets
 

@@ -43,7 +43,9 @@ private data class BybitStream(
  * history stream: forward from where it stopped (one day of overlap, so late records are caught), then further back
  * until Bybit's retention ends or the account's start is passed. At most [MAX_REQUESTS] requests are made per account
  * and refresh; the rest continues next time. Every record is saved as it arrives, so an interrupted refresh resumes.
- * Then the account's activities are derived again from all saved records ([BybitDecoder]).
+ * Symbols not matched to a coin yet get their token contracts from Bybit's coin information, which CoinGecko's
+ * contract map turns into coins. Then the account's activities are derived again from all saved records
+ * ([BybitDecoder]).
  */
 class BybitConnector(
     private val get: (account: AccountId, request: BybitRequest) -> String,
@@ -139,6 +141,13 @@ class BybitConnector(
             if (!state.complete) unfinished = true
         }
         readConverts(app, account, uid, budget)
+        // Symbols not matched to a coin yet: Bybit's token contracts let CoinGecko's contract map name the coin.
+        val held = balances.filter { it.amount.coefficient.sign != 0 }.map { it.coin }
+        val unmatched = app.unmatchedExchangeSymbols(BYBIT_EXCHANGE, app.exchangeRowSymbols(account) + held)
+        val contracts = mutableMapOf<String, List<ExchangeContract>>()
+        unmatched.sorted().take(MAX_COIN_LOOKUPS).forEach { symbol ->
+            if (budget.left > 0) contracts += Bybit.parseCoinContracts(budget.send(Bybit.coin(symbol)))
+        }
         val covered = app.exchangeStreams(account).filterKeys { it == BybitDecoder.LOG || it == BybitDecoder.FUNDING }
         app.applyBybitHistory(
             account,
@@ -151,6 +160,7 @@ class BybitConnector(
                         state.fromMillis
                 }.toMap(),
             key.expiresAtMillis,
+            contracts,
         )
         return if (unfinished) "Older Bybit history is still being read; it continues with the next refresh" else null
     }
@@ -243,6 +253,9 @@ class BybitConnector(
         const val MAX_RETENTION_MILLIS = 5 * 365 * Bybit.DAY_MILLIS
         const val MAX_CONVERT_PAGES = 50
         const val CONVERT_PAGE = 100
+
+        /** Coins whose contracts are looked up per refresh; the rest follow on later refreshes. */
+        const val MAX_COIN_LOOKUPS = 50
         private val STREAM_LABELS =
             mapOf(
                 BybitDecoder.LOG to "trading history",

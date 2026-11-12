@@ -1026,6 +1026,7 @@ class PortfolioApplication(
     fun exchangeAssets(
         exchange: String,
         symbols: Set<String>,
+        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
     ): Map<String, AssetId> {
         val saved = exchangeCoins.coins(exchange)
         val catalog = marketFeeds.catalog()?.second
@@ -1042,7 +1043,7 @@ class PortfolioApplication(
                 val known = saved[symbol]?.first?.takeIf { it.isNotEmpty() }
                 val coin =
                     known ?: io.valroot.core.exchange.ExchangeAssets
-                        .resolve(symbol, catalog, ranked)
+                        .resolve(symbol, catalog, ranked, contracts[symbol].orEmpty())
                 if (known == null && (coin != null || symbol !in saved)) {
                     exchangeCoins.save(exchange, symbol, coin.orEmpty(), io.valroot.core.exchange.CoinChoice.AUTOMATIC)
                 }
@@ -1051,6 +1052,34 @@ class PortfolioApplication(
         }
         return result
     }
+
+    /** Which of [symbols] have no coin yet for [exchange] and are not well known, so their contracts may decide. */
+    fun unmatchedExchangeSymbols(
+        exchange: String,
+        symbols: Set<String>,
+    ): Set<String> {
+        val saved = exchangeCoins.coins(exchange)
+        return symbols
+            .filter { saved[it]?.first.isNullOrEmpty() && it.uppercase() !in io.valroot.core.exchange.ExchangeAssets.WELL_KNOWN }
+            .toSet()
+    }
+
+    /** The coin symbols in an exchange account's saved records. */
+    fun exchangeRowSymbols(account: AccountId): Set<String> =
+        exchangeSync
+            .rows(account)
+            .flatMap { row ->
+                val o =
+                    io.valroot.core.exchange.Bybit
+                        .row(row.payload)
+                listOf(
+                    "currency",
+                    "coin",
+                    "fromCoin",
+                    "toCoin",
+                ).mapNotNull { (o[it] as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            }.filter { it.isNotBlank() }
+            .toSet()
 
     /** An exchange's symbols that have no coin yet, with the catalog coins that carry each symbol. */
     fun unresolvedExchangeCoins(exchange: String): Map<String, List<Pair<String, String>>> {
@@ -2136,26 +2165,14 @@ class PortfolioApplication(
         atMillis: Long,
         coveredFrom: Map<String, Long>,
         keyExpiresAtMillis: Long?,
+        /** Bybit's token contracts for symbols not matched yet, so CoinGecko's contract map can name their coins. */
+        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
     ): io.valroot.core.exchange.BybitDecoded {
         require(bybitTargets().any { it.first == account && it.second == uid }) { "Unknown Bybit account" }
         val rows = exchangeSync.rows(account)
         val held = balances.filter { it.amount.coefficient.sign != 0 }
-        val symbols =
-            rows
-                .flatMap { row ->
-                    io.valroot.core.exchange.Bybit
-                        .row(row.payload)
-                        .let { o ->
-                            listOf(
-                                "currency",
-                                "coin",
-                                "fromCoin",
-                                "toCoin",
-                            ).mapNotNull { (o[it] as? kotlinx.serialization.json.JsonPrimitive)?.content }
-                        }
-                }.filter { it.isNotBlank() }
-                .toSet() + held.map { it.coin }
-        val assets = exchangeAssets(io.valroot.core.exchange.BYBIT_EXCHANGE, symbols)
+        val symbols = exchangeRowSymbols(account) + held.map { it.coin }
+        val assets = exchangeAssets(io.valroot.core.exchange.BYBIT_EXCHANGE, symbols, contracts)
         val snapshot =
             held
                 .sortedWith(compareBy({ it.accountType }, { it.coin }))
