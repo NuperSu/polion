@@ -49,6 +49,11 @@ internal fun exchangeKeyHelp(kind: ExchangeKind): String =
         ExchangeKind.BINANCE ->
             "In Binance, open API Management and create a system-generated key. Leave only Enable Reading ticked: " +
                 "Valroot refuses keys that can trade, transfer or withdraw. "
+        ExchangeKind.MEXC ->
+            "In MEXC, open API Management and create a key with only the read permissions ticked (account, orders, " +
+                "deposits and withdrawals). MEXC does not report a key's permissions, so Valroot cannot check them: never " +
+                "tick trading, transfer or withdrawal. MEXC keeps one month of trades and 90 days of deposits and withdrawals; " +
+                "Valroot keeps what it reads from the first sync on. "
     } + "${kind.label} receives requests signed with this key, and your IP address. " +
         "The key and secret stay on this device and are not included in backups."
 
@@ -250,7 +255,7 @@ internal fun ExchangeAccountDetails(
     var pairs by remember(account) { mutableStateOf<List<String>>(emptyList()) }
     var addingPair by remember(account) { mutableStateOf(false) }
     LaunchedEffect(account, revision) {
-        if (kind == ExchangeKind.BINANCE) pairs = withContext(host.dispatcher) { app.binancePairs(account).keys.sorted() }
+        if (kind.readsPerSymbol) pairs = withContext(host.dispatcher) { app.exchangePairs(account).keys.sorted() }
         withContext(host.dispatcher) {
             Triple(app.exchangeStatus(account), app.hasExchangeKey(kind, account), app.unresolvedExchangeCoins(kind.id))
         }.let { (loaded, key, coins) ->
@@ -282,7 +287,7 @@ internal fun ExchangeAccountDetails(
             )
             TextButton(onClick = { choosing = symbol }, modifier = Modifier.testTag("${kind.id}-choose-$symbol")) { Text("Choose coin") }
         }
-        if (kind == ExchangeKind.BINANCE) {
+        if (kind.readsPerSymbol) {
             Text("Trading pairs", fontWeight = FontWeight.SemiBold)
             Text(
                 if (pairs.isEmpty()) {
@@ -294,14 +299,14 @@ internal fun ExchangeAccountDetails(
                         )
                 },
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.testTag("binance-pairs"),
+                modifier = Modifier.testTag("${kind.id}-pairs"),
             )
             Text(
-                "Trades in pairs Binance no longer lists cannot be read; their effect shows as a balance adjustment.",
+                "Trades in pairs ${kind.label} no longer lists cannot be read; their effect shows as a balance adjustment.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = { addingPair = true }, modifier = Modifier.testTag("binance-add-pair")) { Text("Add pair") }
+            TextButton(onClick = { addingPair = true }, modifier = Modifier.testTag("${kind.id}-add-pair")) { Text("Add pair") }
         }
         TextButton(onClick = { replacing = true }, modifier = Modifier.testTag("${kind.id}-replace-key")) {
             Text(if (hasKey) "Replace API key" else "Enter API key")
@@ -311,7 +316,7 @@ internal fun ExchangeAccountDetails(
         AddPairDialog(close = { addingPair = false }) { base, quote ->
             addingPair = false
             scope.launch {
-                withContext(host.dispatcher) { app.addBinancePair(account, base, quote) }
+                withContext(host.dispatcher) { app.addExchangePair(account, base, quote) }
                 onChanged()
                 host.refreshWithoutBitcoin {}
             }
@@ -414,7 +419,7 @@ private fun CoinChoiceDialog(
     }
 }
 
-/** Adds a Binance trading pair to read, as its two coins (for example SOL and USDT for SOLUSDT). */
+/** Adds a trading pair to read, as its two coins (for example SOL and USDT for SOLUSDT). */
 @Composable
 private fun AddPairDialog(
     close: () -> Unit,
@@ -428,13 +433,13 @@ private fun AddPairDialog(
         Text("The coin you traded and the coin you paid or received, for example SOL and USDT.")
         OutlinedTextField(base, {
             base = it
-        }, singleLine = true, label = { Text("Coin") }, modifier = Modifier.fillMaxWidth().testTag("binance-pair-base"))
+        }, singleLine = true, label = { Text("Coin") }, modifier = Modifier.fillMaxWidth().testTag("pair-base"))
         OutlinedTextField(quote, {
             quote = it
-        }, singleLine = true, label = { Text("Paid or received in") }, modifier = Modifier.fillMaxWidth().testTag("binance-pair-quote"))
+        }, singleLine = true, label = { Text("Paid or received in") }, modifier = Modifier.fillMaxWidth().testTag("pair-quote"))
         Button(
             enabled = ready,
-            modifier = Modifier.fillMaxWidth().testTag("binance-pair-save"),
+            modifier = Modifier.fillMaxWidth().testTag("pair-save"),
             onClick = { add(base.trim(), quote.trim()) },
         ) {
             Text("Add pair")

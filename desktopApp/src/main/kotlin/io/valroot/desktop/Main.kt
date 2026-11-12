@@ -558,6 +558,23 @@ internal class DesktopHost(
                         io.valroot.core.exchange
                             .ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis)
                     }
+            io.valroot.core.exchange.ExchangeKind.MEXC -> {
+                // MEXC does not report a key's permissions: the key is trusted to be read-only.
+                val uid =
+                    io.valroot.core.exchange.Mexc
+                        .parseUid(
+                            MexcTransport(
+                                { key to secret },
+                            ).get(
+                                io.valroot.core.model
+                                    .AccountId("key-check"),
+                                io.valroot.core.exchange.Mexc
+                                    .uid(),
+                            ),
+                        )
+                io.valroot.core.exchange
+                    .ExchangeKeyInfo(uid, true, null)
+            }
             io.valroot.core.exchange.ExchangeKind.BINANCE -> {
                 val transport = BinanceTransport({ key to secret })
                 val check =
@@ -601,11 +618,8 @@ internal class DesktopHost(
                 val evmOn = application.evmConsent() && application.evmTargets().isNotEmpty()
                 val bybitOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
                 val binanceOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
-                if (!bitcoinOn &&
-                    !evmOn &&
-                    !bybitOn &&
-                    !binanceOn
-                ) {
+                val mexcOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
+                if (!bitcoinOn && !evmOn && !bybitOn && !binanceOn && !mexcOn) {
                     return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                 }
                 // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
@@ -644,10 +658,20 @@ internal class DesktopHost(
                     connectors += EvmConnector(alchemyTransport(application)::post, oneInch?.let { it::get })
                 }
                 // Exchange symbols are matched to coins through the catalog, so it is current before their records.
-                if ((bybitOn || binanceOn) &&
+                if ((bybitOn || binanceOn || mexcOn) &&
                     application.marketDataConsent()
                 ) {
                     runCatching { application.refreshEvmCatalog(priceTransport::feed) }
+                }
+                if (mexcOn) {
+                    val transport =
+                        MexcTransport(
+                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.MEXC, it) },
+                            beforeRequest = { check(!closing.get()) { "MEXC refresh was cancelled. Retry if needed." } },
+                        )
+                    connectors +=
+                        io.valroot.core.exchange
+                            .MexcConnector(transport::get)
                 }
                 if (binanceOn) {
                     val transport =
@@ -676,7 +700,7 @@ internal class DesktopHost(
                                 syncStatus.value =
                                     SyncStatus(
                                         SyncPhase.SYNCING,
-                                        if (it.startsWith("Bybit") || it.startsWith("Binance")) it else "EVM · $it",
+                                        if (listOf("Bybit", "Binance", "MEXC").any { label -> it.startsWith(label) }) it else "EVM · $it",
                                     )
                             },
                             withoutConsent =
@@ -692,7 +716,13 @@ internal class DesktopHost(
                 val discoveryNotes = outcomes.flatMap { it.notes }
                 // Once a chain has refreshed, new tokens are linked to coins and priced.
                 if (outcomes.any {
-                        it.connector in setOf(EVM_MANIFEST.id, BYBIT_MANIFEST.id, io.valroot.core.exchange.BINANCE_MANIFEST.id) &&
+                        it.connector in
+                            setOf(
+                                EVM_MANIFEST.id,
+                                BYBIT_MANIFEST.id,
+                                io.valroot.core.exchange.BINANCE_MANIFEST.id,
+                                io.valroot.core.exchange.MEXC_MANIFEST.id,
+                            ) &&
                             it.jobs.contains(JobState.COMPLETED)
                     }
                 ) {
