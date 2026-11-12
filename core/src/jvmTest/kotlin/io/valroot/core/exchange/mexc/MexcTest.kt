@@ -1,5 +1,7 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.mexc
 
+import io.valroot.core.exchange.ExchangeContract
+import io.valroot.core.exchange.HmacQuery
 import io.valroot.core.model.ExactDecimal
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,7 +17,7 @@ class MexcTest {
         val request = Mexc.trades("MXUSDT", 1, 2)
         val url = Mexc.url(request, "secret0123456789", 1_700_000_000_000)
         val query = "symbol=MXUSDT&startTime=1&endTime=2&limit=100&timestamp=1700000000000&recvWindow=10000"
-        assertEquals("https://api.mexc.com/api/v3/myTrades?$query&signature=${Binance.signature("secret0123456789", query)}", url)
+        assertEquals("https://api.mexc.com/api/v3/myTrades?$query&signature=${HmacQuery.signature("secret0123456789", query)}", url)
         assertFalse(url.contains("secret0123456789"))
         assertEquals("https://api.mexc.com/api/v3/ticker/price", Mexc.url(Mexc.tickers(), null, 1))
         assertFailsWith<IllegalArgumentException> { Mexc.deposits(0, Mexc.WEEK_MILLIS + 1) }

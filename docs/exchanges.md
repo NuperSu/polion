@@ -1,6 +1,6 @@
 # Exchange accounts (Bybit, Binance, MEXC)
 
-Code: `core/…/exchange/` (`Bybit.kt` client and parsers, `BybitConnector.kt`, `BybitDecoder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt`, `Hmac.kt`), and in `ExchangeService` (`app.exchanges`): `targets`, `setKey`, `saveRows`, `applyBybitHistory`, `assets`, `chooseCoin`. Transfer matching across assets: `core/…/reconcile/TransferResolution.kt` (`AmountScale`) and the transfer branch of `core/…/accounting/Fifo.kt`. Hosts: `BybitTransport` in `androidApp` and `desktopApp`. UI: `sharedUi/…/ExchangeAccountFlows.kt`. Tests: `BybitTest`, `BybitConnectorTest`, `ExchangeCoinsTest`, `FifoTransferTest`, `TransferLinkAccountingTest`, `BybitTransportTest`, `BybitUiTest`.
+Code: `core/…/exchange/bybit/` (`Bybit.kt` client and parsers, `BybitConnector.kt` with `BybitProvider`, `BybitDecoder.kt`); shared in `core/…/exchange/`: `ExchangeProvider.kt` (providers, `ExchangeHistory`, `ExchangeSnapshot`), `ExchangeConnector.kt` (refresh loop, windowed stream reader, `RequestBudget`, `TradeSymbols`), `ExchangeCoins.kt`, `ExchangeSyncRepository.kt`, `Hmac.kt` (`HmacQuery`); and `ExchangeService` (`app.exchanges`): `targets`, `setKey`, `saveRows`, `applyHistory`, `assets`, `chooseCoin`. Transfer matching across assets: `core/…/reconcile/TransferResolution.kt` (`AmountScale`) and the transfer branch of `core/…/accounting/Fifo.kt`. Hosts: `BybitTransport` in `androidApp` and `desktopApp`. UI: `sharedUi/…/ExchangeAccountFlows.kt`. Tests: `BybitTest`, `BybitConnectorTest`, `ExchangeCoinsTest`, `FifoTransferTest`, `TransferLinkAccountingTest`, `BybitTransportTest`, `BybitUiTest`.
 
 ## Tracking an account
 
@@ -81,7 +81,7 @@ An accepted link moves lots from the outgoing asset to the incoming one with the
 
 # Binance
 
-Code: `core/…/exchange/Binance.kt` (client and parsers), `BinanceConnector.kt`, `BinanceDecoder.kt`; shared with Bybit: `Exchanges.kt` (`ExchangeKind`), `ExchangeLedgerBuilder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt` (also `exchange_cursors`). In `ExchangeService` (`app.exchanges`): `applyBinanceHistory`, `binancePairs`, `addBinancePair`. Hosts: `BinanceTransport` in `androidApp` and `desktopApp`. Tests: `BinanceTest`, `BinanceConnectorTest`, `BinanceTransportTest`, `BybitUiTest` (Binance connect and pairs).
+Code: `core/…/exchange/binance/` (`Binance.kt` requests and signing, `BinanceParsers.kt`, `BinanceConnector.kt` with `BinanceProvider`, `BinanceDecoder.kt`); shared with Bybit: `Exchanges.kt` (`ExchangeKind`), `ExchangeLedgerBuilder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt` (also `exchange_cursors`), `TradeSymbols`. In `ExchangeService` (`app.exchanges`): `applyHistory`, `pairs`, `addPair`. Hosts: `BinanceTransport` in `androidApp` and `desktopApp`. Tests: `BinanceTest`, `BinanceConnectorTest`, `BinanceTransportTest`, `BybitUiTest` (Binance connect and pairs).
 
 ## Tracking an account
 
@@ -140,7 +140,7 @@ Binance keeps no balance log. Each coin's running balance goes through the activ
 
 # MEXC
 
-Code: `core/…/exchange/Mexc.kt` (client and parsers), `MexcConnector.kt`, `MexcDecoder.kt`; shared: `ExchangeLedgerBuilder.settleByRunningBalance`, trading pairs (`ExchangeService.pairs`, `addPair`). Hosts: `MexcTransport` in `androidApp` and `desktopApp`. Tests: `MexcTest`, `MexcConnectorTest`, `MexcTransportTest`, `BybitUiTest` (MEXC connect).
+Code: `core/…/exchange/mexc/` (`Mexc.kt` client and parsers, `MexcConnector.kt` with `MexcProvider`, `MexcDecoder.kt`); shared: `ExchangeLedgerBuilder.settleByRunningBalance`, trading pairs (`ExchangeService.pairs`, `addPair`). Hosts: `MexcTransport` in `androidApp` and `desktopApp`. Tests: `MexcTest`, `MexcConnectorTest`, `MexcTransportTest`, `BybitUiTest` (MEXC connect).
 
 ## Tracking an account
 

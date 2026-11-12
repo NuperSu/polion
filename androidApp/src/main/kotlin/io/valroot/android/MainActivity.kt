@@ -486,11 +486,11 @@ private class AndroidHost(
         val account = io.valroot.core.exchange.KEY_CHECK_ACCOUNT
         return when (kind) {
             io.valroot.core.exchange.ExchangeKind.BYBIT ->
-                io.valroot.core.exchange.BybitProvider.checkKey { BybitTransport(credentials).get(account, it) }
+                io.valroot.core.exchange.bybit.BybitProvider.checkKey { BybitTransport(credentials).get(account, it) }
             io.valroot.core.exchange.ExchangeKind.BINANCE ->
-                io.valroot.core.exchange.BinanceProvider.checkKey { BinanceTransport(credentials).get(account, it) }
+                io.valroot.core.exchange.binance.BinanceProvider.checkKey { BinanceTransport(credentials).get(account, it) }
             io.valroot.core.exchange.ExchangeKind.MEXC ->
-                io.valroot.core.exchange.MexcProvider.checkKey { MexcTransport(credentials).get(account, it) }
+                io.valroot.core.exchange.mexc.MexcProvider.checkKey { MexcTransport(credentials).get(account, it) }
         }
     }
 

@@ -1,7 +1,7 @@
 package io.valroot.android
 
-import io.valroot.core.exchange.Mexc
-import io.valroot.core.exchange.MexcRequest
+import io.valroot.core.exchange.mexc.Mexc
+import io.valroot.core.exchange.mexc.MexcRequest
 import io.valroot.core.model.AccountId
 import java.io.ByteArrayOutputStream
 import java.io.IOException

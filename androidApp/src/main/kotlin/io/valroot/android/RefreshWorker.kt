@@ -11,8 +11,8 @@ import io.valroot.core.application.SourceRegistry
 import io.valroot.core.bitcoin.BitcoinProviderException
 import io.valroot.core.bitcoin.BitcoinProviderFailure
 import io.valroot.core.evm.EVM_MANIFEST
-import io.valroot.core.exchange.BYBIT_MANIFEST
-import io.valroot.core.exchange.BybitConnector
+import io.valroot.core.exchange.bybit.BYBIT_MANIFEST
+import io.valroot.core.exchange.bybit.BybitConnector
 import io.valroot.core.evm.EvmConnector
 import io.valroot.core.storage.AndroidSqliteDatabase
 import io.valroot.core.sync.JobState
@@ -176,12 +176,12 @@ class RefreshWorker(
                         if (bybitOn || binanceOn || mexcOn) MarketFeedRefresher.refreshCatalog(app)
                         if (mexcOn) {
                             val mexc = MexcTransport(credentials = { app.exchanges.key(io.valroot.core.exchange.ExchangeKind.MEXC, it) }, beforeRequest = ensureActive)
-                            connectors += io.valroot.core.exchange.MexcConnector(mexc::get)
+                            connectors += io.valroot.core.exchange.mexc.MexcConnector(mexc::get)
                         }
                         if (binanceOn) {
                             val binance =
                                 BinanceTransport(credentials = { app.exchanges.key(io.valroot.core.exchange.ExchangeKind.BINANCE, it) }, beforeRequest = ensureActive)
-                            connectors += io.valroot.core.exchange.BinanceConnector(binance::get)
+                            connectors += io.valroot.core.exchange.binance.BinanceConnector(binance::get)
                         }
                         if (bybitOn) {
                             val bybit = BybitTransport(credentials = { app.exchanges.key(io.valroot.core.exchange.ExchangeKind.BYBIT, it) }, beforeRequest = ensureActive)
@@ -207,7 +207,7 @@ class RefreshWorker(
                         val states = outcomes.flatMap { it.jobs }
                         val sourceNotes = outcomes.flatMap { it.notes }.joinToString(" ").ifEmpty { null }
                         // Once a chain has refreshed, new tokens are linked to coins and priced.
-                        if (outcomes.any { it.connector in setOf(EVM_MANIFEST.id, BYBIT_MANIFEST.id, io.valroot.core.exchange.BINANCE_MANIFEST.id, io.valroot.core.exchange.MEXC_MANIFEST.id) && it.jobs.contains(JobState.COMPLETED) }) {
+                        if (outcomes.any { it.connector in setOf(EVM_MANIFEST.id, BYBIT_MANIFEST.id, io.valroot.core.exchange.binance.BINANCE_MANIFEST.id, io.valroot.core.exchange.mexc.MEXC_MANIFEST.id) && it.jobs.contains(JobState.COMPLETED) }) {
                             MarketFeedRefresher.refreshEvmCatalogAndPrices(app)
                         }
                         when {

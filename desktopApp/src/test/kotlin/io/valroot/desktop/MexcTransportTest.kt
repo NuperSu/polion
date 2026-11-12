@@ -1,7 +1,7 @@
 package io.valroot.desktop
 
-import io.valroot.core.exchange.Mexc
-import io.valroot.core.exchange.MexcRequest
+import io.valroot.core.exchange.mexc.Mexc
+import io.valroot.core.exchange.mexc.MexcRequest
 import io.valroot.core.model.AccountId
 import java.net.HttpURLConnection
 import java.net.URI

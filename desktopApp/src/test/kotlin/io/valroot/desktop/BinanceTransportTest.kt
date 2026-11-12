@@ -1,7 +1,7 @@
 package io.valroot.desktop
 
-import io.valroot.core.exchange.Binance
-import io.valroot.core.exchange.BinanceRequest
+import io.valroot.core.exchange.binance.Binance
+import io.valroot.core.exchange.binance.BinanceRequest
 import io.valroot.core.model.AccountId
 import java.net.HttpURLConnection
 import java.net.URI

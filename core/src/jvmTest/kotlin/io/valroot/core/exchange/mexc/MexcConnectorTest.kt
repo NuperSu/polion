@@ -1,8 +1,11 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.mexc
 
 import io.valroot.core.application.ActivityFilter
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.application.SourceRefreshOptions
+import io.valroot.core.exchange.ExchangeAssets
+import io.valroot.core.exchange.ExchangeKind
+import io.valroot.core.exchange.ExchangeTransfer
 import io.valroot.core.ledger.ActivityKind
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.ActivityId

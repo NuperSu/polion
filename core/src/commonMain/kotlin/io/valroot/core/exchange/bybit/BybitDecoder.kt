@@ -1,10 +1,17 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.bybit
 
-import io.valroot.core.ledger.Activity
+import io.valroot.core.exchange.ExchangeAssets
+import io.valroot.core.exchange.ExchangeDecoded
+import io.valroot.core.exchange.ExchangeHistory
+import io.valroot.core.exchange.ExchangeKind
+import io.valroot.core.exchange.ExchangeLedgerBuilder
+import io.valroot.core.exchange.ExchangeRow
+import io.valroot.core.exchange.ExchangeSnapshot
+import io.valroot.core.exchange.ExchangeStreamState
+import io.valroot.core.exchange.ExchangeTransfer
 import io.valroot.core.ledger.ActivityKind
 import io.valroot.core.ledger.MovementRole
 import io.valroot.core.model.AccountId
-import io.valroot.core.model.ActivityId
 import io.valroot.core.model.AssetId
 import io.valroot.core.model.ExactDecimal
 import io.valroot.core.model.SourceRecordId
@@ -19,22 +26,6 @@ data class BybitBalances(
     val elsewhere: Map<String, ExactDecimal>,
     /** The raw observation that holds these balances. */
     val source: SourceRecordId,
-)
-
-/** An on-chain transfer behind an exchange activity: the coin's chain as the exchange names it, and the transaction ID. */
-data class ExchangeTransfer(
-    val chain: String,
-    val txId: String,
-)
-
-data class ExchangeDecoded(
-    val activities: List<Activity>,
-    /** Activities that move coins on chain, by activity. */
-    val transfers: Map<ActivityId, ExchangeTransfer>,
-    /** Symbols without a coin; records that move them wait until the user chooses one. */
-    val unresolved: Set<String>,
-    /** Records that could not be represented, such as amounts finer than the asset's decimals. */
-    val failures: List<String>,
 )
 
 /**

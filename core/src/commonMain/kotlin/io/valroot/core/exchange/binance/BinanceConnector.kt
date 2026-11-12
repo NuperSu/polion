@@ -1,10 +1,22 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.binance
 
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.application.SourceRefreshOptions
 import io.valroot.core.connectors.Capability
 import io.valroot.core.connectors.Coverage
 import io.valroot.core.connectors.IntegrationManifest
+import io.valroot.core.exchange.ExchangeBalance
+import io.valroot.core.exchange.ExchangeConnector
+import io.valroot.core.exchange.ExchangeHistory
+import io.valroot.core.exchange.ExchangeKeyInfo
+import io.valroot.core.exchange.ExchangeKind
+import io.valroot.core.exchange.ExchangeProvider
+import io.valroot.core.exchange.ExchangeRow
+import io.valroot.core.exchange.ExchangeSnapshot
+import io.valroot.core.exchange.ExchangeTransport
+import io.valroot.core.exchange.RequestBudget
+import io.valroot.core.exchange.StreamWindows
+import io.valroot.core.exchange.TradeSymbols
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.ExactDecimal
 
@@ -53,10 +65,10 @@ class BinanceConnector(
         options: SourceRefreshOptions,
     ): Boolean {
         val budget = RequestBudget<BinanceRequest>(MAX_REQUESTS) { get(account, it) }
-        require(Binance.parseReadOnly(budget.send(Binance.restrictions()))) {
+        require(BinanceParsers.parseReadOnly(budget.send(Binance.restrictions()))) {
             "This API key can trade, transfer or withdraw; Valroot accepts only keys that can read"
         }
-        val (keyUid, spot) = Binance.parseAccount(budget.send(Binance.account()))
+        val (keyUid, spot) = BinanceParsers.parseAccount(budget.send(Binance.account()))
         require(keyUid == uid) { "This API key belongs to another Binance account" }
         val now = app.clockMillis()
         val balances = balances(budget, spot)
@@ -75,7 +87,10 @@ class BinanceConnector(
         }
         if (!budget.spent) {
             save(
-                Binance.parseDust(budget.send(Binance.dust())).map { ExchangeRow(BinanceDecoder.DUST, it.id, it.atMillis, it.raw, "") },
+                BinanceParsers
+                    .parseDust(
+                        budget.send(Binance.dust()),
+                    ).map { ExchangeRow(BinanceDecoder.DUST, it.id, it.atMillis, it.raw, "") },
             )
         }
 
@@ -92,7 +107,7 @@ class BinanceConnector(
             )
         val contracts =
             if (unmatched.isNotEmpty() && !budget.spent) {
-                Binance.parseCoinContracts(budget.send(Binance.coins())).filterKeys { it in unmatched }
+                BinanceParsers.parseCoinContracts(budget.send(Binance.coins())).filterKeys { it in unmatched }
             } else {
                 emptyMap()
             }
@@ -111,8 +126,8 @@ class BinanceConnector(
         spot: List<BinanceBalance>,
     ): Map<String, ExactDecimal> {
         val payload = budget.send(Binance.walletBalance())
-        val detailed = Binance.parseWalletBalances(payload)
-        val withValue = Binance.parseWalletsWithBalance(payload)
+        val detailed = BinanceParsers.parseWalletBalances(payload)
+        val withValue = BinanceParsers.parseWalletsWithBalance(payload)
         val all = detailed.toMutableList()
         if (detailed.none { it.wallet == "Spot" }) all += spot
         if (detailed.none { it.wallet.startsWith("Earn") } && withValue.any { it.startsWith("Earn") }) {
@@ -120,7 +135,7 @@ class BinanceConnector(
                 var page = 1
                 while (true) {
                     val (rows, total) =
-                        Binance.parseEarnPositions(
+                        BinanceParsers.parseEarnPositions(
                             budget.send(if (locked) Binance.lockedPositions(page) else Binance.flexiblePositions(page)),
                             locked,
                         )
@@ -148,7 +163,7 @@ class BinanceConnector(
         budget: RequestBudget<BinanceRequest>,
         save: (List<ExchangeRow>) -> Unit,
     ): Map<String, Pair<String, String>>? {
-        val listed = Binance.parseSymbols(budget.send(Binance.tickers()))
+        val listed = BinanceParsers.parseSymbols(budget.send(Binance.tickers()))
         val candidates = TradeSymbols.candidates(app, ExchangeKind.BINANCE, account, balances, listed, QUOTES)
         val changed = TradeSymbols.changedCoins(app, account, balances)
         val cursors = app.exchanges.cursors(account)
@@ -161,7 +176,7 @@ class BinanceConnector(
             var fromId = nextId
             while (true) {
                 if (budget.spent) return null
-                val trades = Binance.parseTrades(budget.send(Binance.trades(symbol, fromId)))
+                val trades = BinanceParsers.parseTrades(budget.send(Binance.trades(symbol, fromId)))
                 save(trades.map { ExchangeRow(BinanceDecoder.TRADES, "$symbol:${it.id}", it.atMillis, it.raw, "") })
                 trades.maxOfOrNull { it.id }?.let { fromId = it + 1 }
                 app.exchanges.saveCursor(
@@ -189,7 +204,7 @@ class BinanceConnector(
             listOf(
                 BinanceStream(BinanceDecoder.DEPOSITS, Binance.RECORD_WINDOW_MILLIS, { Binance.LAUNCH_MILLIS }, null) { send, from, to ->
                     paged(1000) { offset ->
-                        Binance
+                        BinanceParsers
                             .parseDeposits(
                                 send(Binance.deposits(from, to, offset)),
                             ).map { ExchangeRow(BinanceDecoder.DEPOSITS, it.id, it.atMillis, it.raw, "") }
@@ -197,13 +212,13 @@ class BinanceConnector(
                 },
                 BinanceStream(BinanceDecoder.WITHDRAWALS, Binance.RECORD_WINDOW_MILLIS, { Binance.LAUNCH_MILLIS }, null) { send, from, to ->
                     paged(1000) { offset ->
-                        Binance
+                        BinanceParsers
                             .parseWithdrawals(send(Binance.withdrawals(from, to, offset)))
                             .map { ExchangeRow(BinanceDecoder.WITHDRAWALS, it.id, it.atMillis, it.raw, "") }
                     }
                 },
                 BinanceStream(BinanceDecoder.DIVIDENDS, Binance.DIVIDEND_WINDOW_MILLIS, { Binance.LAUNCH_MILLIS }, null) { send, from, to ->
-                    Binance.parseDividends(send(Binance.dividends(from, to))).first.map {
+                    BinanceParsers.parseDividends(send(Binance.dividends(from, to))).first.map {
                         ExchangeRow(BinanceDecoder.DIVIDENDS, it.id, it.atMillis, it.raw, "")
                     }
                 },
@@ -211,7 +226,7 @@ class BinanceConnector(
                     val rows = mutableListOf<ExchangeRow>()
                     var start = from
                     while (true) {
-                        val (converts, more) = Binance.parseConverts(send(Binance.converts(start, to)))
+                        val (converts, more) = BinanceParsers.parseConverts(send(Binance.converts(start, to)))
                         rows += converts.map { ExchangeRow(BinanceDecoder.CONVERTS, it.id, it.atMillis, it.raw, "") }
                         val last = converts.maxOfOrNull { it.atMillis } ?: break
                         if (!more || last + 1 >= to) break
@@ -227,7 +242,10 @@ class BinanceConnector(
                     { it - Binance.PAY_RETENTION_MILLIS },
                     null,
                 ) { send, from, to ->
-                    Binance.parsePay(send(Binance.pay(from, to))).map { ExchangeRow(BinanceDecoder.PAY, it.id, it.atMillis, it.raw, "") }
+                    BinanceParsers
+                        .parsePay(
+                            send(Binance.pay(from, to)),
+                        ).map { ExchangeRow(BinanceDecoder.PAY, it.id, it.atMillis, it.raw, "") }
                 },
                 card(BinanceDecoder.CARD_BUYS, buy = true),
                 card(BinanceDecoder.CARD_SALES, buy = false),
@@ -243,7 +261,7 @@ class BinanceConnector(
             var page = 1
             while (true) {
                 val request = if (locked) Binance.lockedRewards(from, to, page) else Binance.flexibleRewards(from, to, page)
-                val (rewards, total) = Binance.parseRewards(send(request), locked)
+                val (rewards, total) = BinanceParsers.parseRewards(send(request), locked)
                 rows += rewards.map { ExchangeRow(name, it.id, it.atMillis, it.raw, "") }
                 if (rewards.isEmpty() || page * Binance.EARN_PAGE >= total) break
                 page++
@@ -256,7 +274,7 @@ class BinanceConnector(
             buy: Boolean,
         ) = BinanceStream(name, Binance.RECORD_WINDOW_MILLIS, { Binance.LAUNCH_MILLIS }, 12) { send, from, to ->
             paged(500, start = 1, step = 1) { page ->
-                Binance
+                BinanceParsers
                     .parseFiatPayments(
                         send(Binance.fiatPayments(buy, from, to, page)),
                         buy,
@@ -269,7 +287,7 @@ class BinanceConnector(
             buy: Boolean,
         ) = BinanceStream(name, Binance.MONTH_WINDOW_MILLIS, { it - Binance.P2P_RETENTION_MILLIS }, null) { send, from, to ->
             paged(100, start = 1, step = 1) { page ->
-                Binance.parseP2p(send(Binance.p2p(buy, from, to, page))).map { ExchangeRow(name, it.id, it.atMillis, it.raw, "") }
+                BinanceParsers.parseP2p(send(Binance.p2p(buy, from, to, page))).map { ExchangeRow(name, it.id, it.atMillis, it.raw, "") }
             }
         }
 
@@ -302,8 +320,8 @@ object BinanceProvider : ExchangeProvider<BinanceRequest> {
     override fun connector(transport: ExchangeTransport<BinanceRequest>) = BinanceConnector(transport::get)
 
     override fun checkKey(send: (BinanceRequest) -> String): ExchangeKeyInfo {
-        val readOnly = Binance.parseReadOnly(send(Binance.restrictions()))
-        val (uid, _) = Binance.parseAccount(send(Binance.account()))
+        val readOnly = BinanceParsers.parseReadOnly(send(Binance.restrictions()))
+        val (uid, _) = BinanceParsers.parseAccount(send(Binance.account()))
         return ExchangeKeyInfo(uid, readOnly, null)
     }
 }

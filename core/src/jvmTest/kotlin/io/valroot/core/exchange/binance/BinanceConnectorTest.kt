@@ -1,8 +1,11 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.binance
 
 import io.valroot.core.application.ActivityFilter
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.application.SourceRefreshOptions
+import io.valroot.core.exchange.ExchangeAssets
+import io.valroot.core.exchange.ExchangeKind
+import io.valroot.core.exchange.ExchangeTransfer
 import io.valroot.core.ledger.ActivityKind
 import io.valroot.core.ledger.MovementRole
 import io.valroot.core.model.AccountId
@@ -133,7 +136,8 @@ class BinanceConnectorTest {
                 }
                 "/sapi/v1/capital/deposit/hisrec" -> "[" + deposits.filter { inside(time(it, "insertTime"), q) }.joinToString(",") + "]"
                 "/sapi/v1/capital/withdraw/history" ->
-                    "[" + withdrawals.filter { inside(Binance.withdrawal(Binance.row(it)).atMillis, q) }.joinToString(",") + "]"
+                    "[" + withdrawals.filter { inside(BinanceParsers.withdrawal(BinanceParsers.row(it)).atMillis, q) }.joinToString(",") +
+                        "]"
                 "/sapi/v1/asset/assetDividend" ->
                     dividends.filter { inside(time(it, "divTime"), q) }.let { """{"rows":[${it.joinToString(",")}],"total":${it.size}}""" }
                 "/sapi/v1/convert/tradeFlow" -> """{"list":[],"moreData":false}"""

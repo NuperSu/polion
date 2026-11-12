@@ -19,8 +19,10 @@ import io.valroot.core.bitcoin.BitcoinProviderFailure
 import io.valroot.core.bitcoin.EsploraTransport
 import io.valroot.core.evm.EVM_MANIFEST
 import io.valroot.core.evm.EvmConnector
-import io.valroot.core.exchange.BYBIT_MANIFEST
-import io.valroot.core.exchange.BybitConnector
+import io.valroot.core.exchange.binance.BinanceConnector
+import io.valroot.core.exchange.bybit.BYBIT_MANIFEST
+import io.valroot.core.exchange.bybit.BybitConnector
+import io.valroot.core.exchange.mexc.MexcConnector
 import io.valroot.core.model.TrackingTargetId
 import io.valroot.core.storage.JvmSqliteDatabase
 import io.valroot.core.sync.JobState
@@ -547,13 +549,13 @@ internal class DesktopHost(
         val account = io.valroot.core.exchange.KEY_CHECK_ACCOUNT
         return when (kind) {
             io.valroot.core.exchange.ExchangeKind.BYBIT ->
-                io.valroot.core.exchange.BybitProvider
+                io.valroot.core.exchange.bybit.BybitProvider
                     .checkKey { BybitTransport(credentials).get(account, it) }
             io.valroot.core.exchange.ExchangeKind.BINANCE ->
-                io.valroot.core.exchange.BinanceProvider
+                io.valroot.core.exchange.binance.BinanceProvider
                     .checkKey { BinanceTransport(credentials).get(account, it) }
             io.valroot.core.exchange.ExchangeKind.MEXC ->
-                io.valroot.core.exchange.MexcProvider
+                io.valroot.core.exchange.mexc.MexcProvider
                     .checkKey { MexcTransport(credentials).get(account, it) }
         }
     }
@@ -625,7 +627,7 @@ internal class DesktopHost(
                             beforeRequest = { check(!closing.get()) { "MEXC refresh was cancelled. Retry if needed." } },
                         )
                     connectors +=
-                        io.valroot.core.exchange
+                        io.valroot.core.exchange.mexc
                             .MexcConnector(transport::get)
                 }
                 if (binanceOn) {
@@ -635,7 +637,7 @@ internal class DesktopHost(
                             beforeRequest = { check(!closing.get()) { "Binance refresh was cancelled. Retry if needed." } },
                         )
                     connectors +=
-                        io.valroot.core.exchange
+                        io.valroot.core.exchange.binance
                             .BinanceConnector(transport::get)
                 }
                 if (bybitOn) {
@@ -675,8 +677,8 @@ internal class DesktopHost(
                             setOf(
                                 EVM_MANIFEST.id,
                                 BYBIT_MANIFEST.id,
-                                io.valroot.core.exchange.BINANCE_MANIFEST.id,
-                                io.valroot.core.exchange.MEXC_MANIFEST.id,
+                                io.valroot.core.exchange.binance.BINANCE_MANIFEST.id,
+                                io.valroot.core.exchange.mexc.MEXC_MANIFEST.id,
                             ) &&
                             it.jobs.contains(JobState.COMPLETED)
                     }

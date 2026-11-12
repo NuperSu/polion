@@ -1,7 +1,8 @@
 package io.valroot.desktop
 
-import io.valroot.core.exchange.Binance
-import io.valroot.core.exchange.BinanceRequest
+import io.valroot.core.exchange.binance.Binance
+import io.valroot.core.exchange.binance.BinanceParsers
+import io.valroot.core.exchange.binance.BinanceRequest
 import io.valroot.core.model.AccountId
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -81,7 +82,7 @@ internal class BinanceTransport(
             }
         var answer = send(request, credentials)
         if (answer.contains("\"code\":-1021")) {
-            clockOffset = Binance.parseServerTime(send(Binance.time(), null)) - wallClock()
+            clockOffset = BinanceParsers.parseServerTime(send(Binance.time(), null)) - wallClock()
             answer = send(request, credentials)
         }
         return answer

@@ -1,10 +1,22 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.mexc
 
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.application.SourceRefreshOptions
 import io.valroot.core.connectors.Capability
 import io.valroot.core.connectors.Coverage
 import io.valroot.core.connectors.IntegrationManifest
+import io.valroot.core.exchange.ExchangeBalance
+import io.valroot.core.exchange.ExchangeConnector
+import io.valroot.core.exchange.ExchangeHistory
+import io.valroot.core.exchange.ExchangeKeyInfo
+import io.valroot.core.exchange.ExchangeKind
+import io.valroot.core.exchange.ExchangeProvider
+import io.valroot.core.exchange.ExchangeRow
+import io.valroot.core.exchange.ExchangeSnapshot
+import io.valroot.core.exchange.ExchangeTransport
+import io.valroot.core.exchange.RequestBudget
+import io.valroot.core.exchange.StreamWindows
+import io.valroot.core.exchange.TradeSymbols
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.ExactDecimal
 

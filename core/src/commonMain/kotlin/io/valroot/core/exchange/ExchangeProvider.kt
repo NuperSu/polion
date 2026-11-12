@@ -2,6 +2,9 @@ package io.valroot.core.exchange
 
 import io.valroot.core.application.SourceConnector
 import io.valroot.core.connectors.IntegrationManifest
+import io.valroot.core.exchange.binance.BinanceProvider
+import io.valroot.core.exchange.bybit.BybitProvider
+import io.valroot.core.exchange.mexc.MexcProvider
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.AssetId
 import io.valroot.core.model.ExactDecimal

@@ -1,7 +1,7 @@
 package io.valroot.desktop
 
-import io.valroot.core.exchange.Bybit
-import io.valroot.core.exchange.BybitRequest
+import io.valroot.core.exchange.bybit.Bybit
+import io.valroot.core.exchange.bybit.BybitRequest
 import io.valroot.core.model.AccountId
 import java.net.HttpURLConnection
 import java.net.URI

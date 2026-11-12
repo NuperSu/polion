@@ -1,5 +1,16 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.binance
 
+import io.valroot.core.exchange.ExchangeAssets
+import io.valroot.core.exchange.ExchangeDecoded
+import io.valroot.core.exchange.ExchangeHistory
+import io.valroot.core.exchange.ExchangeKind
+import io.valroot.core.exchange.ExchangeLedgerBuilder
+import io.valroot.core.exchange.ExchangeRow
+import io.valroot.core.exchange.ExchangeSnapshot
+import io.valroot.core.exchange.ExchangeStreamState
+import io.valroot.core.exchange.ExchangeTransfer
+import io.valroot.core.exchange.totalsRecord
+import io.valroot.core.exchange.transfersFrom
 import io.valroot.core.ledger.ActivityKind
 import io.valroot.core.ledger.MovementRole
 import io.valroot.core.model.AccountId
@@ -60,7 +71,7 @@ object BinanceDecoder : ExchangeHistory {
         val fields = listOf("coin", "asset", "currency", "fromAsset", "toAsset", "commissionAsset", "cryptoCurrency", "targetAsset")
         return rows
             .flatMap { row ->
-                val o = Binance.row(row.payload)
+                val o = BinanceParsers.row(row.payload)
                 val nested = (o["userAssetDribbletDetails"] as? JsonArray).orEmpty().map { it as JsonObject }
                 val symbol = if (row.stream == TRADES) (o["symbol"] as? JsonPrimitive)?.content?.let { pairs[it] } else null
                 (listOf(o) + nested).flatMap { item -> fields.mapNotNull { (item[it] as? JsonPrimitive)?.content } } +
@@ -80,11 +91,11 @@ object BinanceDecoder : ExchangeHistory {
     ): ExchangeDecoded {
         val ledger = ExchangeLedgerBuilder(ExchangeKind.BINANCE, account, uid, assets, decimals, VERSION)
         rows.forEach { row ->
-            val o = Binance.row(row.payload)
+            val o = BinanceParsers.row(row.payload)
             val source = setOf(SourceRecordId(row.source))
             when (row.stream) {
                 TRADES -> {
-                    val t = Binance.trade(o)
+                    val t = BinanceParsers.trade(o)
                     val (base, quote) = pairs[t.symbol] ?: return@forEach
                     ledger.build("trade:${t.symbol}:${t.id}", t.atMillis, source) {
                         add(base, if (t.isBuyer) t.qty else negate(t.qty), MovementRole.TRADE_LEG)
@@ -94,7 +105,7 @@ object BinanceDecoder : ExchangeHistory {
                     }
                 }
                 CONVERTS -> {
-                    val c = Binance.convert(o)
+                    val c = BinanceParsers.convert(o)
                     if (!c.success) return@forEach
                     ledger.build("convert:${c.id}", c.atMillis, source) {
                         add(c.fromAsset, negate(c.fromAmount), MovementRole.TRADE_LEG)
@@ -103,7 +114,7 @@ object BinanceDecoder : ExchangeHistory {
                     }
                 }
                 DUST -> {
-                    val dust = Binance.dust(o)
+                    val dust = BinanceParsers.dust(o)
                     ledger.build("dust:${dust.id}", dust.atMillis, source) {
                         dust.parts.forEach { part ->
                             add(part.fromAsset, negate(part.amount), MovementRole.TRADE_LEG)
@@ -114,7 +125,7 @@ object BinanceDecoder : ExchangeHistory {
                     }
                 }
                 DEPOSITS -> {
-                    val d = Binance.deposit(o)
+                    val d = BinanceParsers.deposit(o)
                     if (!d.credited) return@forEach
                     val id =
                         ledger.build("deposit:${d.id}", d.atMillis, source) {
@@ -124,7 +135,7 @@ object BinanceDecoder : ExchangeHistory {
                     if (id != null && !d.internal && d.txId.isNotBlank()) ledger.transfers[id] = ExchangeTransfer(d.network, d.txId)
                 }
                 WITHDRAWALS -> {
-                    val w = Binance.withdrawal(o)
+                    val w = BinanceParsers.withdrawal(o)
                     if (!w.done) return@forEach
                     val id =
                         ledger.build("withdrawal:${w.id}", w.atMillis, source) {
@@ -135,7 +146,7 @@ object BinanceDecoder : ExchangeHistory {
                     if (id != null && !w.internal && w.txId.isNotBlank()) ledger.transfers[id] = ExchangeTransfer(w.network, w.txId)
                 }
                 DIVIDENDS -> {
-                    val d = Binance.dividend(o)
+                    val d = BinanceParsers.dividend(o)
                     val incoming = d.amount.coefficient.sign > 0
                     ledger.build("dividend:${d.id}", d.atMillis, source) {
                         add(d.asset, d.amount, if (incoming) MovementRole.REWARD else MovementRole.TRANSFER)
@@ -143,21 +154,21 @@ object BinanceDecoder : ExchangeHistory {
                     }
                 }
                 FLEXIBLE_REWARDS, LOCKED_REWARDS -> {
-                    val r = Binance.reward(o, locked = row.stream == LOCKED_REWARDS)
+                    val r = BinanceParsers.reward(o, locked = row.stream == LOCKED_REWARDS)
                     ledger.build("reward:${row.key}", r.atMillis, source) {
                         add(r.asset, r.amount, MovementRole.REWARD)
                         ActivityKind.REWARD
                     }
                 }
                 PAY -> {
-                    val p = Binance.pay(o)
+                    val p = BinanceParsers.pay(o)
                     ledger.build("pay:${p.id}", p.atMillis, source) {
                         add(p.currency, p.amount, MovementRole.TRANSFER)
                         ActivityKind.TRANSFER
                     }
                 }
                 CARD_BUYS, CARD_SALES -> {
-                    val f = Binance.fiatPayment(o, buy = row.stream == CARD_BUYS)
+                    val f = BinanceParsers.fiatPayment(o, buy = row.stream == CARD_BUYS)
                     if (!f.completed) return@forEach
                     ledger.build("card:${f.id}", f.atMillis, source) {
                         add(f.crypto, if (f.buy) f.cryptoAmount else negate(f.cryptoAmount), MovementRole.TRANSFER)
@@ -165,7 +176,7 @@ object BinanceDecoder : ExchangeHistory {
                     }
                 }
                 P2P_BUYS, P2P_SALES -> {
-                    val p = Binance.p2p(o)
+                    val p = BinanceParsers.p2p(o)
                     if (!p.completed) return@forEach
                     ledger.build("p2p:${p.id}", p.atMillis, source) {
                         add(p.asset, if (p.buy) p.amount else negate(p.amount), MovementRole.TRANSFER)

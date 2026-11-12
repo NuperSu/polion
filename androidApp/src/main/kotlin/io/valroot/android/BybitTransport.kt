@@ -1,8 +1,8 @@
 package io.valroot.android
 
-import io.valroot.core.exchange.Bybit
-import io.valroot.core.exchange.BybitException
-import io.valroot.core.exchange.BybitRequest
+import io.valroot.core.exchange.bybit.Bybit
+import io.valroot.core.exchange.bybit.BybitException
+import io.valroot.core.exchange.bybit.BybitRequest
 import io.valroot.core.model.AccountId
 import java.io.ByteArrayOutputStream
 import java.io.IOException

@@ -1,5 +1,8 @@
-package io.valroot.core.exchange
+package io.valroot.core.exchange.mexc
 
+import io.valroot.core.exchange.ExchangeApiException
+import io.valroot.core.exchange.ExchangeContract
+import io.valroot.core.exchange.HmacQuery
 import io.valroot.core.model.ExactDecimal
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -26,7 +29,7 @@ data class MexcRequest(
         )
     }
 
-    val queryString: String get() = query.joinToString("&") { (name, value) -> "$name=$value" }
+    val queryString: String get() = HmacQuery.query(query)
 }
 
 data class MexcTrade(
@@ -212,19 +215,15 @@ object Mexc {
         request: MexcRequest,
         secret: String?,
         timestampMillis: Long,
-    ): String {
-        val query =
-            if (request.signed) {
-                val signed =
-                    (request.query + listOf("timestamp" to "$timestampMillis", "recvWindow" to "$RECV_WINDOW")).joinToString("&") {
-                        "${it.first}=${it.second}"
-                    }
-                "$signed&signature=${hmacSha256(requireNotNull(secret).encodeToByteArray(), signed.encodeToByteArray()).toHex()}"
-            } else {
-                request.queryString
-            }
-        return BASE_URL + request.path + if (query.isEmpty()) "" else "?$query"
-    }
+    ): String =
+        HmacQuery.url(
+            BASE_URL,
+            request.path,
+            request.query,
+            if (request.signed) requireNotNull(secret) else null,
+            timestampMillis,
+            RECV_WINDOW,
+        )
 
     /** A response as JSON; an object with a `code` other than 0 or 200 throws [MexcException]. */
     fun body(payload: String): JsonElement {
