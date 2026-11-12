@@ -489,7 +489,17 @@ private class AndroidHost(
                         BybitTransport({ key to secret })
                             .get(io.valroot.core.model.AccountId("key-check"), io.valroot.core.exchange.Bybit.keyInfo()),
                     ).let { io.valroot.core.exchange.ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis) }
-            io.valroot.core.exchange.ExchangeKind.BINANCE -> throw IllegalStateException("Binance accounts are not available yet.")
+            io.valroot.core.exchange.ExchangeKind.BINANCE -> {
+                val transport = BinanceTransport({ key to secret })
+                val check = io.valroot.core.model.AccountId("key-check")
+                val readOnly =
+                    io.valroot.core.exchange.Binance
+                        .parseReadOnly(transport.get(check, io.valroot.core.exchange.Binance.restrictions()))
+                val (uid, _) =
+                    io.valroot.core.exchange.Binance
+                        .parseAccount(transport.get(check, io.valroot.core.exchange.Binance.account()))
+                io.valroot.core.exchange.ExchangeKeyInfo(uid, readOnly, null)
+            }
         }
 
     private fun refresh(
