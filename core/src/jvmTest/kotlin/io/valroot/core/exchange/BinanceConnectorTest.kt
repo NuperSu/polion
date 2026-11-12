@@ -177,7 +177,7 @@ class BinanceConnectorTest {
 
     private fun units(decimal: String) =
         ExactInteger.parse(decimal.replace(".", "").trimStart('0').ifEmpty { "0" }).timesPowerOfTen(
-            18 - decimal.substringAfter('.', "").length,
+            ExchangeAssets.DECIMALS - decimal.substringAfter('.', "").length,
         )
 
     private fun activities(app: PortfolioApplication) =
@@ -244,7 +244,7 @@ class BinanceConnectorTest {
                 app.exchangeTransfers(),
             )
             // Symbols pairing the account's coins, as Binance lists them.
-            assertEquals(setOf("BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC"), app.binancePairs(account).keys)
+            assertEquals(setOf("BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC"), app.exchangePairs(account).keys)
             assertTrue(app.exchangeStreams(account).values.all { it.complete })
         }
     }
@@ -296,7 +296,7 @@ class BinanceConnectorTest {
                 app.exchangeStatus(account).error,
             )
             binance.readOnly = true
-            app.addBinancePair(account, "xyz", "usdt")
+            app.addExchangePair(account, "xyz", "usdt")
             connector.refresh(app, SourceRefreshOptions())
             assertTrue(binance.requests.any { it.path == "/api/v3/myTrades" && it.query.toMap()["symbol"] == "XYZUSDT" })
         }

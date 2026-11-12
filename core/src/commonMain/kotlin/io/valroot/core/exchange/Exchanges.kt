@@ -9,9 +9,23 @@ enum class ExchangeKind(
 ) {
     BYBIT("bybit", "Bybit"),
     BINANCE("binance", "Binance"),
+    MEXC("mexc", "MEXC"),
     ;
 
     val network: NetworkId get() = NetworkId(id)
+
+    /** Exchanges whose trades are read per trading pair, which the account screen lists. */
+    val readsPerSymbol: Boolean get() = this == BINANCE || this == MEXC
+
+    /** Whether [identity] is how this exchange names an account: a numeric user ID, or MEXC's referral code. */
+    fun validIdentity(identity: String): Boolean =
+        if (this ==
+            MEXC
+        ) {
+            identity.length in 1..64 && identity.all { it.isLetterOrDigit() && it.code < 128 }
+        } else {
+            identity.all(Char::isDigit)
+        }
 
     companion object {
         fun ofNetwork(network: NetworkId): ExchangeKind? = entries.firstOrNull { it.network == network }

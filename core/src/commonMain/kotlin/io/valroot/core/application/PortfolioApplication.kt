@@ -1112,7 +1112,10 @@ class PortfolioApplication(
         return when (kind) {
             io.valroot.core.exchange.ExchangeKind.BINANCE ->
                 io.valroot.core.exchange.BinanceDecoder
-                    .coins(rows, binancePairs(account))
+                    .coins(rows, exchangePairs(account))
+            io.valroot.core.exchange.ExchangeKind.MEXC ->
+                io.valroot.core.exchange.MexcDecoder
+                    .coins(rows, exchangePairs(account))
             io.valroot.core.exchange.ExchangeKind.BYBIT ->
                 rows
                     .flatMap { row ->
@@ -1130,8 +1133,8 @@ class PortfolioApplication(
         }
     }
 
-    /** The Binance symbols an account's trades are read for, with their base and quote coins. */
-    fun binancePairs(account: AccountId): Map<String, Pair<String, String>> =
+    /** The symbols an exchange account's trades are read for (Binance, MEXC), with their base and quote coins. */
+    fun exchangePairs(account: AccountId): Map<String, Pair<String, String>> =
         exchangeSync
             .cursors(account)
             .filterKeys {
@@ -1146,8 +1149,8 @@ class PortfolioApplication(
                 }
             }.toMap()
 
-    /** Adds a Binance symbol to read trades for, as its base and quote coins; read on the next refresh. */
-    fun addBinancePair(
+    /** Adds a symbol to read an exchange account's trades for, as its base and quote coins; read on the next refresh. */
+    fun addExchangePair(
         account: AccountId,
         base: String,
         quote: String,
@@ -1156,6 +1159,58 @@ class PortfolioApplication(
         val q = quote.trim().uppercase()
         require(b.matches(EXCHANGE_SYMBOL) && q.matches(EXCHANGE_SYMBOL) && b != q) { "Enter two coin symbols, such as BTC and USDT" }
         exchangeSync.saveCursor(account, io.valroot.core.exchange.BinanceConnector.USER_PAIR + b + q, "$b/$q")
+    }
+
+    /**
+     * Derives a MEXC account's activities again from every saved record and its spot [balances], read at [atMillis].
+     * Coins nothing explains are an opening amount where the records start.
+     */
+    fun applyMexcHistory(
+        account: AccountId,
+        uid: String,
+        balances: Map<String, ExactDecimal>,
+        atMillis: Long,
+        pairs: Map<String, Pair<String, String>>,
+        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
+    ): io.valroot.core.exchange.ExchangeDecoded {
+        val kind = io.valroot.core.exchange.ExchangeKind.MEXC
+        require(exchangeTargets(kind).any { it.first == account && it.second == uid }) { "Unknown MEXC account" }
+        val rows = exchangeSync.rows(account)
+        val held = balances.filterValues { it.coefficient.sign != 0 }
+        val assets =
+            exchangeAssets(
+                kind.id,
+                io.valroot.core.exchange.MexcDecoder
+                    .coins(rows, pairs) + held.keys,
+                contracts,
+            )
+        val snapshot = "mexc-balances-1\n" + held.entries.sortedBy { it.key }.joinToString("\n") { "${it.key}|${it.value}" }
+        val decoded =
+            db.transaction {
+                val source = ingestExchangeRecord(kind, account, uid, "balances", snapshot, io.valroot.core.exchange.MexcDecoder.VERSION)
+                val recordsFrom =
+                    exchangeSync
+                        .streams(account)
+                        .values
+                        .filter {
+                            it.stream == io.valroot.core.exchange.MexcDecoder.DEPOSITS ||
+                                it.stream == io.valroot.core.exchange.MexcDecoder.WITHDRAWALS
+                        }.minOfOrNull { it.fromMillis }
+                val decoded =
+                    io.valroot.core.exchange.MexcDecoder.decode(
+                        account,
+                        uid,
+                        rows,
+                        assets,
+                        pairs,
+                        io.valroot.core.exchange.MexcDecoder
+                            .Balances(atMillis, held, source, recordsFrom),
+                    ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
+                saveExchangeDecode(kind, account, uid, decoded, recordsFrom, null)
+                decoded
+            }
+        invalidate()
+        return decoded
     }
 
     /**
@@ -4424,7 +4479,10 @@ class PortfolioApplication(
         } else if (io.valroot.core.exchange.ExchangeKind
                 .ofNetwork(value.identity.networkId) != null
         ) {
-            require(value.identity.kind == "uid" && value.role == TargetRole.LEAF && value.identity.canonicalKey.all(Char::isDigit)) {
+            val exchange =
+                io.valroot.core.exchange.ExchangeKind
+                    .ofNetwork(value.identity.networkId)!!
+            require(value.identity.kind == "uid" && value.role == TargetRole.LEAF && exchange.validIdentity(value.identity.canonicalKey)) {
                 "Track an exchange account by its user ID"
             }
             value
