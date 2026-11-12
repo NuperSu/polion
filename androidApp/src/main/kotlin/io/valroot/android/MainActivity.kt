@@ -477,6 +477,17 @@ private class AndroidHost(
 
     override fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(false, onResult, withoutBitcoin = true)
 
+    override fun bybitKeyInfo(
+        key: String,
+        secret: String,
+    ): io.valroot.core.exchange.BybitKeyInfo =
+        io.valroot.core.exchange.Bybit.parseKeyInfo(
+            BybitTransport({ key to secret }).get(
+                io.valroot.core.model.AccountId("bybit-key-check"),
+                io.valroot.core.exchange.Bybit.keyInfo(),
+            ),
+        )
+
     private fun refresh(
         recoverHistory: Boolean,
         onResult: (String) -> Unit,

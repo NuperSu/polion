@@ -36,6 +36,7 @@ import io.valroot.core.application.AccountOverview
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.application.PortfolioSnapshot
 import io.valroot.core.evm.EVM_FAMILY
+import io.valroot.core.exchange.BYBIT_NETWORK
 import io.valroot.core.model.PortfolioId
 import io.valroot.core.ownership.TargetRole
 import io.valroot.ui.model.ModelAccountRow
@@ -172,7 +173,7 @@ internal fun AccountsWorkspace(
                 if (detail.sources.isEmpty()) Text("Local manual account. No public provider queries are configured.")
                 SelectionContainer {
                     Column {
-                        detail.sources.filter { it.identity.networkId != EVM_FAMILY }.forEach {
+                        detail.sources.filter { it.identity.networkId != EVM_FAMILY && it.identity.networkId != BYBIT_NETWORK }.forEach {
                             Text(
                                 "${it.label}\n${it.identity.canonicalKey}",
                             )
@@ -181,6 +182,9 @@ internal fun AccountsWorkspace(
                 }
                 detail.sources.filter { it.identity.networkId == EVM_FAMILY }.forEach {
                     EvmAddressDetails(app, host, it.identity.canonicalKey, revision, onChanged)
+                }
+                detail.sources.filter { it.identity.networkId == BYBIT_NETWORK }.forEach {
+                    BybitAccountDetails(app, host, it.accountId, revision, onChanged)
                 }
                 if (detail.derivedAddresses > 0) Text("${detail.derivedAddresses} derived addresses · manage in account tools")
                 Text(if (archived) "Saved holdings (archived)" else "Holdings in this account")

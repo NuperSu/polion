@@ -237,6 +237,7 @@ private fun Product(
     var connectChooser by rememberSaveable { mutableStateOf(false) }
     var modelConnect by rememberSaveable { mutableStateOf(false) }
     var modelEvmConnect by rememberSaveable { mutableStateOf(false) }
+    var modelBybitConnect by rememberSaveable { mutableStateOf(false) }
     var modelHistory by rememberSaveable { mutableStateOf(false) }
     val sourceFlowState = rememberSaveableStateHolder()
     var modelAdd by rememberSaveable { mutableStateOf(false) }
@@ -597,6 +598,10 @@ private fun Product(
             onEvm = {
                 dialog = null
                 modelEvmConnect = true
+            },
+            onBybit = {
+                dialog = null
+                modelBybitConnect = true
             },
             onDismiss = { dialog = null },
         )
@@ -1686,6 +1691,21 @@ private fun Product(
                         modelEvmConnect = true
                     },
                     onDismiss = { connectChooser = false },
+                    onBybit = {
+                        connectChooser = false
+                        modelBybitConnect = true
+                    },
+                )
+            }
+            if (modelBybitConnect && snapshot != null) {
+                BybitConnectDialog(
+                    app,
+                    host,
+                    snapshot!!,
+                    selectedPortfolio,
+                    close = { modelBybitConnect = false },
+                    onSaved = { execute("Bybit account saved") {} },
+                    notify = { presenter.notify(it) },
                 )
             }
             if (modelEvmConnect && snapshot != null) {
