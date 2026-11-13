@@ -175,49 +175,12 @@ object BinanceDecoder {
                 }
             }
         }
-        if (balances != null) settle(ledger, balances, rows.maxOfOrNull { it.atMillis })
-        return ledger.result()
-    }
-
-    /**
-     * Fills what the records do not explain: an inflow 1 ms before any moment a coin's running balance would fall
-     * below zero, then the rest of the difference to Binance's balance after the latest record.
-     */
-    private fun settle(
-        ledger: ExchangeLedgerBuilder,
-        balances: Balances,
-        latest: Long?,
-    ) {
-        val byCoin = ledger.changes.groupBy { it.coin }
-        (byCoin.keys + balances.totals.keys).sorted().forEach { coin ->
-            var running = ZERO
-            val gaps = mutableListOf<Pair<Long, ExactDecimal>>()
-            byCoin[coin]
-                .orEmpty()
-                .groupBy { it.order }
-                .toSortedMap()
-                .values
-                .forEach { changes ->
-                    running += changes.fold(ZERO) { sum, change -> sum + change.amount }
-                    if (running.coefficient.sign < 0) {
-                        gaps += (changes.first().atMillis - 1) to negate(running)
-                        running = ZERO
-                    }
-                }
-            gaps.forEach { (at, amount) ->
-                ledger.build("gap:$coin:$at", at, setOf(balances.source)) {
-                    add(coin, amount, MovementRole.TRANSFER)
-                    null
-                }
-            }
-            val rest = (balances.totals[coin] ?: ZERO) - running
-            if (rest.coefficient.sign != 0 && coin !in ledger.unresolved) {
-                ledger.build("balance:$coin", (latest ?: balances.atMillis) + 1, setOf(balances.source)) {
-                    add(coin, rest, MovementRole.TRANSFER)
-                    null
-                }
-            }
+        if (balances !=
+            null
+        ) {
+            ledger.settleByRunningBalance(balances.totals, balances.source, balances.atMillis, rows.maxOfOrNull { it.atMillis })
         }
+        return ledger.result()
     }
 
     private fun negate(value: ExactDecimal) = ExactDecimal(-value.coefficient, value.scale)

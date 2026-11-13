@@ -211,7 +211,7 @@ class BybitConnectorTest {
 
     private fun units(decimal: String) =
         ExactInteger.parse(decimal.replace(".", "").trimStart('0').ifEmpty { "0" }).timesPowerOfTen(
-            18 - decimal.substringAfter('.', "").length,
+            ExchangeAssets.DECIMALS - decimal.substringAfter('.', "").length,
         )
 
     @Test

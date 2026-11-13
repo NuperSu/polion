@@ -70,6 +70,41 @@ class BybitUiTest {
     }
 
     @Test
+    fun mexcConnectTracksTheAccountItsKeyReads() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val host = BybitTestHost(executor.asCoroutineDispatcher())
+                val app = PortfolioApplication(db) { 1_800_000_000_000L }
+                runDesktopComposeUiTest(width = 800, height = 1400) {
+                    setContent {
+                        ExchangeConnectDialog(
+                            ExchangeKind.MEXC,
+                            app,
+                            host,
+                            app.snapshot(),
+                            null,
+                            close = {},
+                            onSaved = {},
+                            notify = {},
+                        )
+                    }
+                    onNodeWithTag("mexc-key").performTextInput("mx0vglKEYKEYKEY")
+                    onNodeWithTag("mexc-secret").performTextInput("SECRETSECRETSECRET")
+                    host.info = ExchangeKeyInfo("12345678", readOnly = true, expiresAtMillis = null)
+                    onNodeWithTag("mexc-connect-confirm").performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.exchangeTargets(ExchangeKind.MEXC).isNotEmpty() }
+                    val (account, uid) = app.exchangeTargets(ExchangeKind.MEXC).single()
+                    assertEquals("12345678", uid)
+                    assertEquals("mx0vglKEYKEYKEY" to "SECRETSECRETSECRET", app.exchangeKey(ExchangeKind.MEXC, account))
+                }
+            } finally {
+                executor.shutdown()
+            }
+        }
+    }
+
+    @Test
     fun binanceConnectUsesTheSameChecksAndShowsTradingPairs() {
         JvmSqliteDatabase(":memory:").use { db ->
             val executor = Executors.newSingleThreadExecutor()
@@ -106,10 +141,10 @@ class BybitUiTest {
                     val (account, _) = app.exchangeTargets(ExchangeKind.BINANCE).single()
                     setContent { ExchangeAccountDetails(ExchangeKind.BINANCE, app, host, account, 0, onChanged = {}) }
                     onNodeWithTag("binance-add-pair").performClick()
-                    onNodeWithTag("binance-pair-base").performTextInput("sol")
-                    onNodeWithTag("binance-pair-quote").performTextInput("usdt")
-                    onNodeWithTag("binance-pair-save").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.binancePairs(account).containsKey("SOLUSDT") }
+                    onNodeWithTag("pair-base").performTextInput("sol")
+                    onNodeWithTag("pair-quote").performTextInput("usdt")
+                    onNodeWithTag("pair-save").performClick()
+                    waitUntil(timeoutMillis = 10_000) { app.exchangePairs(account).containsKey("SOLUSDT") }
                 }
             } finally {
                 executor.shutdown()

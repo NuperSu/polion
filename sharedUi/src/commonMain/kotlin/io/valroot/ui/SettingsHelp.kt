@@ -59,7 +59,7 @@ internal val helpTopics =
                     "address. CoinGecko receives your display currency and IP address when market lists or price history " +
                     "load, and its image server sends coin logos. DefiLlama receives the coins you hold on EVM chains and " +
                     "exchanges, for their US dollar prices, and your IP address. Wallet addresses go only to the wallet " +
-                    "providers: Alchemy, and 1inch when you add its key. Bybit and Binance receive requests signed with " +
+                    "providers: Alchemy, and 1inch when you add its key. Bybit, Binance and MEXC receive requests signed with " +
                     "each tracked account's read-only key, and your IP address; the key and secret stay on this device and are " +
                     "not in backups.",
             ),

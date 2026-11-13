@@ -105,11 +105,11 @@ class BinanceConnector(
         }
 
         options.onProgress("Binance · trades")
-        val pairs = if (budget.left > 0) readTrades(app, account, balances, now, budget, ::save) else app.binancePairs(account)
+        val pairs = if (budget.left > 0) readTrades(app, account, balances, now, budget, ::save) else app.exchangePairs(account)
         if (pairs == null) unfinished = true
 
         // Symbols not matched to a coin yet: Binance's token contracts let CoinGecko's contract map name the coin.
-        val known = pairs ?: app.binancePairs(account)
+        val known = pairs ?: app.exchangePairs(account)
         val unmatched =
             app.unmatchedExchangeSymbols(
                 ExchangeKind.BINANCE.id,
@@ -223,7 +223,7 @@ class BinanceConnector(
         val cursors = app.exchangeCursors(account)
         val coins =
             app.exchangeRowSymbols(ExchangeKind.BINANCE, account) + balances.keys +
-                app.binancePairs(account).values.flatMap { listOf(it.first, it.second) }
+                app.exchangePairs(account).values.flatMap { listOf(it.first, it.second) }
         val candidates = mutableMapOf<String, Pair<String, String>>()
         coins.forEach { base ->
             (coins + QUOTES).forEach { quote ->
@@ -262,7 +262,7 @@ class BinanceConnector(
                 if (trades.size < Binance.TRADE_PAGE) break
             }
         }
-        return app.binancePairs(account)
+        return app.exchangePairs(account)
     }
 
     private fun message(failure: Exception): String =

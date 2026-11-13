@@ -1,4 +1,4 @@
-# Exchange accounts (Bybit, Binance)
+# Exchange accounts (Bybit, Binance, MEXC)
 
 Code: `core/…/exchange/` (`Bybit.kt` client and parsers, `BybitConnector.kt`, `BybitDecoder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt`, `Hmac.kt`), and in `PortfolioApplication`: `bybitTargets`, `setBybitKey`, `saveExchangeRows`, `applyBybitHistory`, `exchangeAssets`, `chooseExchangeCoin`. Transfer matching across assets: `core/…/reconcile/TransferResolution.kt` (`AmountScale`) and the transfer branch of `core/…/accounting/Fifo.kt`. Hosts: `BybitTransport` in `androidApp` and `desktopApp`. UI: `sharedUi/…/ExchangeAccountFlows.kt`. Tests: `BybitTest`, `BybitConnectorTest`, `ExchangeCoinsTest`, `FifoTransferTest`, `TransferLinkAccountingTest`, `BybitTransportTest`, `BybitUiTest`.
 
@@ -59,13 +59,13 @@ Each log records the balance after every row, so each wallet's balance before it
 
 ## Coins
 
-An exchange balance is a claim on a coin, not a token of one chain, so every exchange shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 18 decimals. Bybit reports BTC to 14 decimals, so Bybit BTC is `coin:bitcoin`, not the 8-decimal `bitcoin:btc` of Bitcoin wallets. Prices and logos come through the asset's coin link.
+An exchange balance is a claim on a coin, not a token of one chain, so every exchange shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 30 decimals (MEXC reports MX to 25). Bybit reports BTC to 14 decimals, so Bybit BTC is `coin:bitcoin`, not the 8-decimal `bitcoin:btc` of Bitcoin wallets. Prices and logos come through the asset's coin link.
 
 Every coin Bybit holds is tracked once it is matched to a CoinGecko coin. A symbol becomes a coin through a short list of well-known symbols (BTC, ETH, USDT, USDC, …); else through its token contracts: Bybit's coin information lists each chain the coin can be deposited on with its contract, and CoinGecko's contract map names the coin when all of them agree (EVM networks, found by Bybit's chain code or by the chain's name); else the only CoinGecko coin with that symbol; else the one ranked highest by market capitalization in the cached market list; else the one whose CoinGecko ID is the symbol itself. Up to 50 unmatched symbols are looked up per refresh. Non-EVM contracts are matched on TON, Solana, Tron, NEAR, Sui and Aptos.
 
 A symbol no CoinGecko coin carries is counted as `unlisted:<exchange>:<SYMBOL>`, without a price. When several coins carry a symbol and none of the rules decides, the account asks which coin it is, or "none of these", which counts it without a price.
 
-Currencies (EUR, USD, GBP) are `fiat:<CODE>` with 18 decimals, since Bybit counts EUR to 8 decimals; each is worth one of the portfolio currency of the same code. A symbol none of these decides waits for the user, who picks the coin on the account; its records are left out until then. Matches are saved in `exchange_coin_map`; a user's choice is never replaced. An amount finer than 18 decimals fails that record, with a note on the account.
+Currencies (EUR, USD, GBP) are `fiat:<CODE>` with 30 decimals, since Bybit counts EUR to 8 decimals; each is worth one of the portfolio currency of the same code. A symbol none of these decides waits for the user, who picks the coin on the account; its records are left out until then. Matches are saved in `exchange_coin_map`; a user's choice is never replaced. An amount finer than 30 decimals fails that record, with a note on the account.
 
 ## Transfers between Bybit and wallets
 
@@ -77,7 +77,7 @@ An accepted link moves lots from the outgoing asset to the incoming one with the
 
 - Derivatives positions are not modeled; their realized results, funding and fees change balances as other activity.
 - Earn rewards that stay inside Earn have no history and appear in the remainder.
-- Bybit CSV exports and MEXC are planned. A later Bybit CSV importer is meant to produce the same activity IDs for records the API also returned, so it fills only the older gap.
+- Bybit CSV exports are planned. A later Bybit CSV importer is meant to produce the same activity IDs for records the API also returned, so it fills only the older gap.
 
 # Binance
 
@@ -137,3 +137,41 @@ Binance keeps no balance log. Each coin's running balance goes through the activ
 - Futures, margin and options are not read; their effect on balances is an adjustment.
 - Binance's statement export (Transaction History CSV) has no API; a later importer can fill what the API no longer returns.
 - Retention of deposits, withdrawals, converts and rewards is not documented; the live check shows how far back they reach.
+
+# MEXC
+
+Code: `core/…/exchange/Mexc.kt` (client and parsers), `MexcConnector.kt`, `MexcDecoder.kt`; shared: `ExchangeLedgerBuilder.settleByRunningBalance`, trading pairs (`exchangePairs`, `addExchangePair`). Hosts: `MexcTransport` in `androidApp` and `desktopApp`. Tests: `MexcTest`, `MexcConnectorTest`, `MexcTransportTest`, `BybitUiTest` (MEXC connect).
+
+## Tracking an account
+
+MEXC reports neither a key's permissions nor, in its documentation, the account's ID. The account is identified by `GET /api/v3/uid`, which works though it is undocumented (the documented referral code is empty for accounts without one). **The key cannot be checked**: Valroot sends only GET requests, and the connect screen asks for a key with read permissions only and says MEXC cannot confirm it. Keys without a bound IP address expire after 90 days. The key and secret are device settings `mexc_key:<account>` and `mexc_secret:<account>`.
+
+## Requests
+
+Signed like Binance (query, `timestamp`, `recvWindow=10000`, then the hex HMAC-SHA256 `signature`); the key goes in `X-MEXC-APIKEY`. Requests are at least 0.25 s apart, balances 0.6 s (MEXC allows 2 a second); HTTP 429 stops requests for 10 minutes (MEXC's lock); a `700003` answer reads `/api/v3/time` and tries once more. MEXC's error codes reach the decoder: `700004` is a malformed parameter, not a key problem.
+
+| Path | Window, reach (checked live 2026-11-13) |
+|---|---|
+| `/api/v3/uid`, `/api/v3/account` | spot balances (MX to 25 decimals) |
+| `/api/v3/ticker/price` | every listed symbol (public) |
+| `/api/v3/myTrades?symbol=…&startTime=…&endTime=…` | the last month only, 100 per request |
+| `/api/v3/capital/deposit/hisrec`, `/withdraw/history` | 7 days per request (longer windows are refused, code 33333), 90 days back |
+| `/api/v3/capital/transfer/internal` | transfers with other MEXC users, 7 days, 90 days back |
+| `/api/v3/capital/transfer` (spot↔futures) | 7 days; refused beyond about two months, which ends that stream |
+| `/api/v3/capital/convert` | every dust conversion into MX (paging parameters are refused) |
+| `/api/v3/capital/config/getall` | coin contracts, when coins are unmatched |
+
+## Keeping MEXC's short history
+
+MEXC drops trades after a month and transfers after 90 days, so Valroot keeps every record it reads and history grows from the first refresh on. Trades are read per symbol, chosen as for Binance (pairs of the account's coins and MEXC's quote coins USDT, USDC, USDE, BTC, ETH, MX, EUR, plus pairs the user adds), from the last read less a day; a window that returns a full page is halved. Each symbol is read again when one of its coins' balance changed, or after a day, well within MEXC's month.
+
+## From records to activities
+
+Activity IDs are `mexc:<user ID>:<kind>:<record>`. Trades, dust conversions (into MX, with MEXC's fee), deposits (status SUCCESS or COMPLETED), withdrawals (SUCCESS; network fee as its own movement; on-chain hash kept for matching with wallets), transfers with other MEXC users (incoming when addressed to the account's user ID, or to the email or phone every such transfer shares), and spot↔futures transfers (out and in: futures balances are not read).
+
+Balance check: as for Binance, each coin's running balance fills gaps 1 ms before it would fall below zero. Because MEXC keeps so little, coins nothing explains are an opening amount at the start of the records rather than an adjustment after the latest one; a negative difference (coins the kept records over-count, such as MX spent in older trades) follows the latest record.
+
+## Not covered
+
+- Futures balances and results.
+- History older than MEXC's retention, except as openings. MEXC's web export (three years) can fill it through a later CSV importer.

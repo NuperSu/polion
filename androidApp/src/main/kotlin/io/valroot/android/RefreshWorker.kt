@@ -79,7 +79,8 @@ class RefreshWorker(
                     val evmOn = app.evmConsent() && app.evmTargets().isNotEmpty()
                     val bybitOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
                     val binanceOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
-                    if (!bitcoinOn && (!(evmOn || bybitOn || binanceOn) || walletId != null || verifyOrder)) {
+                    val mexcOn = app.exchangeTargets(io.valroot.core.exchange.ExchangeKind.MEXC).isNotEmpty()
+                    if (!bitcoinOn && (!(evmOn || bybitOn || binanceOn || mexcOn) || walletId != null || verifyOrder)) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
                         val endpoint = app.sourceEndpoint()
@@ -172,7 +173,11 @@ class RefreshWorker(
                             connectors += EvmConnector(alchemy::post, oneInch?.let { it::get })
                         }
                         // Exchange symbols are matched to coins through the catalog, so it is current before their records.
-                        if (bybitOn || binanceOn) MarketFeedRefresher.refreshCatalog(app)
+                        if (bybitOn || binanceOn || mexcOn) MarketFeedRefresher.refreshCatalog(app)
+                        if (mexcOn) {
+                            val mexc = MexcTransport(credentials = { app.exchangeKey(io.valroot.core.exchange.ExchangeKind.MEXC, it) }, beforeRequest = ensureActive)
+                            connectors += io.valroot.core.exchange.MexcConnector(mexc::get)
+                        }
                         if (binanceOn) {
                             val binance =
                                 BinanceTransport(credentials = { app.exchangeKey(io.valroot.core.exchange.ExchangeKind.BINANCE, it) }, beforeRequest = ensureActive)
@@ -188,7 +193,7 @@ class RefreshWorker(
                                 SourceRefreshOptions(
                                     recoverHistory = recoverHistory,
                                     onProgress = { detail ->
-                                        val shown = if (detail.startsWith("Bybit") || detail.startsWith("Binance")) detail else "EVM · $detail"
+                                        val shown = if (listOf("Bybit", "Binance", "MEXC").any { detail.startsWith(it) }) detail else "EVM · $detail"
                                         syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = shown)
                                         onProgress(shown)
                                     },
@@ -202,7 +207,7 @@ class RefreshWorker(
                         val states = outcomes.flatMap { it.jobs }
                         val sourceNotes = outcomes.flatMap { it.notes }.joinToString(" ").ifEmpty { null }
                         // Once a chain has refreshed, new tokens are linked to coins and priced.
-                        if (outcomes.any { it.connector in setOf(EVM_MANIFEST.id, BYBIT_MANIFEST.id, io.valroot.core.exchange.BINANCE_MANIFEST.id) && it.jobs.contains(JobState.COMPLETED) }) {
+                        if (outcomes.any { it.connector in setOf(EVM_MANIFEST.id, BYBIT_MANIFEST.id, io.valroot.core.exchange.BINANCE_MANIFEST.id, io.valroot.core.exchange.MEXC_MANIFEST.id) && it.jobs.contains(JobState.COMPLETED) }) {
                             MarketFeedRefresher.refreshEvmCatalogAndPrices(app)
                         }
                         when {

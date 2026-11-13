@@ -97,6 +97,59 @@ internal class ExchangeLedgerBuilder(
         return id
     }
 
+    /**
+     * Fills what the records do not explain, for exchanges without a balance log: an inflow 1 ms before any moment a
+     * coin's running balance would fall below zero, then the rest of the difference to the exchange's [totals]. A
+     * positive rest is recorded at [openingAt] when given (coins nothing explains were most likely held before the
+     * records start); otherwise, and when negative, after the [latest] record. Both are marked with the [source]
+     * holding the balances.
+     */
+    fun settleByRunningBalance(
+        totals: Map<String, ExactDecimal>,
+        source: SourceRecordId,
+        balancesAt: Long,
+        latest: Long?,
+        openingAt: Long? = null,
+    ) {
+        val byCoin = changes.groupBy { it.coin }
+        (byCoin.keys + totals.keys).sorted().forEach { coin ->
+            var running = ZERO
+            val gaps = mutableListOf<Pair<Long, ExactDecimal>>()
+            byCoin[coin]
+                .orEmpty()
+                .groupBy { it.order }
+                .toSortedMap()
+                .values
+                .forEach { group ->
+                    running += group.fold(ZERO) { sum, change -> sum + change.amount }
+                    if (running.coefficient.sign < 0) {
+                        gaps += (group.first().atMillis - 1) to ExactDecimal(-running.coefficient, running.scale)
+                        running = ZERO
+                    }
+                }
+            gaps.forEach { (at, amount) ->
+                build("gap:$coin:$at", at, setOf(source)) {
+                    add(coin, amount, MovementRole.TRANSFER)
+                    null
+                }
+            }
+            val rest = (totals[coin] ?: ZERO) - running
+            if (rest.coefficient.sign != 0 && coin !in unresolved) {
+                val earliest = byCoin[coin]?.minOf { it.atMillis }
+                val at =
+                    if (openingAt != null && rest.coefficient.sign > 0) {
+                        minOf(openingAt, earliest ?: openingAt) - 1
+                    } else {
+                        (latest ?: balancesAt) + 1
+                    }
+                build("balance:$coin", at, setOf(source)) {
+                    add(coin, rest, MovementRole.TRANSFER)
+                    null
+                }
+            }
+        }
+    }
+
     private companion object {
         val ZERO = ExactDecimal.parse("0")
     }

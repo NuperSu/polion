@@ -115,7 +115,7 @@ class TransferLinkAccountingTest {
             app.refreshEvmCatalog(
                 { url, _ -> if (url.contains("asset_platforms")) fixture("asset_platforms.json") else fixture("coins_list.json") },
             )
-            // The exchange's USDT has 18 decimals, the token 6.
+            // The exchange's USDT has 30 decimals, the token 6.
             val coin = app.exchangeAssets("bybit", setOf("USDT")).getValue("USDT")
             app.saveTransaction(draft("buy", TransactionType.BUY, coin, "100.5", 11, exchange, price = "1"))
             app.saveTransaction(draft("out", TransactionType.WITHDRAWAL, coin, "60.25", 20, exchange))

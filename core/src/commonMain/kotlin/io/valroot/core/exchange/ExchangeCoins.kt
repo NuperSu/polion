@@ -16,12 +16,12 @@ data class ExchangeContract(
 
 /**
  * Coins held on exchanges. An exchange balance is a claim on a coin, not on a token of one chain, so every exchange
- * shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 18 decimals, which fits the amounts exchanges
+ * shares one asset per CoinGecko coin: `coin:<coingecko-id>`, with 30 decimals, which fits the amounts exchanges
  * report (Bybit reports BTC to 14 decimals). Prices and logos come through the asset's coin link.
  */
 object ExchangeAssets {
     const val PREFIX = "coin:"
-    const val DECIMALS = 18
+    const val DECIMALS = 30
 
     fun asset(coinId: String) = AssetId(PREFIX + coinId)
 
@@ -84,6 +84,8 @@ object ExchangeAssets {
             // Toncoin's new ticker on exchanges.
             "GRAM" to "the-open-network",
             "MNT" to "mantle",
+            "MX" to "mx-token",
+            "STRK" to "starknet",
             "DOT" to "polkadot",
             "LTC" to "litecoin",
             "BCH" to "bitcoin-cash",

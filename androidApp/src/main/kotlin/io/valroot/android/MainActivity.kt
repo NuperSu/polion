@@ -489,6 +489,13 @@ private class AndroidHost(
                         BybitTransport({ key to secret })
                             .get(io.valroot.core.model.AccountId("key-check"), io.valroot.core.exchange.Bybit.keyInfo()),
                     ).let { io.valroot.core.exchange.ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis) }
+            io.valroot.core.exchange.ExchangeKind.MEXC -> {
+                // MEXC does not report a key's permissions: the key is trusted to be read-only.
+                val uid =
+                    io.valroot.core.exchange.Mexc
+                        .parseUid(MexcTransport({ key to secret }).get(io.valroot.core.model.AccountId("key-check"), io.valroot.core.exchange.Mexc.uid()))
+                io.valroot.core.exchange.ExchangeKeyInfo(uid, true, null)
+            }
             io.valroot.core.exchange.ExchangeKind.BINANCE -> {
                 val transport = BinanceTransport({ key to secret })
                 val check = io.valroot.core.model.AccountId("key-check")
