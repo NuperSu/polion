@@ -80,7 +80,7 @@ class BinanceConnector(
             val windows =
                 StreamWindows(stream.name, stream.windowMillis, maxOf(stream.oldest(now), Binance.LAUNCH_MILLIS), stream.stopAfterEmpty)
             val complete =
-                readStream(app, account, windows, now) { from, to ->
+                readStream(app, account, windows, now, { !budget.spent }) { from, to ->
                     if (budget.spent) null else stream.read(budget::send, from, to).also(::save).size
                 }
             if (!complete) unfinished = true

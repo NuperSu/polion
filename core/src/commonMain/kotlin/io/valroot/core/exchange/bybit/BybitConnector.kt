@@ -90,7 +90,13 @@ class BybitConnector(
             options.onProgress("Bybit · ${STREAM_LABELS.getValue(stream.name)}")
             val windows = StreamWindows(stream.name, stream.windowMillis, now - stream.retentionMillis, stream.stopAfterEmpty)
             val complete =
-                readStream(app, account, windows, now) { from, to -> readWindow(app, account, uid, stream.name, from, to, budget) }
+                readStream(
+                    app,
+                    account,
+                    windows,
+                    now,
+                    { !budget.spent },
+                ) { from, to -> readWindow(app, account, uid, stream.name, from, to, budget) }
             if (!complete) unfinished = true
         }
         readConverts(app, account, uid, budget)

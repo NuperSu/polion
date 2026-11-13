@@ -28,7 +28,8 @@ internal fun LazyListScope.classicSettingsItems(
     setDialog: (String?) -> Unit,
     setMessage: (String?) -> Unit,
     preferences: RefreshPreferences,
-    setPreferences: (RefreshPreferences) -> Unit,
+    /** Applies a change to the current preferences and returns them. */
+    updatePreferences: ((RefreshPreferences) -> RefreshPreferences) -> RefreshPreferences,
     onRevision: () -> Unit,
     app: PortfolioApplication,
     host: PlatformActions,
@@ -65,9 +66,8 @@ internal fun LazyListScope.classicSettingsItems(
             Row(
                 Modifier
                     .toggleable(value = preferences.wifiOnly, role = Role.Switch) { enabled ->
-                        val updated = preferences.copy(wifiOnly = enabled)
+                        val updated = updatePreferences { it.copy(wifiOnly = enabled) }
                         execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
-                        setPreferences(updated)
                     }.testTag("wifi-only-refresh"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

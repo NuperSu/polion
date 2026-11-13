@@ -30,8 +30,8 @@ fun interface ExchangeTransport<R> {
 }
 
 /**
- * Requests one refresh may still send for an account. Loops stop when it is spent; a window being read finishes its
- * pages first, so the count can go slightly below zero.
+ * Requests one refresh may still send for an account. Loops stop when it is spent; a reader that finishes a window's
+ * pages first can take the count slightly below zero.
  */
 class RequestBudget<R>(
     var left: Int,
@@ -108,7 +108,7 @@ abstract class ExchangeConnector(
 
     /**
      * Reads one stream forward from where it stopped, with a day of overlap for records the exchange adds late, then
-     * back towards [StreamWindows.limitMillis]. [read] reads and saves one window and returns its record count, or null
+     * back towards [StreamWindows.limitMillis] while [hasBudget]. [read] reads and saves one window and returns its record count, or null
      * when the budget ran out. A refused old window ends the history there. Returns false when reading stopped early.
      */
     protected fun readStream(
@@ -116,6 +116,7 @@ abstract class ExchangeConnector(
         account: AccountId,
         stream: StreamWindows,
         now: Long,
+        hasBudget: () -> Boolean,
         read: (from: Long, to: Long) -> Int?,
     ): Boolean {
         var state = app.exchanges.streams(account)[stream.name] ?: ExchangeStreamState(stream.name, now, now, false, 0)
@@ -128,6 +129,8 @@ abstract class ExchangeConnector(
             from = to
         }
         while (!state.complete) {
+            // Stop before each step back, so a spent budget never marks history complete without reading it.
+            if (!hasBudget()) return false
             val start = maxOf(state.fromMillis - stream.windowMillis, stream.limitMillis)
             val found =
                 try {

@@ -36,7 +36,8 @@ internal fun LazyListScope.classicActivityItems(
     kind: ActivityKind?,
     setKind: (ActivityKind?) -> Unit,
     offset: Int,
-    setOffset: (Int) -> Unit,
+    /** Changes the page offset from its current value. */
+    updateOffset: ((Int) -> Int) -> Unit,
     activityStatus: ActivityStatus?,
     setActivityStatus: (ActivityStatus?) -> Unit,
     activityNetwork: String?,
@@ -61,7 +62,7 @@ internal fun LazyListScope.classicActivityItems(
                 search,
                 {
                     setSearch(it)
-                    setOffset(0)
+                    updateOffset { 0 }
                 },
                 Modifier.weight(
                     1f,
@@ -79,13 +80,13 @@ internal fun LazyListScope.classicActivityItems(
     item {
         FilterKinds(kind) {
             setKind(it)
-            setOffset(0)
+            updateOffset { 0 }
         }
     }
     item {
         AccountSelector(data, selectedAccount) {
             setSelectedAccount(it)
-            setOffset(0)
+            updateOffset { 0 }
         }
     }
     presenter.state.activityAsset?.let { asset ->
@@ -140,7 +141,7 @@ internal fun LazyListScope.classicActivityItems(
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 OutlinedButton(
-                    onClick = { setOffset((offset - 50).coerceAtLeast(0)) },
+                    onClick = { updateOffset { (it - 50).coerceAtLeast(0) } },
                     enabled = offset > 0,
                 ) { Text("Previous") }
                 Text(
@@ -152,7 +153,7 @@ internal fun LazyListScope.classicActivityItems(
                     modifier = Modifier.padding(top = 12.dp),
                 )
                 OutlinedButton(
-                    onClick = { setOffset(offset + 50) },
+                    onClick = { updateOffset { it + 50 } },
                     enabled = offset + 50 < data.activityTotal,
                 ) { Text("Next") }
             }

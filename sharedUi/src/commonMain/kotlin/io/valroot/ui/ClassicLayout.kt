@@ -113,7 +113,7 @@ internal fun ClassicLayout(
     onRevision: () -> Unit,
     setSearch: (String) -> Unit,
     setKind: (ActivityKind?) -> Unit,
-    setOffset: (Int) -> Unit,
+    updateOffset: ((Int) -> Int) -> Unit,
     setActivityStatus: (ActivityStatus?) -> Unit,
     setActivityNetwork: (String?) -> Unit,
     setSelectedAccount: (AccountId?) -> Unit,
@@ -121,7 +121,7 @@ internal fun ClassicLayout(
     setRemoveAccount: (Account?) -> Unit,
     setAddressWallet: (TrackingTarget?) -> Unit,
     setSourceScanTarget: (TrackingTarget?) -> Unit,
-    setPreferences: (RefreshPreferences) -> Unit,
+    updatePreferences: ((RefreshPreferences) -> RefreshPreferences) -> RefreshPreferences,
 ) {
     Row(Modifier.fillMaxSize()) {
         if (!compact) {
@@ -304,7 +304,7 @@ internal fun ClassicLayout(
                                     kind = kind,
                                     setKind = setKind,
                                     offset = offset,
-                                    setOffset = setOffset,
+                                    updateOffset = updateOffset,
                                     activityStatus = activityStatus,
                                     setActivityStatus = setActivityStatus,
                                     activityNetwork = activityNetwork,
@@ -359,7 +359,7 @@ internal fun ClassicLayout(
                                     setDialog = setDialog,
                                     setMessage = setMessage,
                                     preferences = preferences,
-                                    setPreferences = setPreferences,
+                                    updatePreferences = updatePreferences,
                                     onRevision = onRevision,
                                     app = app,
                                     host = host,

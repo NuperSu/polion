@@ -566,7 +566,7 @@ internal fun Product(
                     message = message,
                     setMessage = { message = it },
                     preferences = preferences,
-                    setPreferences = { preferences = it },
+                    updatePreferences = { change -> change(preferences).also { preferences = it } },
                     setModelManual = { modelManual = it },
                     setModelAdd = { modelAdd = it },
                     setModelEditingId = { modelEditingId = it },
@@ -584,7 +584,9 @@ internal fun Product(
                     biometric = biometric,
                     setBiometric = { biometric = it },
                     marketFavorites = marketFavorites,
-                    setMarketFavorites = { marketFavorites = it },
+                    toggleMarketFavorite = { asset ->
+                        (if (asset in marketFavorites) marketFavorites - asset else marketFavorites + asset).also { marketFavorites = it }
+                    },
                     setAdvancedMode = { advancedMode = it },
                     setAdvancedOrigin = { advancedOrigin = it },
                     modelReturnPage = modelReturnPage,
@@ -675,7 +677,7 @@ internal fun Product(
                     onRevision = { revision++ },
                     setSearch = { search = it },
                     setKind = { kind = it },
-                    setOffset = { offset = it },
+                    updateOffset = { change -> offset = change(offset) },
                     setActivityStatus = { activityStatus = it },
                     setActivityNetwork = { activityNetwork = it },
                     setSelectedAccount = { selectedAccount = it },
@@ -683,7 +685,7 @@ internal fun Product(
                     setRemoveAccount = { removeAccount = it },
                     setAddressWallet = { addressWallet = it },
                     setSourceScanTarget = { sourceScanTarget = it },
-                    setPreferences = { preferences = it },
+                    updatePreferences = { change -> change(preferences).also { preferences = it } },
                 )
             }
             ProductDialogs(

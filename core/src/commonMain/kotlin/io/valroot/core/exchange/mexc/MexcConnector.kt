@@ -70,7 +70,7 @@ class MexcConnector(
             options.onProgress("MEXC · ${stream.name}")
             val windows = StreamWindows(stream.name, Mexc.WEEK_MILLIS, now - stream.retentionMillis)
             val complete =
-                readStream(app, account, windows, now) { from, to ->
+                readStream(app, account, windows, now, { !budget.spent }) { from, to ->
                     if (budget.spent) null else stream.read(budget::send, from, to).also(::save).size
                 }
             if (!complete) unfinished = true

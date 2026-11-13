@@ -39,7 +39,8 @@ internal fun ModelLayout(
     message: String?,
     setMessage: (String?) -> Unit,
     preferences: RefreshPreferences,
-    setPreferences: (RefreshPreferences) -> Unit,
+    /** Applies a change to the current preferences and returns them. */
+    updatePreferences: ((RefreshPreferences) -> RefreshPreferences) -> RefreshPreferences,
     setModelManual: (Boolean) -> Unit,
     setModelAdd: (Boolean) -> Unit,
     setModelEditingId: (String?) -> Unit,
@@ -57,7 +58,8 @@ internal fun ModelLayout(
     biometric: BiometricUnlock,
     setBiometric: (BiometricUnlock) -> Unit,
     marketFavorites: Set<AssetId>,
-    setMarketFavorites: (Set<AssetId>) -> Unit,
+    /** Adds or removes a favourite from the current set and returns the new set. */
+    toggleMarketFavorite: (AssetId) -> Set<AssetId>,
     setAdvancedMode: (Boolean) -> Unit,
     setAdvancedOrigin: (List<String>) -> Unit,
     modelReturnPage: String,
@@ -119,11 +121,8 @@ internal fun ModelLayout(
             syncStatus = syncStatus,
             favorites = marketFavorites,
             onFavorite = { asset ->
-                val favorites = marketFavorites
-                setMarketFavorites(if (asset in favorites) favorites - asset else favorites + asset)
-                execute("Favorites saved") {
-                    app.market.setFavorites(if (asset in favorites) favorites - asset else favorites + asset)
-                }
+                val favorites = toggleMarketFavorite(asset)
+                execute("Favorites saved") { app.market.setFavorites(favorites) }
             },
             onPage = {
                 if (it == Page.ACCOUNTS || it == Page.SETTINGS) setModelReturnPage(page.name)
@@ -215,9 +214,8 @@ internal fun ModelLayout(
             },
             onAutomatic = { enabled -> onAutomaticSwitch(enabled) },
             onWifi = { enabled ->
-                val updated = preferences.copy(wifiOnly = enabled)
+                val updated = updatePreferences { it.copy(wifiOnly = enabled) }
                 execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
-                setPreferences(updated)
             },
             onTransaction = { setSelectedActivity(it) },
             statusContent = { SnackbarHost(snackbar, Modifier.testTag("status-message")) },
@@ -233,9 +231,8 @@ internal fun ModelLayout(
                     SettingsActions(
                         onAutomatic = { onAutomaticSwitch(it) },
                         onWifi = { enabled ->
-                            val updated = preferences.copy(wifiOnly = enabled)
+                            val updated = updatePreferences { it.copy(wifiOnly = enabled) }
                             execute("Refresh settings saved") { host.updateRefreshPreferences(updated) }
-                            setPreferences(updated)
                         },
                         onCurrency = { code -> execute("Currency saved") { app.assets.setCurrency(AssetId(code)) } },
                         onAppearance = { selected ->
