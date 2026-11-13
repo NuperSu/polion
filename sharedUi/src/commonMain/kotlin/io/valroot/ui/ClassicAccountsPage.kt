@@ -104,7 +104,7 @@ internal fun LazyListScope.classicAccountsItems(
                         TextButton(onClick = {
                             host.discoverWallet(target.id) {
                                 setMessage(it)
-                                ; onRevision()
+                                onRevision()
                             }
                         }, enabled = syncStatus.phase != SyncPhase.SYNCING) {
                             Text(

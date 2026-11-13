@@ -80,10 +80,12 @@ class BitcoinConnector(
     ): SourceRefreshOutcome {
         val notes = app.bitcoinWallets.discoverPending(transport, providerEndpoint)
         val jobs =
-            app.bitcoin.refresh(transport, recoverHistory = options.recoverHistory, providerEndpoint = providerEndpoint) {
-                onScanProgress(it)
-                options.onProgress("Fetched ${it.transactions} transactions from ${it.addressIndex}/${it.totalAddresses} addresses")
-            }
+            app.bitcoin.refresh(
+                transport,
+                recoverHistory = options.recoverHistory,
+                providerEndpoint = providerEndpoint,
+                onProgress = onScanProgress,
+            )
         return SourceRefreshOutcome(manifest.id, jobs, notes)
     }
 }

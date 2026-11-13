@@ -28,7 +28,7 @@ data class RefreshSummary(
  */
 class HostRefresh(
     private val app: PortfolioApplication,
-    withoutBitcoin: Boolean = false,
+    private val withoutBitcoin: Boolean = false,
     private val beforeRequest: (source: String) -> Unit = {},
 ) {
     val bitcoinOn: Boolean = app.sources.consent() && !withoutBitcoin
@@ -77,7 +77,8 @@ class HostRefresh(
                 },
                 withoutConsent =
                     setOfNotNull(
-                        BITCOIN_MAINNET.takeIf { !app.sources.consent() },
+                        // A refresh without Bitcoin skips it like a source without consent, without a "no connector" note.
+                        BITCOIN_MAINNET.takeIf { withoutBitcoin || !app.sources.consent() },
                         EVM_FAMILY.takeIf { !app.evm.consent() },
                     ),
             ),
