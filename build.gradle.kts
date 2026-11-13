@@ -11,7 +11,7 @@ subprojects {
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
 }
 
-val checkFileSizes by tasks.registering {
+tasks.register("checkFileSizes") {
     group = "verification"
     description = "Fails when a Kotlin source file exceeds 800 lines; split such files by responsibility."
     val limit = 800
