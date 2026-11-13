@@ -70,11 +70,11 @@ internal fun NotificationSettingsSection(
     }
 
     fun change(update: (NotificationPreferences) -> NotificationPreferences) {
-        val current = loaded?.preferences ?: return
-        val updated = update(current)
+        if (loaded == null) return
         scope.launch {
             try {
-                withContext(host.dispatcher) { app.notifications.setPreferences(updated) }
+                // Applied to the saved preferences, so quick changes in a row do not undo each other.
+                withContext(host.dispatcher) { app.notifications.setPreferences(update(app.notifications.preferences())) }
                 notice = null
                 host.notificationSettingsChanged()
                 reload++

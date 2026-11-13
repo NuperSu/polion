@@ -43,6 +43,8 @@ class NotificationSettingsTest {
                     waitUntil(timeoutMillis = 10_000) { app.notifications.preferences().highsAndLows }
                     onNodeWithTag("notify-daily").performClick()
                     waitUntil(timeoutMillis = 10_000) { !app.notifications.preferences().dailyUpdate }
+                    // The host hears about each change after it is saved.
+                    waitUntil(timeoutMillis = 10_000) { notified == 4 }
                     assertEquals(4, notified)
 
                     onNodeWithText("No price alerts are on. Add alerts from a coin's Alerts tab.").assertIsDisplayed()
