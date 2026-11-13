@@ -22,14 +22,14 @@ class NestedArchiveTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)
             val original = app.snapshot().ownership
-            app.archiveAccount(AccountId("child"))
-            app.archiveAccount(AccountId("group"))
-            app.archiveAccount(AccountId("group"))
+            app.accounts.archiveAccount(AccountId("child"))
+            app.accounts.archiveAccount(AccountId("group"))
+            app.accounts.archiveAccount(AccountId("group"))
             val reopened = PortfolioApplication(db) { 1000L }
-            reopened.archiveAccount(AccountId("group"), false)
-            reopened.archiveAccount(AccountId("group"), false)
+            reopened.accounts.archiveAccount(AccountId("group"), false)
+            reopened.accounts.archiveAccount(AccountId("group"), false)
             assertArchived(reopened, setOf("child"), setOf("child", "disabled"))
-            reopened.archiveAccount(AccountId("child"), false)
+            reopened.accounts.archiveAccount(AccountId("child"), false)
             assertEquals(original, reopened.snapshot().ownership)
             assertTrue(db.query("SELECT key FROM application_settings").none { it.single()!!.startsWith("archive") })
         }
@@ -40,14 +40,14 @@ class NestedArchiveTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = fixture(db)
             val original = app.snapshot().ownership
-            app.archiveAccount(AccountId("group"))
-            app.archiveAccount(AccountId("child"))
-            app.archiveAccount(AccountId("group"), false)
+            app.accounts.archiveAccount(AccountId("group"))
+            app.accounts.archiveAccount(AccountId("child"))
+            app.accounts.archiveAccount(AccountId("group"), false)
             assertArchived(app, setOf("child"), setOf("child", "disabled"))
-            app.archiveAccount(AccountId("group"))
-            app.archiveAccount(AccountId("child"), false)
+            app.accounts.archiveAccount(AccountId("group"))
+            app.accounts.archiveAccount(AccountId("child"), false)
             assertArchived(app, setOf("group", "child", "disabled"), setOf("group", "child", "disabled"))
-            app.archiveAccount(AccountId("group"), false)
+            app.accounts.archiveAccount(AccountId("group"), false)
             assertEquals(original, app.snapshot().ownership)
         }
     }
@@ -58,12 +58,12 @@ class NestedArchiveTest {
             val app = fixture(db)
             val original = app.snapshot().ownership
             db.execute("CREATE TRIGGER fail_archive BEFORE UPDATE OF enabled ON targets BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
-            assertFails { app.archiveAccount(AccountId("group")) }
+            assertFails { app.accounts.archiveAccount(AccountId("group")) }
             assertEquals(original, app.snapshot().ownership)
             assertTrue(db.query("SELECT key FROM application_settings").none { it.single()!!.startsWith("archive") })
             db.execute("DROP TRIGGER fail_archive")
-            app.archiveAccount(AccountId("group"))
-            app.archiveAccount(AccountId("group"), false)
+            app.accounts.archiveAccount(AccountId("group"))
+            app.accounts.archiveAccount(AccountId("group"), false)
             assertEquals(original, app.snapshot().ownership)
         }
     }
@@ -71,10 +71,10 @@ class NestedArchiveTest {
     private fun fixture(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 1000L }
         val owner = OwnerId("owner")
-        app.saveOwner(Owner(owner, "Owner"))
+        app.accounts.saveOwner(Owner(owner, "Owner"))
         for (name in listOf("group", "child", "disabled")) {
             val id = AccountId(name)
-            app.saveAccount(
+            app.accounts.saveAccount(
                 Account(
                     id,
                     owner,
@@ -84,7 +84,7 @@ class NestedArchiveTest {
                     tags = setOf("custom-$name"),
                 ),
             )
-            app.saveTarget(
+            app.accounts.saveTarget(
                 TrackingTarget(
                     TrackingTargetId(name),
                     id,

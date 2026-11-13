@@ -12,6 +12,16 @@ kotlin {
         compileSdk = 37
         minSdk = 26
     }
+    // jvmSharedMain: code for both JVM hosts (desktop and Android), such as the CoinGecko logo download.
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi::class)
+    applyDefaultHierarchyTemplate {
+        common {
+            group("jvmShared") {
+                withJvm()
+                withCompilations { it.platformType == org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.androidJvm }
+            }
+        }
+    }
     sourceSets.jvmTest.dependencies {
         implementation(kotlin("test"))
         implementation(compose.desktop.uiTestJUnit4)

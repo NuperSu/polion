@@ -32,8 +32,8 @@ internal fun transactionTimeline(
     type: String,
 ): TransactionTimeline {
     val asset = requireNotNull(filter.asset)
-    val accounts = app.transactionAccounts(filter.portfolio)
-    val all = app.transactionEntries(filter).filter { entry -> type == "All" || transactionKind(entry, asset, accounts) == type }
+    val accounts = app.transactions.accounts(filter.portfolio)
+    val all = app.transactions.entries(filter).filter { entry -> type == "All" || transactionKind(entry, asset, accounts) == type }
     val page = all.drop(filter.offset).take(filter.limit)
     val catalog = (data.valuations + data.marketCoins.map { it.detailValuation() }).associateBy { it.asset }
 
@@ -60,7 +60,7 @@ internal fun transactionTimeline(
                 }
             for (m in movements) {
                 count++
-                val treatments = app.treatments(entry.activity.id)
+                val treatments = app.accounting.treatments(entry.activity.id)
                 val total =
                     if (buy) {
                         treatments.filterIsInstance<Treatment.Acquire>().find { it.movement == m.id }?.cost
@@ -185,6 +185,7 @@ internal fun transactionTimeline(
                     ExactDecimal.parse("1")
                 } else {
                     app
+                        .analytics
                         .priceSeries(asset, data.currency, listOf(activity.occurredAtEpochMillis))
                         .single()
                         .takeIf {
@@ -195,7 +196,7 @@ internal fun transactionTimeline(
                         ?.value
                 }
             val executionEvidence =
-                app.transactionDraft(activity.id)?.takeIf {
+                app.transactions.draft(activity.id)?.takeIf {
                     it.quote == data.currency && entry.activity.movements == entry.original.movements
                 }
             val execution =

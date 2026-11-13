@@ -29,8 +29,8 @@ class AccountingCompletenessTest {
             val app = PortfolioApplication(db) { 1000L }
             val owner = OwnerId("owner")
             val account = AccountId("account")
-            app.saveOwner(Owner(owner, "Owner"))
-            app.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
+            app.accounts.saveOwner(Owner(owner, "Owner"))
+            app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
 
             fun entry(
                 id: String,
@@ -40,7 +40,7 @@ class AccountingCompletenessTest {
             ) {
                 val movement = EventId(id)
                 val quantity = ExactInteger.parse(units)
-                app.saveManualActivity(
+                app.transactions.saveManualActivity(
                     Activity(
                         ActivityId(id),
                         at,
@@ -55,7 +55,7 @@ class AccountingCompletenessTest {
                 )
                 if (value != null) {
                     val quote = QuoteValue(AssetId("USD"), Rational.of(value))
-                    app.saveTreatments(
+                    app.accounting.saveTreatments(
                         ActivityId(id),
                         listOf(
                             if (quantity.sign >
@@ -73,12 +73,12 @@ class AccountingCompletenessTest {
             entry("sell1", 2, "-1", null)
             entry("buy2", 3, "1", "100")
             entry("sell2", 4, "-1", "200")
-            val incomplete = app.accountingReport()
+            val incomplete = app.accounting.report()
             assertEquals(listOf(ActivityId("sell1")), incomplete.missingTreatments)
             assertTrue(incomplete.report.lots.isEmpty())
             assertTrue(incomplete.report.disposals.isEmpty())
-            app.saveTreatments(ActivityId("sell1"), listOf(Treatment.Dispose(EventId("sell1"), null)))
-            val complete = app.accountingReport()
+            app.accounting.saveTreatments(ActivityId("sell1"), listOf(Treatment.Dispose(EventId("sell1"), null)))
+            val complete = app.accounting.report()
             assertTrue(complete.report.lots.isEmpty())
             assertEquals(
                 Rational.of("100"),
@@ -93,13 +93,18 @@ class AccountingCompletenessTest {
                     .gain,
             )
             db.execute("UPDATE accounting_treatments SET quote_asset=NULL WHERE activity_id='buy1'")
-            assertEquals(listOf(ActivityId("buy1")), app.accountingReport().invalidTreatments)
-            assertTrue(app.treatments(ActivityId("buy1")).isEmpty())
-            app.saveTreatments(
+            assertEquals(listOf(ActivityId("buy1")), app.accounting.report().invalidTreatments)
+            assertTrue(app.accounting.treatments(ActivityId("buy1")).isEmpty())
+            app.accounting.saveTreatments(
                 ActivityId("buy1"),
                 listOf(Treatment.Acquire(EventId("buy1"), QuoteValue(AssetId("USD"), Rational.of("10")))),
             )
-            assertTrue(app.accountingReport().invalidTreatments.isEmpty())
+            assertTrue(
+                app.accounting
+                    .report()
+                    .invalidTreatments
+                    .isEmpty(),
+            )
         }
     }
 }

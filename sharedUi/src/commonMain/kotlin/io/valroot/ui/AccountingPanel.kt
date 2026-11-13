@@ -82,7 +82,7 @@ internal fun AccountingPanel(
     LaunchedEffect(portfolio, revision, activityPage) {
         runCatching {
             withContext(host.dispatcher) {
-                val report = app.accountingReport(portfolio)
+                val report = app.accounting.report(portfolio)
                 val snapshot = app.snapshot(ActivityFilter(portfolio = portfolio, offset = activityPage * 50, limit = 50))
                 val owners = snapshot.ownership.accounts.associate { it.id to it.ownerId }
                 AccountingData(
@@ -221,7 +221,7 @@ internal fun AccountingPanel(
                     Text("${item.activity.id.value} · $status", color = Muted, fontSize = 11.sp)
                     TextButton(onClick = {
                         scope.launch {
-                            runCatching { withContext(host.dispatcher) { app.treatments(item.activity.id) } }
+                            runCatching { withContext(host.dispatcher) { app.accounting.treatments(item.activity.id) } }
                                 .fold({ saved ->
                                     val quoteMismatch =
                                         saved.any { treatment ->
@@ -256,7 +256,7 @@ internal fun AccountingPanel(
                 error = null
             }) { treatments ->
                 scope.launch {
-                    runCatching { withContext(host.dispatcher) { app.saveTreatments(item.activity.id, treatments) } }
+                    runCatching { withContext(host.dispatcher) { app.accounting.saveTreatments(item.activity.id, treatments) } }
                         .fold({
                             editing = null
                             onSaved()

@@ -30,9 +30,9 @@ class AccountOverviewTest {
             app.snapshot()
             val owner = OwnerId("owner")
             val account = AccountId("account")
-            app.saveOwner(Owner(owner, "Owner"))
-            app.saveOwner(Owner(OwnerId("other"), "Other"))
-            app.savePortfolio(Portfolio(PortfolioId("scope"), "Scope", "USD", ownerIds = setOf(OwnerId("other"))))
+            app.accounts.saveOwner(Owner(owner, "Owner"))
+            app.accounts.saveOwner(Owner(OwnerId("other"), "Other"))
+            app.accounts.savePortfolio(Portfolio(PortfolioId("scope"), "Scope", "USD", ownerIds = setOf(OwnerId("other"))))
             val target =
                 TrackingTarget(
                     TrackingTargetId("wallet"),
@@ -42,7 +42,7 @@ class AccountOverviewTest {
                     "Wallet",
                 )
             assertFails {
-                app.saveBitcoinWallet(
+                app.bitcoinWallets.save(
                     target,
                     Account(account, owner, "Account", AccountKind.WALLET),
                     consentAccepted = true,
@@ -50,8 +50,8 @@ class AccountOverviewTest {
                     portfolio = PortfolioId("scope"),
                 )
             }
-            assertFails { app.configureBitcoinSource("https://", true) }
-            assertEquals("https://blockstream.info/api", app.sourceEndpoint())
+            assertFails { app.bitcoin.configureSource("https://", true) }
+            assertEquals("https://blockstream.info/api", app.sources.endpoint())
             assertTrue(
                 app
                     .snapshot()
@@ -59,7 +59,7 @@ class AccountOverviewTest {
                     .isEmpty(),
             )
             assertFails {
-                app.saveBitcoinWallet(
+                app.bitcoinWallets.save(
                     target,
                     Account(account, owner, "Account", AccountKind.WALLET),
                     consentAccepted = true,
@@ -67,14 +67,14 @@ class AccountOverviewTest {
                     portfolio = PortfolioId("scope"),
                 )
             }
-            assertEquals("https://blockstream.info/api", app.sourceEndpoint())
+            assertEquals("https://blockstream.info/api", app.sources.endpoint())
             assertTrue(
                 app
                     .snapshot()
                     .ownership.accounts
                     .isEmpty(),
             )
-            assertEquals(false, app.sourceConsent())
+            assertEquals(false, app.sources.consent())
         }
     }
 

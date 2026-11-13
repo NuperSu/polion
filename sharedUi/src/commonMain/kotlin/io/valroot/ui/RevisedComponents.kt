@@ -69,14 +69,14 @@ internal fun RevisedMain(
 ) {
     var favorites by remember(app) { mutableStateOf(emptySet<AssetId>()) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(app) { favorites = withContext(host.dispatcher) { app.marketFavorites() } }
+    LaunchedEffect(app) { favorites = withContext(host.dispatcher) { app.market.favorites() } }
     val assets = snapshot.marketCoins.distinctBy { it.asset }.sortedBy { it.metadata?.symbol ?: it.asset.value }
 
     fun toggle(asset: MarketCoin) {
         val id = asset.asset
         val next = if (id in favorites) favorites - id else favorites + id
         favorites = next
-        scope.launch { withContext(host.dispatcher) { app.setMarketFavorites(next) } }
+        scope.launch { withContext(host.dispatcher) { app.market.setFavorites(next) } }
     }
     Column(Modifier.fillMaxWidth().testTag("main-market"), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -206,14 +206,12 @@ private fun FavoriteButton(
     }
 }
 
-private fun marketPrice(asset: MarketCoin): String =
-    asset.price?.let { quotePrice(it.price.value, it.price.quoteAssetId) } ?: "Price unavailable"
+private fun marketPrice(asset: MarketCoin): String = quotePrice(asset.price.price.value, asset.price.price.quoteAssetId)
 
 private fun marketQuoteStatus(asset: MarketCoin): String =
     when {
-        asset.price == null -> "No saved quote"
         asset.priceStatus == PriceStatus.STALE -> "Stale saved quote"
-        asset.price?.manual == true -> "Manual quote"
+        asset.price.manual -> "Manual quote"
         else -> "Saved quote"
     }
 

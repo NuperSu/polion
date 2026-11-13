@@ -44,7 +44,7 @@ object BitcoinHeapStress {
                     val start = TimeSource.Monotonic.markNow()
                     var phase = ""
                     val states =
-                        application.refreshBitcoin(provider.transport) { progress ->
+                        application.bitcoin.refresh(provider.transport) { progress ->
                             if (progress.phase != phase || progress.pages % 1000 == 0) {
                                 phase = progress.phase
                                 println("pass=${pass + 1} phase=$phase pages=${progress.pages} elapsed=${start.elapsedNow()}")
@@ -85,9 +85,9 @@ object BitcoinHeapStress {
         val app = PortfolioApplication(db) { 1_700_000_000_000L }
         val owner = OwnerId("stress-owner")
         val account = AccountId("stress-wallet")
-        app.saveOwner(Owner(owner, "Stress owner"))
-        app.saveAccount(Account(account, owner, "Stress wallet", AccountKind.WALLET))
-        app.saveTarget(
+        app.accounts.saveOwner(Owner(owner, "Stress owner"))
+        app.accounts.saveAccount(Account(account, owner, "Stress wallet", AccountKind.WALLET))
+        app.accounts.saveTarget(
             TrackingTarget(
                 TrackingTargetId("stress-address"),
                 account,
@@ -96,7 +96,7 @@ object BitcoinHeapStress {
                 "Stress address",
             ),
         )
-        app.setSourceConsent(true)
+        app.sources.setConsent(true)
         return app
     }
 

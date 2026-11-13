@@ -63,7 +63,7 @@ class EvmUiTest {
             try {
                 val host = EvmTestHost(executor.asCoroutineDispatcher())
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.setAlchemyApiKey("alchemy-test-key-123")
+                app.evm.setAlchemyApiKey("alchemy-test-key-123")
                 val good = eip55("0x$address")
                 val bad = mistyped(good)
                 runDesktopComposeUiTest(width = 800, height = 1400) {
@@ -82,11 +82,17 @@ class EvmUiTest {
                     onNodeWithTag("evm-chain-1").assertIsDisplayed()
                     assertTrue(onAllNodesWithTag("evm-chain-number").fetchSemanticsNodes().isEmpty())
                     onNodeWithTag("evm-connect-confirm").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.evmTargets().isNotEmpty() }
-                    val (_, saved) = app.evmTargets().single()
+                    waitUntil(timeoutMillis = 10_000) { app.evm.targets().isNotEmpty() }
+                    val (_, saved) = app.evm.targets().single()
                     assertEquals("0x$address", saved)
-                    assertEquals(DEFAULT_EVM_CHAIN_IDS.toSet(), app.evmChainStates(saved).map { it.chainId }.toSet())
-                    assertTrue(app.evmConsent())
+                    assertEquals(
+                        DEFAULT_EVM_CHAIN_IDS.toSet(),
+                        app.evm
+                            .chainStates(saved)
+                            .map { it.chainId }
+                            .toSet(),
+                    )
+                    assertTrue(app.evm.consent())
                     waitUntil(timeoutMillis = 10_000) { host.refreshRequests > 0 }
                 }
             } finally {
@@ -140,11 +146,11 @@ class EvmUiTest {
                     onNodeWithTag("alchemy-key-field").performTextInput("short")
                     onNodeWithTag("alchemy-key-save").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("alchemy-key-error").fetchSemanticsNodes().isNotEmpty() }
-                    assertEquals(null, app.alchemyApiKey())
+                    assertEquals(null, app.evm.alchemyApiKey())
                     onNodeWithTag("alchemy-key-field").performTextReplacement("alchemy-test-key-123")
                     onNodeWithTag("alchemy-key-save").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("alchemy-key-field").fetchSemanticsNodes().isEmpty() }
-                    assertEquals("alchemy-test-key-123", app.alchemyApiKey())
+                    assertEquals("alchemy-test-key-123", app.evm.alchemyApiKey())
                 }
             } finally {
                 executor.shutdown()
@@ -161,8 +167,8 @@ class EvmUiTest {
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
                 val tracked = evmAddress("0x$address")
                 val note = "1 sent transaction not listed by Alchemy (for example approvals); their fees are not counted"
-                app.addEvmChains(tracked, listOf(1L, 8453L))
-                app.recordEvmCoverage(tracked, 8453L, note)
+                app.evm.addChains(tracked, listOf(1L, 8453L))
+                app.evm.recordCoverage(tracked, 8453L, note)
                 runDesktopComposeUiTest(width = 800, height = 1000) {
                     setContent {
                         EvmAddressDetails(app, host, tracked, revision = 0L, onChanged = {})
@@ -187,14 +193,14 @@ class EvmUiTest {
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
                 val owner = OwnerId("owner-evm")
                 val account = AccountId("account-evm")
-                app.saveOwner(Owner(owner, "Personal"))
-                app.saveAccount(Account(account, owner, "Main", AccountKind.ACCOUNT))
+                app.accounts.saveOwner(Owner(owner, "Personal"))
+                app.accounts.saveAccount(Account(account, owner, "Main", AccountKind.ACCOUNT))
                 val token = EvmAssets.token(1, contract)
-                app.registerAsset(
+                app.assets.register(
                     AssetDefinition(token, AssetIdentity(AssetKind.TOKEN, evmNetwork(1), contract)),
                     AssetMetadata("TKN", "Test Token", 18, 0),
                 )
-                app.saveManualActivity(
+                app.transactions.saveManualActivity(
                     Activity(
                         ActivityId("evm-token-deposit"),
                         1_700_000_000_000L,

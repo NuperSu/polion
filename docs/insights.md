@@ -2,7 +2,7 @@
 
 Insights covers one portfolio scope and the range selected in History (1H to ALL). Every section uses the same start and end times as the History chart.
 
-Code: `core/…/application/MoneyWeightedReturn.kt` (rate solver and result types), `PortfolioApplication.moneyWeightedReturn` / `activityInsights`, and `sharedUi/…/InsightsPresentation.kt`. Tests: `MoneyWeightedReturnTest`, `InsightsScreenTest`.
+Code: `core/…/application/MoneyWeightedReturn.kt` (rate solver and result types), `AnalyticsService.moneyWeightedReturn` / `insights` (`app.analytics`), and `sharedUi/…/InsightsPresentation.kt`. Tests: `MoneyWeightedReturnTest`, `InsightsScreenTest`.
 
 ## Sections
 

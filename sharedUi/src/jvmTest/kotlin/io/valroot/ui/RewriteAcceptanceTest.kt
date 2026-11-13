@@ -51,8 +51,8 @@ class RewriteAcceptanceTest {
             JvmSqliteDatabase(":memory:").use { db ->
                 Host().use { host ->
                     val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                    app.updateOnboarding(OnboardingAction.Skip)
-                    app.seedDemo()
+                    app.settings.updateOnboarding(OnboardingAction.Skip)
+                    app.demo.seed()
                     runDesktopComposeUiTest(width = width, height = height) {
                         setContent {
                             val density = LocalDensity.current
@@ -76,8 +76,8 @@ class RewriteAcceptanceTest {
                         capture("main")
                         onAllNodesWithContentDescription("to favorites", substring = true).onFirst().performClick()
                         // Favorites are saved on the database dispatcher, not the UI thread.
-                        waitUntil(timeoutMillis = 10_000) { app.marketFavorites() == setOf(AssetId("bitcoin:btc")) }
-                        assertEquals(app.marketFavorites(), PortfolioApplication(db) { System.currentTimeMillis() }.marketFavorites())
+                        waitUntil(timeoutMillis = 10_000) { app.market.favorites() == setOf(AssetId("bitcoin:btc")) }
+                        assertEquals(app.market.favorites(), PortfolioApplication(db) { System.currentTimeMillis() }.market.favorites())
                         onNodeWithTag("page-content").performScrollToNode(hasText("Global market rankings are unavailable."))
                         onNodeWithText("Global market rankings are unavailable.").performScrollTo().assertIsDisplayed()
                         capture("main-discover")
@@ -157,8 +157,8 @@ class RewriteAcceptanceTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val before = app.snapshot().activityTotal
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { ValrootApp(app, host) }
@@ -195,9 +195,9 @@ class RewriteAcceptanceTest {
             Host().use { host ->
                 val now = System.currentTimeMillis()
                 val app = PortfolioApplication(db) { now }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 app.snapshot()
-                app.recordManualPrice(
+                app.prices.recordManual(
                     io.valroot.core.market.PriceObservation(
                         "market-only-btc",
                         io.valroot.core.model.Price(
@@ -248,7 +248,7 @@ class RewriteAcceptanceTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 assertTrue(
                     app
                         .snapshot()
@@ -315,9 +315,9 @@ class RewriteAcceptanceTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.savePortfolio(
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.accounts.savePortfolio(
                     io.valroot.core.ownership.Portfolio(
                         io.valroot.core.model
                             .PortfolioId("euro-acceptance"),
@@ -325,9 +325,9 @@ class RewriteAcceptanceTest {
                         "EUR",
                     ),
                 )
-                app.setAutomaticPriceConsent(true)
-                app.setAutomaticPortfolioPriceConsent(false)
-                assertEquals(listOf(AssetId("USD")), app.automaticPriceCurrencies())
+                app.prices.setAutomaticConsent(true)
+                app.prices.setAutomaticPortfolioConsent(false)
+                assertEquals(listOf(AssetId("USD")), app.prices.automaticCurrencies())
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-menu").fetchSemanticsNodes().isNotEmpty() }
@@ -337,13 +337,13 @@ class RewriteAcceptanceTest {
                     onNodeWithText("↻").performClick()
                     onNodeWithTag("automatic-portfolio-price-consent").assertExists()
                     assertEquals(0, host.refreshCalls)
-                    assertEquals(false, app.automaticPortfolioPriceConsent())
+                    assertEquals(false, app.prices.automaticPortfolioConsent())
                     onNodeWithTag("automatic-portfolio-price-consent").performScrollTo().performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.automaticPortfolioPriceConsent() }
+                    waitUntil(timeoutMillis = 10_000) { app.prices.automaticPortfolioConsent() }
                     onNodeWithText("Close").performScrollTo().performClick()
                     onNodeWithText("↻").performClick()
                     waitUntil(timeoutMillis = 10_000) { host.refreshCalls == 1 }
-                    assertEquals(setOf(AssetId("USD"), AssetId("EUR")), app.automaticPriceCurrencies().toSet())
+                    assertEquals(setOf(AssetId("USD"), AssetId("EUR")), app.prices.automaticCurrencies().toSet())
                 }
             }
         }
@@ -354,8 +354,8 @@ class RewriteAcceptanceTest {
         JvmSqliteDatabase(":memory:").use { db ->
             Host().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val before = app.snapshot().valuations
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { ValrootApp(app, host) }
@@ -367,7 +367,7 @@ class RewriteAcceptanceTest {
                     onNodeWithTag("automatic-price-consent").assertExists()
                     assertEquals(0, host.refreshCalls)
                     onNodeWithTag("automatic-price-consent").performScrollTo().performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.automaticPriceConsent() }
+                    waitUntil(timeoutMillis = 10_000) { app.prices.automaticConsent() }
                     onNodeWithText("Close").performScrollTo().performClick()
                     onNodeWithText("↻").performClick()
                     waitUntil(timeoutMillis = 10_000) { host.refreshCalls == 1 }

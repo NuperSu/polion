@@ -18,13 +18,13 @@ class DataErasureTest {
                 JvmSqliteDatabase(path.toString()).use { db ->
                     db.query("PRAGMA journal_mode = $mode")
                     val app = PortfolioApplication(db) { 15552000000L }
-                    app.seedDemo()
-                    app.saveOverlay(ActivityOverlay(ActivityId("demo-deposit"), note = canary.repeat(1000)))
+                    app.demo.seed()
+                    app.transactions.saveOverlay(ActivityOverlay(ActivityId("demo-deposit"), note = canary.repeat(1000)))
                     // Exercise already freed pages as well as currently reachable private records.
                     db.execute("CREATE TABLE erasure_fixture (value TEXT)")
                     db.execute("INSERT INTO erasure_fixture VALUES (?)", listOf(canary.repeat(2000)))
                     db.execute("DELETE FROM erasure_fixture")
-                    app.wipe()
+                    app.backup.wipe()
                     assertTrue(
                         app
                             .snapshot()
@@ -38,7 +38,7 @@ class DataErasureTest {
                         }
                     }
                     assertTrue(db.query("PRAGMA integrity_check").single().single() == "ok")
-                    app.wipe()
+                    app.backup.wipe()
                 }
             } finally {
                 Files.list(directory).use { files -> files.forEach { Files.deleteIfExists(it) } }

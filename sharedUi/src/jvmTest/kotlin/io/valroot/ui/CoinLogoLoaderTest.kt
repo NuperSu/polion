@@ -22,7 +22,7 @@ class CoinLogoLoaderTest {
         runBlocking {
             JvmSqliteDatabase(":memory:").use { db ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.setMarketDataConsent(true)
+                app.market.setConsent(true)
                 val requested = mutableListOf<String>()
                 val loader = CoinLogoLoader(app, Dispatchers.Unconfined) { target, _ -> png().also { requested += target } }
                 assertNotNull(loader.load(url))
@@ -40,7 +40,7 @@ class CoinLogoLoaderTest {
         runBlocking {
             JvmSqliteDatabase(":memory:").use { db ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.setMarketDataConsent(true)
+                app.market.setConsent(true)
                 var calls = 0
                 val loader =
                     CoinLogoLoader(app, Dispatchers.Unconfined) { _, _ ->
@@ -50,7 +50,7 @@ class CoinLogoLoaderTest {
                 assertNull(loader.load(url))
                 assertNull(loader.load(url))
                 assertEquals(1, calls)
-                assertNull(app.cachedLogo(url))
+                assertNull(app.market.cachedLogo(url))
             }
         }
     }

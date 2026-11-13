@@ -1,6 +1,6 @@
 # Price alerts and notifications
 
-Code: `core/…/alerts/Notifications.kt` (rules, repository, text), `PortfolioApplication.evaluateNotifications` / `runNotificationCheck`. Tests: `NotificationsTest`, `OrderBookApplicationTest`.
+Code: `core/…/alerts/Notifications.kt` (rules, repository, text), `NotificationService.evaluate` / `runCheck` (`app.notifications`). Tests: `NotificationsTest`, `OrderBookApplicationTest`.
 
 ## Price source
 

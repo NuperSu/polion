@@ -143,8 +143,8 @@ internal fun CsvImportFlow(
                             .snapshot()
                             .ownership.accounts
                             .filter { it.kind != AccountKind.GROUP && "valroot:archived" !in it.tags },
-                        app.importAssets(),
-                        app.currency(),
+                        app.assets.all(),
+                        app.assets.currency(),
                     )
                 }
             catalog = loaded
@@ -204,7 +204,7 @@ internal fun CsvImportFlow(
             try {
                 val preview =
                     withContext(host.dispatcher) {
-                        app.previewCsvImport(
+                        app.csv.preview(
                             checking.file.name,
                             checking.file.text,
                             checking.options(),
@@ -231,7 +231,7 @@ internal fun CsvImportFlow(
             importing = true
             importError = null
             try {
-                receipt = withContext(host.dispatcher) { app.importCsv(checked) }
+                receipt = withContext(host.dispatcher) { app.csv.importFile(checked) }
                 onChanged()
             } catch (cancelled: CancellationException) {
                 throw cancelled

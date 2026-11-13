@@ -5,7 +5,7 @@ This audit checks the open Gate D items and the M6 release requirements against 
 ## Open Gate D items
 
 **Phase 7 — connector execution through the registry: met.**
-- Hosts refresh sources through `PortfolioApplication.refreshSources(SourceRegistry)`. Bitcoin is the registered `BitcoinConnector` with its manifest (`BITCOIN_MANIFEST`); each network has at most one history connector, and a tracked network without one is reported.
+- Hosts refresh sources through `SourceService.refresh(SourceRegistry)` (`app.sources`). Bitcoin is the registered `BitcoinConnector` with its manifest (`BITCOIN_MANIFEST`); each network has at most one history connector, and a tracked network without one is reported.
 - New families use the generic `ingestHistory` path (sync orchestrator, raw provenance, decoder). `SourceConnectorTest` adds a fake EVM family purely through the interface; its activity reaches holdings, export and the ledger without changes to core holdings or accounting, and a repeated refresh does not duplicate it. Earlier fake-family tests (`ConnectorTest`, `SyncPipelineTest`, `FinancialHarnessTest`) still pass.
 - Remaining: discovery, balance and health capabilities have no generic interface in the app; Bitcoin keeps its own discovery and order-verification calls.
 

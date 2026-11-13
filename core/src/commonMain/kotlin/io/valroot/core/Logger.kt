@@ -8,9 +8,3 @@ enum class LogEvent {
 fun interface Logger {
     fun log(event: LogEvent)
 }
-
-object ConsoleLogger : Logger {
-    override fun log(event: LogEvent) {
-        println("valroot:${event.name}")
-    }
-}

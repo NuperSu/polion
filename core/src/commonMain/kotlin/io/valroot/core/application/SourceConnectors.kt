@@ -38,7 +38,7 @@ data class SourceRefreshOutcome(
 /**
  * A source family the application refreshes. Each connector declares what it can do in its [manifest]; the application
  * chooses connectors only through a [SourceRegistry]. A new family implements this interface and writes through
- * [PortfolioApplication.ingestHistory], without changes to holdings or accounting.
+ * [SourceService.ingestHistory], without changes to holdings or accounting.
  */
 interface SourceConnector {
     val manifest: IntegrationManifest
@@ -78,12 +78,14 @@ class BitcoinConnector(
         app: PortfolioApplication,
         options: SourceRefreshOptions,
     ): SourceRefreshOutcome {
-        val notes = app.discoverPendingBitcoinWallets(transport, providerEndpoint)
+        val notes = app.bitcoinWallets.discoverPending(transport, providerEndpoint)
         val jobs =
-            app.refreshBitcoin(transport, recoverHistory = options.recoverHistory, providerEndpoint = providerEndpoint) {
-                onScanProgress(it)
-                options.onProgress("Fetched ${it.transactions} transactions from ${it.addressIndex}/${it.totalAddresses} addresses")
-            }
+            app.bitcoin.refresh(
+                transport,
+                recoverHistory = options.recoverHistory,
+                providerEndpoint = providerEndpoint,
+                onProgress = onScanProgress,
+            )
         return SourceRefreshOutcome(manifest.id, jobs, notes)
     }
 }

@@ -66,9 +66,9 @@ class MarketDiscoveryTest {
     @Test fun moversAreRankedWithinTheNamedUniverse() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { System.currentTimeMillis() }
-            app.setMarketDataConsent(true)
-            app.refreshMarketFeeds(::feeds)
-            val state = marketMainState(app.marketOverview(), emptyList(), setOf(AssetId("coingecko:solana")), System.currentTimeMillis())
+            app.market.setConsent(true)
+            app.market.refreshFeeds(::feeds)
+            val state = marketMainState(app.market.overview(), emptyList(), setOf(AssetId("coingecko:solana")), System.currentTimeMillis())
             assertEquals(listOf("SOL", "BTC"), state.gainers.map { it.identity.ticker })
             assertEquals(listOf("DOGE", "ETH"), state.losers.map { it.identity.ticker })
             assertEquals(MARKET_UNIVERSE, state.moversEyebrow)
@@ -88,7 +88,7 @@ class MarketDiscoveryTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 var refreshes = 0
                 val host =
                     object : PlatformActions by delegate {
@@ -97,7 +97,7 @@ class MarketDiscoveryTest {
                             onResult: (String) -> Unit,
                         ) {
                             refreshes++
-                            val message = marketRefreshMessage(app.refreshMarketFeeds(::feeds, maxAgeMillis))
+                            val message = marketRefreshMessage(app.market.refreshFeeds(::feeds, maxAgeMillis))
                             delegate.dataRevision.update { it + 1 }
                             onResult(message)
                         }
@@ -112,12 +112,12 @@ class MarketDiscoveryTest {
                         timeoutMillis = 10_000,
                     ) { onAllNodesWithTag("market-top-coingecko:ethereum").fetchSemanticsNodes().isNotEmpty() }
                     assertEquals(1, refreshes)
-                    assertTrue(app.marketDataConsent())
+                    assertTrue(app.market.consent())
                     onNodeWithTag("market-load").assertDoesNotExist()
                     assertEquals(2, onAllNodesWithText(MARKET_UNIVERSE).fetchSemanticsNodes().size)
                     onNodeWithTag("model-content").performScrollToNode(hasTestTag("favorite-coingecko:pepe"))
                     onNodeWithTag("favorite-coingecko:pepe").performClick()
-                    waitUntil(timeoutMillis = 10_000) { AssetId("coingecko:pepe") in app.marketFavorites() }
+                    waitUntil(timeoutMillis = 10_000) { AssetId("coingecko:pepe") in app.market.favorites() }
                     onNodeWithTag("model-content").performScrollToNode(hasTestTag("market-top-coingecko:ethereum"))
                     onNodeWithTag("market-top-coingecko:ethereum").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("coin-market-source").fetchSemanticsNodes().isNotEmpty() }
@@ -133,11 +133,11 @@ class MarketDiscoveryTest {
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 var now = System.currentTimeMillis()
                 val app = PortfolioApplication(db) { now }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.setMarketDataConsent(true)
-                app.refreshMarketFeeds(::feeds)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.market.setConsent(true)
+                app.market.refreshFeeds(::feeds)
                 now += 120_000
-                app.refreshMarketFeeds({ _, _ -> throw CoingeckoProviderException(CoingeckoProviderFailure.RATE_LIMITED) })
+                app.market.refreshFeeds({ _, _ -> throw CoingeckoProviderException(CoingeckoProviderFailure.RATE_LIMITED) })
                 runDesktopComposeUiTest(width = 600, height = 1400) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {
@@ -146,7 +146,7 @@ class MarketDiscoveryTest {
                     onNodeWithText("add a free API key in Settings", substring = true).assertExists()
                     onNodeWithTag("market-top-coingecko:ethereum").assertExists()
                     now += 61_000
-                    app.refreshMarketFeeds({ _, _ -> throw CoingeckoProviderException(CoingeckoProviderFailure.OFFLINE) })
+                    app.market.refreshFeeds({ _, _ -> throw CoingeckoProviderException(CoingeckoProviderFailure.OFFLINE) })
                     host.dataRevision.update { it + 1 }
                     waitUntil(timeoutMillis = 10_000) {
                         onAllNodesWithText("Offline", substring = true).fetchSemanticsNodes().isNotEmpty()
@@ -161,8 +161,8 @@ class MarketDiscoveryTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.setMarketDataConsent(true)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.market.setConsent(true)
                 runDesktopComposeUiTest(width = 600, height = 1400) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) {

@@ -105,7 +105,7 @@ internal fun saveAlchemyKey(
     key: String?,
 ): String? =
     try {
-        app.setAlchemyApiKey(key)
+        app.evm.setAlchemyApiKey(key)
         null
     } catch (rejected: IllegalArgumentException) {
         rejected.message ?: "That does not look like an Alchemy API key."
@@ -117,7 +117,7 @@ internal fun saveOneInchKey(
     key: String?,
 ): String? =
     try {
-        app.setOneInchApiKey(key)
+        app.evm.setOneInchApiKey(key)
         null
     } catch (rejected: IllegalArgumentException) {
         rejected.message ?: "That does not look like a 1inch API key."
@@ -130,7 +130,7 @@ internal fun rememberEvmChainChoices(
     host: PlatformActions,
 ): List<EvmPlatform> {
     var choices by remember(app) { mutableStateOf<List<EvmPlatform>>(emptyList()) }
-    LaunchedEffect(app) { choices = withContext(host.dispatcher) { app.evmChainChoices() } }
+    LaunchedEffect(app) { choices = withContext(host.dispatcher) { app.evm.chainChoices() } }
     return choices
 }
 
@@ -361,7 +361,7 @@ internal fun EvmConnectDialog(
         }
 
     LaunchedEffect(Unit) {
-        val hasKey = withContext(host.dispatcher) { app.alchemyApiKey() != null }
+        val hasKey = withContext(host.dispatcher) { app.evm.alchemyApiKey() != null }
         keyPresent = hasKey
     }
     LaunchedEffect(hostReply, refresh == null) {
@@ -400,8 +400,8 @@ internal fun EvmConnectDialog(
             try {
                 val address =
                     tracked ?: withContext(host.dispatcher) {
-                        if (data.ownership.owners.isEmpty()) app.saveOwner(Owner(ownerId, "Personal"))
-                        app.saveAccountAndTarget(
+                        if (data.ownership.owners.isEmpty()) app.accounts.saveOwner(Owner(ownerId, "Personal"))
+                        app.accounts.saveAccountAndTarget(
                             Account(accountId, ownerId, title, AccountKind.WALLET),
                             TrackingTarget(
                                 TrackingTargetId("evm-$suffix"),
@@ -413,13 +413,13 @@ internal fun EvmConnectDialog(
                         )
                         selectedPortfolio
                             ?.takeIf { it.accountIds.isNotEmpty() }
-                            ?.let { app.savePortfolio(it.copy(accountIds = it.accountIds + accountId)) }
+                            ?.let { app.accounts.savePortfolio(it.copy(accountIds = it.accountIds + accountId)) }
                         valid
                     }
                 tracked = address
                 withContext(host.dispatcher) {
-                    app.setEvmConsent(true)
-                    app.addEvmChains(address, selected)
+                    app.evm.setConsent(true)
+                    app.evm.addChains(address, selected)
                 }
                 onSaved()
                 requestRefresh()
@@ -554,7 +554,7 @@ internal fun EvmAddressDetails(
     var expanded by remember(address) { mutableStateOf(emptySet<Long>()) }
     var adding by remember(address) { mutableStateOf(false) }
     LaunchedEffect(address, revision) {
-        states = withContext(host.dispatcher) { app.evmChainStates(address) }.sortedBy { it.chainId }
+        states = withContext(host.dispatcher) { app.evm.chainStates(address) }.sortedBy { it.chainId }
     }
     Column(Modifier.fillMaxWidth().testTag("evm-address-details"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("EVM address ${shortEvmAddress(address)}", fontWeight = FontWeight.SemiBold)
@@ -646,7 +646,7 @@ private fun AddEvmChainsDialog(
                 error = null
                 scope.launch {
                     try {
-                        withContext(host.dispatcher) { app.addEvmChains(address, added) }
+                        withContext(host.dispatcher) { app.evm.addChains(address, added) }
                         onSaved()
                     } catch (cancelled: CancellationException) {
                         throw cancelled

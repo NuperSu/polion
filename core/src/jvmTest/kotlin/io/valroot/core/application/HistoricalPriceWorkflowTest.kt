@@ -38,8 +38,8 @@ class HistoricalPriceWorkflowTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val clock = 1_710_000_000_000L
             val app = PortfolioApplication(db) { clock }
-            app.seedDemo()
-            app.useProviderPrices(btc, usd)
+            app.demo.seed()
+            app.prices.useProvider(btc, usd)
             val market =
                 io.valroot.core.market
                     .MarketRepository(db)
@@ -75,6 +75,7 @@ class HistoricalPriceWorkflowTest {
             assertEquals(
                 "gecko-new",
                 app
+                    .analytics
                     .historySeries(listOf(clock))
                     .single()
                     .valuations
@@ -89,7 +90,7 @@ class HistoricalPriceWorkflowTest {
         JvmSqliteDatabase(":memory:").use { db ->
             var clock = 1_710_000_000_000L
             val app = PortfolioApplication(db) { clock }
-            app.seedDemo()
+            app.demo.seed()
             assertEquals(
                 PriceStatus.FRESH,
                 app
@@ -108,10 +109,17 @@ class HistoricalPriceWorkflowTest {
                     .priceStatus,
             )
             // The same quote at the same instant has one status on every view.
-            assertEquals(PriceStatus.STALE, app.history(clock).single().priceStatus)
+            assertEquals(
+                PriceStatus.STALE,
+                app.analytics
+                    .history(clock)
+                    .single()
+                    .priceStatus,
+            )
             assertEquals(
                 PriceStatus.STALE,
                 app
+                    .analytics
                     .historySeries(listOf(clock))
                     .single()
                     .valuations
@@ -120,7 +128,8 @@ class HistoricalPriceWorkflowTest {
             )
             assertTrue(
                 app
-                    .accountingReport()
+                    .accounting
+                    .report()
                     .report.valuations
                     .all { it.value == null },
             )
@@ -130,10 +139,10 @@ class HistoricalPriceWorkflowTest {
     @Test fun rangeImportStoresIntradayPricesExactlyAndRejectsInvalidOrCancelledBatches() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            app.setPriceSourceConsent(true)
+            app.prices.setSourceConsent(true)
             val payload = """{"prices":[[$day,42000.125],[${day + 3_600_000},4.25e4]]}"""
             val count =
-                app.fetchPriceHistory({ url ->
+                app.prices.fetchHistory({ url ->
                     assertEquals("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=90", url)
                     payload
                 }, btc, usd, 90)
@@ -143,9 +152,9 @@ class HistoricalPriceWorkflowTest {
             assertEquals(listOf((day + 3_600_000).toString(), "42500"), stored[1])
             val owner = OwnerId("owner")
             val account = AccountId("account")
-            app.saveOwner(Owner(owner, "Owner"))
-            app.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
-            app.saveManualActivity(
+            app.accounts.saveOwner(Owner(owner, "Owner"))
+            app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
+            app.transactions.saveManualActivity(
                 Activity(
                     ActivityId("deposit"),
                     day - 1,
@@ -160,15 +169,15 @@ class HistoricalPriceWorkflowTest {
                     true,
                 ),
             )
-            val history = app.historySeries(listOf(day, day + 3_600_000))
+            val history = app.analytics.historySeries(listOf(day, day + 3_600_000))
             assertEquals(ExactDecimal.parse("42000.12500000000"), history[0].valuations.single().value)
             assertEquals(ExactDecimal.parse("42500.00000000"), history[1].valuations.single().value)
             assertFailsWith<CoingeckoProviderException> {
-                app.fetchPriceHistory({ """{"prices":[[$day,5],[$day,6]]}""" }, btc, usd, 90)
+                app.prices.fetchHistory({ """{"prices":[[$day,5],[$day,6]]}""" }, btc, usd, 90)
             }
             var checks = 0
             assertFailsWith<CoingeckoProviderException> {
-                app.fetchPriceHistory({ payload }, btc, usd, 90) {
+                app.prices.fetchHistory({ payload }, btc, usd, 90) {
                     if (++checks == 3) throw CoingeckoProviderException(CoingeckoProviderFailure.CANCELLED)
                 }
             }
@@ -191,17 +200,17 @@ class HistoricalPriceWorkflowTest {
                     requests++
                     response
                 }
-            assertFalse(app.priceSourceConsent())
-            app.setSourceConsent(true)
-            assertFailsWith<IllegalArgumentException> { app.fetchHistoricalPrice(transport, btc, usd, day) }
-            app.setPriceSourceConsent(true)
-            app.setSourceConsent(false)
-            assertFailsWith<IllegalArgumentException> { app.fetchHistoricalPrice(transport, btc, usd, day + 1) }
-            assertFailsWith<IllegalArgumentException> { app.fetchHistoricalPrice(transport, btc, usd, day + 86_400_000L) }
-            assertFailsWith<IllegalArgumentException> { app.fetchHistoricalPrice(transport, AssetId("unmapped"), usd, day) }
-            assertFailsWith<IllegalArgumentException> { app.fetchHistoricalPrice(transport, btc, usd, day - 366L * 86_400_000L) }
+            assertFalse(app.prices.sourceConsent())
+            app.sources.setConsent(true)
+            assertFailsWith<IllegalArgumentException> { app.prices.fetchHistorical(transport, btc, usd, day) }
+            app.prices.setSourceConsent(true)
+            app.sources.setConsent(false)
+            assertFailsWith<IllegalArgumentException> { app.prices.fetchHistorical(transport, btc, usd, day + 1) }
+            assertFailsWith<IllegalArgumentException> { app.prices.fetchHistorical(transport, btc, usd, day + 86_400_000L) }
+            assertFailsWith<IllegalArgumentException> { app.prices.fetchHistorical(transport, AssetId("unmapped"), usd, day) }
+            assertFailsWith<IllegalArgumentException> { app.prices.fetchHistorical(transport, btc, usd, day - 366L * 86_400_000L) }
             assertEquals(0, requests)
-            val result = app.fetchHistoricalPrice(transport, btc, AssetId("EUR"), day)
+            val result = app.prices.fetchHistorical(transport, btc, AssetId("EUR"), day)
             assertEquals(ExactDecimal.parse("39000"), result.observation!!.price.value)
             assertEquals(1, requests)
         }
@@ -216,9 +225,9 @@ class HistoricalPriceWorkflowTest {
                 val owner = OwnerId("owner")
                 val account = AccountId("account")
                 val event = EventId("buy")
-                app.saveOwner(Owner(owner, "Owner"))
-                app.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
-                app.saveManualActivity(
+                app.accounts.saveOwner(Owner(owner, "Owner"))
+                app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
+                app.transactions.saveManualActivity(
                     Activity(
                         ActivityId("buy"),
                         day - 1,
@@ -231,10 +240,10 @@ class HistoricalPriceWorkflowTest {
                         true,
                     ),
                 )
-                app.saveTreatments(ActivityId("buy"), listOf(Treatment.Acquire(event, QuoteValue(usd, Rational.of("40000")))))
-                app.setPriceSourceConsent(true)
+                app.accounting.saveTreatments(ActivityId("buy"), listOf(Treatment.Acquire(event, QuoteValue(usd, Rational.of("40000")))))
+                app.prices.setSourceConsent(true)
                 val result =
-                    app.fetchHistoricalPrice({ url ->
+                    app.prices.fetchHistorical({ url ->
                         assertEquals("https://api.coingecko.com/api/v3/coins/bitcoin/history?date=29-02-2024&localization=false", url)
                         response
                     }, btc, usd, day)
@@ -249,16 +258,17 @@ class HistoricalPriceWorkflowTest {
                 )
                 val valuation =
                     app
-                        .accountingReport()
+                        .accounting
+                        .report()
                         .report.valuations
                         .single()
                 assertEquals(Rational.fromDecimal(ExactDecimal.parse("42000.123456789")), valuation.value)
                 assertEquals(Rational.fromDecimal(ExactDecimal.parse("2000.123456789")), valuation.unrealizedGain)
-                app.setPriceSourceConsent(false)
+                app.prices.setSourceConsent(false)
             }
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { recentNow }
-                assertFalse(app.priceSourceConsent())
+                assertFalse(app.prices.sourceConsent())
                 assertEquals(
                     ExactDecimal.parse("42000.12345678900000000"),
                     app
@@ -275,7 +285,9 @@ class HistoricalPriceWorkflowTest {
                         .price!!
                         .providerId != null,
                 )
-                app.recordManualPrice(PriceObservation("manual", Price(btc, usd, ExactDecimal.parse("43000")), null, day, recentNow, true))
+                app.prices.recordManual(
+                    PriceObservation("manual", Price(btc, usd, ExactDecimal.parse("43000")), null, day, recentNow, true),
+                )
                 assertEquals(
                     ExactDecimal.parse("43000.00000000"),
                     app
@@ -294,12 +306,12 @@ class HistoricalPriceWorkflowTest {
         for (wipe in listOf(false, true)) {
             JvmSqliteDatabase(":memory:").use { db ->
                 val app = PortfolioApplication(db) { now }
-                app.setPriceSourceConsent(true)
+                app.prices.setSourceConsent(true)
                 val failure =
                     assertFailsWith<CoingeckoProviderException> {
-                        app.fetchHistoricalPrice({
-                            if (wipe) app.wipe() else app.setPriceSourceConsent(false)
-                            app.setPriceSourceConsent(true)
+                        app.prices.fetchHistorical({
+                            if (wipe) app.backup.wipe() else app.prices.setSourceConsent(false)
+                            app.prices.setSourceConsent(true)
                             response
                         }, btc, usd, day)
                     }
@@ -314,11 +326,11 @@ class HistoricalPriceWorkflowTest {
         JvmSqliteDatabase(":memory:").use { db ->
             var clock = now
             val app = PortfolioApplication(db) { clock }
-            app.setPriceSourceConsent(true)
+            app.prices.setSourceConsent(true)
             var generation = 0
             val captured = generation
             assertFailsWith<CoingeckoProviderException> {
-                app.fetchHistoricalPrice({
+                app.prices.fetchHistorical({
                     generation++
                     response
                 }, btc, usd, day, authorize = {
@@ -327,12 +339,12 @@ class HistoricalPriceWorkflowTest {
             }
             assertEquals("0", db.query("SELECT COUNT(*) FROM market_prices").single().single())
             val first =
-                app.fetchHistoricalPrice({
+                app.prices.fetchHistorical({
                     clock += 1000
                     response
                 }, btc, usd, day)
             assertEquals(now + 1000, first.observation!!.observedAtMillis)
-            val second = app.fetchHistoricalPrice({ response }, btc, usd, day)
+            val second = app.prices.fetchHistorical({ response }, btc, usd, day)
             assertTrue(first.observation.id != second.observation!!.id)
             assertEquals("2", db.query("SELECT COUNT(*) FROM market_prices").single().single())
         }
@@ -341,18 +353,18 @@ class HistoricalPriceWorkflowTest {
     @Test fun missingInvalidAndRateLimitedResultsDoNotRecordPrices() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { now }
-            app.setPriceSourceConsent(true)
-            assertEquals(PriceStatus.MISSING, app.fetchHistoricalPrice({ "{}" }, btc, usd, day).status)
+            app.prices.setSourceConsent(true)
+            assertEquals(PriceStatus.MISSING, app.prices.fetchHistorical({ "{}" }, btc, usd, day).status)
             assertEquals(
                 CoingeckoProviderFailure.INVALID_RESPONSE,
                 assertFailsWith<CoingeckoProviderException> {
-                    app.fetchHistoricalPrice({ "not JSON" }, btc, usd, day)
+                    app.prices.fetchHistorical({ "not JSON" }, btc, usd, day)
                 }.failure,
             )
             assertEquals(
                 CoingeckoProviderFailure.RATE_LIMITED,
                 assertFailsWith<CoingeckoProviderException> {
-                    app.fetchHistoricalPrice({ throw CoingeckoProviderException(CoingeckoProviderFailure.RATE_LIMITED) }, btc, usd, day)
+                    app.prices.fetchHistorical({ throw CoingeckoProviderException(CoingeckoProviderFailure.RATE_LIMITED) }, btc, usd, day)
                 }.failure,
             )
             assertEquals("0", db.query("SELECT COUNT(*) FROM market_prices").single().single())

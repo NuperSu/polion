@@ -1,6 +1,6 @@
 # Exchange accounts (Bybit, Binance, MEXC)
 
-Code: `core/…/exchange/` (`Bybit.kt` client and parsers, `BybitConnector.kt`, `BybitDecoder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt`, `Hmac.kt`), and in `PortfolioApplication`: `bybitTargets`, `setBybitKey`, `saveExchangeRows`, `applyBybitHistory`, `exchangeAssets`, `chooseExchangeCoin`. Transfer matching across assets: `core/…/reconcile/TransferResolution.kt` (`AmountScale`) and the transfer branch of `core/…/accounting/Fifo.kt`. Hosts: `BybitTransport` in `androidApp` and `desktopApp`. UI: `sharedUi/…/ExchangeAccountFlows.kt`. Tests: `BybitTest`, `BybitConnectorTest`, `ExchangeCoinsTest`, `FifoTransferTest`, `TransferLinkAccountingTest`, `BybitTransportTest`, `BybitUiTest`.
+Code: `core/…/exchange/bybit/` (`Bybit.kt` client and parsers, `BybitConnector.kt` with `BybitProvider`, `BybitDecoder.kt`); shared in `core/…/exchange/`: `ExchangeProvider.kt` (providers, `ExchangeHistory`, `ExchangeSnapshot`), `ExchangeConnector.kt` (refresh loop, windowed stream reader, `RequestBudget`, `TradeSymbols`), `ExchangeCoins.kt`, `ExchangeSyncRepository.kt`, `Hmac.kt` (`HmacQuery`); and `ExchangeService` (`app.exchanges`): `targets`, `setKey`, `saveRows`, `applyHistory`, `assets`, `chooseCoin`. Transfer matching across assets: `core/…/reconcile/TransferResolution.kt` (`AmountScale`) and the transfer branch of `core/…/accounting/Fifo.kt`. Transport: `core/src/jvmSharedMain/kotlin/io/valroot/core/exchange/bybit/BybitTransport.kt`, bound in `JvmExchanges`. UI: `sharedUi/…/ExchangeAccountFlows.kt`. Tests: `BybitTest`, `BybitConnectorTest`, `ExchangeCoinsTest`, `FifoTransferTest`, `TransferLinkAccountingTest`, `BybitTransportTest`, `BybitUiTest`.
 
 ## Tracking an account
 
@@ -81,7 +81,7 @@ An accepted link moves lots from the outgoing asset to the incoming one with the
 
 # Binance
 
-Code: `core/…/exchange/Binance.kt` (client and parsers), `BinanceConnector.kt`, `BinanceDecoder.kt`; shared with Bybit: `Exchanges.kt` (`ExchangeKind`), `ExchangeLedgerBuilder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt` (also `exchange_cursors`). In `PortfolioApplication`: `applyBinanceHistory`, `binancePairs`, `addBinancePair`. Hosts: `BinanceTransport` in `androidApp` and `desktopApp`. Tests: `BinanceTest`, `BinanceConnectorTest`, `BinanceTransportTest`, `BybitUiTest` (Binance connect and pairs).
+Code: `core/…/exchange/binance/` (`Binance.kt` requests and signing, `BinanceParsers.kt`, `BinanceConnector.kt` with `BinanceProvider`, `BinanceDecoder.kt`); shared with Bybit: `Exchanges.kt` (`ExchangeKind`), `ExchangeLedgerBuilder.kt`, `ExchangeCoins.kt`, `ExchangeSyncRepository.kt` (also `exchange_cursors`), `TradeSymbols`. In `ExchangeService` (`app.exchanges`): `applyHistory`, `pairs`, `addPair`. Transport: `core/src/jvmSharedMain/kotlin/io/valroot/core/exchange/binance/BinanceTransport.kt`, bound in `JvmExchanges`. Tests: `BinanceTest`, `BinanceConnectorTest`, `BinanceTransportTest`, `BybitUiTest` (Binance connect and pairs).
 
 ## Tracking an account
 
@@ -140,7 +140,7 @@ Binance keeps no balance log. Each coin's running balance goes through the activ
 
 # MEXC
 
-Code: `core/…/exchange/Mexc.kt` (client and parsers), `MexcConnector.kt`, `MexcDecoder.kt`; shared: `ExchangeLedgerBuilder.settleByRunningBalance`, trading pairs (`exchangePairs`, `addExchangePair`). Hosts: `MexcTransport` in `androidApp` and `desktopApp`. Tests: `MexcTest`, `MexcConnectorTest`, `MexcTransportTest`, `BybitUiTest` (MEXC connect).
+Code: `core/…/exchange/mexc/` (`Mexc.kt` client and parsers, `MexcConnector.kt` with `MexcProvider`, `MexcDecoder.kt`); shared: `ExchangeLedgerBuilder.settleByRunningBalance`, trading pairs (`ExchangeService.pairs`, `addPair`). Transport: `core/src/jvmSharedMain/kotlin/io/valroot/core/exchange/mexc/MexcTransport.kt`, bound in `JvmExchanges`. Tests: `MexcTest`, `MexcConnectorTest`, `MexcTransportTest`, `BybitUiTest` (MEXC connect).
 
 ## Tracking an account
 
@@ -175,3 +175,15 @@ Balance check: as for Binance, each coin's running balance fills gaps 1 ms befor
 
 - Futures balances and results.
 - History older than MEXC's retention, except as openings. MEXC's web export (three years) can fill it through a later CSV importer.
+
+## Importing exchange exports (planned)
+
+APIs return only recent history: MEXC keeps a month of trades and Binance needs a request per trading pair. Exchanges' own export files reach further back. An import turns such a file into the same rows the API gives (`exchange_rows`: stream, record key, raw record). Imported rows go through the same decoder and balance settlement as fetched ones:
+
+- **Seam:** `ExchangeExportFormat` (`id`, `label`, `detect(header)`, `parse(text)`), listed in each provider's `exportFormats`.
+- **Deduplication:** a row's stream and key are those the API gives the same record, so a record both imported and fetched is stored once. Where an export has no record ID, the key is built from time, coin, amount and side, the way the decoder builds it for the API record.
+- **Coverage:** imported rows move the start of the records earlier, so openings move with them. Settlement needs no change.
+- **First formats:** Bybit's asset-change and trade exports; Binance's "Transaction History" statement (one file covering trades, transfers, Earn and converts, which spares the per-pair trade requests); MEXC's spot order, deposit and withdrawal exports (three years).
+- **UI:** a step in the existing CSV import flow that recognises the file's format and the account.
+
+No format is implemented yet.

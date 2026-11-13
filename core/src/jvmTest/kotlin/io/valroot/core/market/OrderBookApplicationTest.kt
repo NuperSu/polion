@@ -24,21 +24,21 @@ class OrderBookApplicationTest {
             val app = PortfolioApplication(db) { now }
             val requests = mutableListOf<String>()
             val coingecko = { url: String, _: String? -> tickers.also { requests += url } }
-            assertEquals(KrakenPair("XBT", "USD"), app.krakenPair("bitcoin", coingecko))
-            assertFails { app.krakenPair("ethereum", coingecko) }
-            app.setMarketDataConsent(true)
-            assertEquals(KrakenPair("ETH", "USD"), app.krakenPair("ethereum", coingecko))
-            assertEquals(KrakenPair("ETH", "USD"), app.krakenPair("ethereum", coingecko))
+            assertEquals(KrakenPair("XBT", "USD"), app.market.krakenPair("bitcoin", coingecko))
+            assertFails { app.market.krakenPair("ethereum", coingecko) }
+            app.market.setConsent(true)
+            assertEquals(KrakenPair("ETH", "USD"), app.market.krakenPair("ethereum", coingecko))
+            assertEquals(KrakenPair("ETH", "USD"), app.market.krakenPair("ethereum", coingecko))
             assertEquals(1, requests.size)
             now += 8 * 86_400_000L
-            app.krakenPair("ethereum", coingecko)
+            app.market.krakenPair("ethereum", coingecko)
             assertEquals(2, requests.size)
-            assertNull(app.krakenPair("dogecoin", { _, _ -> """{"tickers":[]}""" }))
+            assertNull(app.market.krakenPair("dogecoin", { _, _ -> """{"tickers":[]}""" }))
 
             val pair = KrakenPair("ETH", "USD")
-            assertFails { app.orderBook(pair, { depth }) }
-            app.setOrderBookConsent(true)
-            val book = app.orderBook(pair, { url -> depth.also { assertTrue(url.endsWith("pair=ETHUSD&count=10")) } })
+            assertFails { app.market.orderBook(pair, { depth }) }
+            app.market.setOrderBookConsent(true)
+            val book = app.market.orderBook(pair, { url -> depth.also { assertTrue(url.endsWith("pair=ETHUSD&count=10")) } })
             assertEquals("ETH/USD", book.pair)
             assertEquals(now, book.observedAtMillis)
         }
@@ -47,19 +47,19 @@ class OrderBookApplicationTest {
     @Test fun aNotificationCheckRefreshesOnlyWhenSomethingIsOn() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
-            app.setMarketDataConsent(true)
+            app.market.setConsent(true)
             var requests = 0
             val markets = """[{"id":"bitcoin","symbol":"btc","name":"Bitcoin","current_price":90000}]"""
             val transport = { url: String, _: String? ->
                 requests++
                 if (url.contains("/coins/markets")) markets else """{"coins":[]}"""
             }
-            assertTrue(app.runNotificationCheck(transport, "2027-01-15", 12).isEmpty())
+            assertTrue(app.notifications.runCheck(transport, "2027-01-15", 12).isEmpty())
             assertEquals(0, requests)
-            app.refreshMarketFeeds(transport)
-            app.savePriceAlert("bitcoin", AlertCondition.BELOW, ExactDecimal.parse("80000"))
+            app.market.refreshFeeds(transport)
+            app.notifications.saveAlert("bitcoin", AlertCondition.BELOW, ExactDecimal.parse("80000"))
             requests = 0
-            app.runNotificationCheck(transport, "2027-01-15", 12)
+            app.notifications.runCheck(transport, "2027-01-15", 12)
             // The cached list is younger than ten minutes, so no request is made.
             assertEquals(0, requests)
         }

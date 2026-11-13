@@ -78,7 +78,7 @@ internal fun AccountsWorkspace(
     LaunchedEffect(app, revision, data, portfolio, retry) {
         loading = true
         try {
-            accounts = withContext(host.dispatcher) { app.accountOverview(portfolio) }
+            accounts = withContext(host.dispatcher) { app.analytics.accountOverview(portfolio) }
             error = null
         } catch (
             cancelled: CancellationException,
@@ -274,7 +274,7 @@ internal fun AccountsWorkspace(
                 busy = true
                 scope.launch {
                     try {
-                        withContext(host.dispatcher) { app.archiveAccount(detail.account.id, !restoring) }
+                        withContext(host.dispatcher) { app.accounts.archiveAccount(detail.account.id, !restoring) }
                         archive = null
                         selected = null
                         onChanged()

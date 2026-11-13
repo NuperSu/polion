@@ -42,7 +42,7 @@ class AdaptiveLayoutUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             LayoutHost().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 1200, height = 900) {
                     var viewportWidth by mutableStateOf(699)
                     setContent {
@@ -91,7 +91,7 @@ class AdaptiveLayoutUiTest {
         JvmSqliteDatabase(":memory:").use { db ->
             LayoutHost().use { host ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.seedDemo()
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 640, height = 360) {
                     setContent {
                         val density = LocalDensity.current
@@ -118,7 +118,7 @@ class AdaptiveLayoutUiTest {
                         onNodeWithTag("page-content").performScrollToNode(hasTestTag(tag))
                         onNodeWithTag(tag).performScrollTo().assertIsDisplayed().performClick()
                         waitUntil(timeoutMillis = 10_000) {
-                            app.appearanceTheme() == key && onAllNodes(hasTestTag(tag) and isSelected()).fetchSemanticsNodes().isNotEmpty()
+                            app.settings.theme() == key && onAllNodes(hasTestTag(tag) and isSelected()).fetchSemanticsNodes().isNotEmpty()
                         }
                         onNodeWithTag("page-content").performScrollToNode(hasTestTag(tag))
                         onNodeWithTag(tag).performScrollTo().assertIsSelected()

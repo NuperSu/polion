@@ -20,9 +20,9 @@ class InsightsScreenTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.setLandingPage(LandingPage.INSIGHTS)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.settings.setLandingPage(LandingPage.INSIGHTS)
                 runDesktopComposeUiTest(width = 600, height = 3200) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("insights-performance").fetchSemanticsNodes().isNotEmpty() }

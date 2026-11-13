@@ -21,7 +21,7 @@ class NotificationSettingsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { delegate ->
                 val app = PortfolioApplication(db) { System.currentTimeMillis() }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 var notified = 0
                 val host =
                     object : PlatformActions by delegate {
@@ -36,13 +36,15 @@ class NotificationSettingsTest {
                     onNodeWithText("Price notifications need market data on Main. The daily update still works.").assertIsDisplayed()
 
                     onNodeWithTag("notify-daily").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.notificationPreferences().dailyUpdate }
+                    waitUntil(timeoutMillis = 10_000) { app.notifications.preferences().dailyUpdate }
                     onNodeWithTag("notify-moves").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.notificationPreferences().priceMoves }
+                    waitUntil(timeoutMillis = 10_000) { app.notifications.preferences().priceMoves }
                     onNodeWithTag("notify-extremes").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.notificationPreferences().highsAndLows }
+                    waitUntil(timeoutMillis = 10_000) { app.notifications.preferences().highsAndLows }
                     onNodeWithTag("notify-daily").performClick()
-                    waitUntil(timeoutMillis = 10_000) { !app.notificationPreferences().dailyUpdate }
+                    waitUntil(timeoutMillis = 10_000) { !app.notifications.preferences().dailyUpdate }
+                    // The host hears about each change after it is saved.
+                    waitUntil(timeoutMillis = 10_000) { notified == 4 }
                     assertEquals(4, notified)
 
                     onNodeWithText("No price alerts are on. Add alerts from a coin's Alerts tab.").assertIsDisplayed()

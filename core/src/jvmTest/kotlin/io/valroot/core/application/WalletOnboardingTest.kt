@@ -26,13 +26,13 @@ class WalletOnboardingTest {
     fun firstWalletCreatesOwnershipAndConsentTogetherAndPersists() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            app.saveBitcoinWallet(wallet(), account, owner, consentAccepted = true)
+            app.bitcoinWallets.save(wallet(), account, owner, consentAccepted = true)
             val reopened = PortfolioApplication(db) { 1000L }
             val catalog = reopened.snapshot().ownership
             assertEquals(listOf(owner), catalog.owners)
             assertEquals(listOf(account), catalog.accounts)
             assertEquals(listOf(wallet()), catalog.targets)
-            assertTrue(reopened.sourceConsent())
+            assertTrue(reopened.sources.consent())
         }
     }
 
@@ -41,10 +41,10 @@ class WalletOnboardingTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
             val initial = app.snapshot().ownership
-            assertFails { app.saveBitcoinWallet(wallet(), account, owner) }
-            assertFails { app.saveBitcoinWallet(wallet(expression = "not-a-wallet"), account, owner, consentAccepted = true) }
+            assertFails { app.bitcoinWallets.save(wallet(), account, owner) }
+            assertFails { app.bitcoinWallets.save(wallet(expression = "not-a-wallet"), account, owner, consentAccepted = true) }
             assertEquals(initial, app.snapshot().ownership)
-            assertFalse(app.sourceConsent())
+            assertFalse(app.sources.consent())
             assertTrue(db.query("SELECT * FROM application_settings").isEmpty())
         }
     }
@@ -53,17 +53,17 @@ class WalletOnboardingTest {
     fun existingAccountUsesStoredConsentAndDuplicateCannotCreateOrphans() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            app.saveOwner(owner)
-            app.saveAccount(account)
-            app.setSourceConsent(true)
-            app.saveBitcoinWallet(wallet())
+            app.accounts.saveOwner(owner)
+            app.accounts.saveAccount(account)
+            app.sources.setConsent(true)
+            app.bitcoinWallets.save(wallet())
             val initial = app.snapshot().ownership
             val anotherOwner = Owner(OwnerId("another-owner"), "Another owner")
             val anotherAccount = Account(AccountId("another-account"), anotherOwner.id, "Another account", AccountKind.WALLET)
             // The undiscovered wallet is resumed in its original account; the requested account and owner are not created.
             assertEquals(
                 TrackingTargetId("wallet"),
-                app.saveBitcoinWallet(wallet("duplicate", anotherAccount.id), anotherAccount, anotherOwner, consentAccepted = true),
+                app.bitcoinWallets.save(wallet("duplicate", anotherAccount.id), anotherAccount, anotherOwner, consentAccepted = true),
             )
             assertEquals(initial, app.snapshot().ownership)
         }
@@ -73,18 +73,18 @@ class WalletOnboardingTest {
     fun inactiveOrGroupAccountCannotReceiveWallet() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1000L }
-            app.saveOwner(owner)
-            app.saveAccount(account.copy(kind = AccountKind.GROUP))
-            assertFails { app.saveBitcoinWallet(wallet(), consentAccepted = true) }
-            app.saveAccount(account.copy(tags = setOf("valroot:archived")))
-            assertFails { app.saveBitcoinWallet(wallet(), consentAccepted = true) }
+            app.accounts.saveOwner(owner)
+            app.accounts.saveAccount(account.copy(kind = AccountKind.GROUP))
+            assertFails { app.bitcoinWallets.save(wallet(), consentAccepted = true) }
+            app.accounts.saveAccount(account.copy(tags = setOf("valroot:archived")))
+            assertFails { app.bitcoinWallets.save(wallet(), consentAccepted = true) }
             assertTrue(
                 app
                     .snapshot()
                     .ownership.targets
                     .isEmpty(),
             )
-            assertFalse(app.sourceConsent())
+            assertFalse(app.sources.consent())
         }
     }
 
@@ -94,11 +94,11 @@ class WalletOnboardingTest {
             val app = PortfolioApplication(db) { 1000L }
             val initial = app.snapshot().ownership
             db.execute("CREATE TRIGGER fail_wallet BEFORE INSERT ON targets BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
-            assertFails { app.saveBitcoinWallet(wallet(), account, owner, consentAccepted = true) }
+            assertFails { app.bitcoinWallets.save(wallet(), account, owner, consentAccepted = true) }
             assertEquals(initial, app.snapshot().ownership)
-            assertFalse(app.sourceConsent())
+            assertFalse(app.sources.consent())
             db.execute("DROP TRIGGER fail_wallet")
-            app.saveBitcoinWallet(wallet(), account, owner, consentAccepted = true)
+            app.bitcoinWallets.save(wallet(), account, owner, consentAccepted = true)
             assertEquals(listOf(wallet()), app.snapshot().ownership.targets)
         }
     }

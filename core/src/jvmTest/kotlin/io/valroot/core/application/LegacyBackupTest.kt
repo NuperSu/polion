@@ -12,7 +12,7 @@ class LegacyBackupTest {
         JvmSqliteDatabase(":memory:").use { live ->
             val app = PortfolioApplication(live) { 1_800_000_000_000L }
             JvmSqliteDatabase(":memory:").use { staging ->
-                app.restoreToStaging(staging, archive, "legacy-fixture".toCharArray())
+                app.backup.restoreToStaging(staging, archive, "legacy-fixture".toCharArray())
                 val restored = PortfolioApplication(staging) { 1_800_000_000_000L }
                 val tags =
                     restored

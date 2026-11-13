@@ -1,5 +1,8 @@
 package io.valroot.android
 
+import io.valroot.core.market.DefiLlamaTransport
+import io.valroot.core.market.HttpCoingeckoTransport
+import io.valroot.core.market.KrakenPriceTransport
 import android.content.Context
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.storage.AndroidSqliteDatabase
@@ -12,7 +15,7 @@ import java.util.concurrent.Executors
 /** On-demand CoinGecko market refreshes on their own connection, so network waits never hold the UI database thread. */
 internal object MarketFeedRefresher {
     private val executor = Executors.newSingleThreadExecutor()
-    val transport = AndroidCoingeckoTransport()
+    val transport = HttpCoingeckoTransport()
     private val defiLlama = DefiLlamaTransport()
 
     fun refresh(
@@ -30,7 +33,7 @@ internal object MarketFeedRefresher {
                         runCatching {
                             AndroidSqliteDatabase(path).use { db ->
                                 val app = PortfolioApplication(db, System::currentTimeMillis)
-                                val result = marketRefreshMessage(app.refreshMarketFeeds(transport::feed, maxAgeMillis))
+                                val result = marketRefreshMessage(app.market.refreshFeeds(transport::feed, maxAgeMillis))
                                 refreshEvmCatalogAndPrices(app)
                                 result
                             }
@@ -42,36 +45,9 @@ internal object MarketFeedRefresher {
         }
     }
 
-    /** Loads the CoinGecko chain catalog on this executor, under the same pause gate and closing check as market refreshes. */
-    fun refreshEvmCatalog(
-        context: Context,
-        closing: () -> Boolean,
-        onResult: (String?) -> Unit,
-    ) {
-        val path = context.applicationContext.getDatabasePath("portfolio.sqlite").path
-        executor.execute {
-            val message =
-                synchronized(AutomaticPriceGate.lock) {
-                    when {
-                        closing() -> "The app is closing."
-                        AutomaticPriceGate.paused -> "Market data is paused while data is restored."
-                        else ->
-                            runCatching {
-                                AndroidSqliteDatabase(path).use { db ->
-                                    PortfolioApplication(db, System::currentTimeMillis).refreshEvmCatalog(transport::feed)
-                                }
-                                null
-                            }.getOrElse { "Could not load the chain list from CoinGecko." }
-                    }
-                }
-            RefreshWorker.dataRevision.update { it + 1 }
-            onResult(message)
-        }
-    }
-
     /** Refreshes the CoinGecko catalog when it is due, so exchange symbols can be matched to coins. Never fails the caller. */
     fun refreshCatalog(app: PortfolioApplication) {
-        if (app.marketDataConsent()) runCatching { app.refreshEvmCatalog(transport::feed) }
+        if (app.market.consent()) runCatching { app.evm.refreshCatalog(transport::feed) }
     }
 
     /**
@@ -80,13 +56,13 @@ internal object MarketFeedRefresher {
      * nothing without market data consent.
      */
     fun refreshEvmCatalogAndPrices(app: PortfolioApplication) {
-        if (!app.marketDataConsent()) return
-        runCatching { app.refreshEvmCatalog(transport::feed) }
-        runCatching { app.refreshLinkedCoinUsdPrices(defiLlama::get) }
-        runCatching { app.refreshLinkedCoinPrices(transport::feed) }
-        runCatching { app.refreshLinkedCoinLogos(transport::feed) }
-        runCatching { app.backfillLinkedCoinUsdHistory(defiLlama::get, pause = Thread::sleep) }
-        runCatching { app.backfillLinkedCoinHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
+        if (!app.market.consent()) return
+        runCatching { app.evm.refreshCatalog(transport::feed) }
+        runCatching { app.linkedCoins.refreshUsdPrices(defiLlama::get) }
+        runCatching { app.linkedCoins.refreshPrices(transport::feed) }
+        runCatching { app.linkedCoins.refreshLogos(transport::feed) }
+        runCatching { app.linkedCoins.backfillUsdHistory(defiLlama::get, pause = Thread::sleep) }
+        runCatching { app.linkedCoins.backfillHistory({ url, key -> transport.get(url, key.orEmpty()) }, pause = Thread::sleep) }
     }
 
     /**

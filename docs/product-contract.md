@@ -18,7 +18,7 @@ An owner, portfolio, account, tracking target, wallet-software brand, network, c
 
 | Area | Supported now | In progress: next planned changes | Later |
 | --- | --- | --- | --- |
-| Local tracking | Owners, account groups, portfolios, Bitcoin mainnet addresses, bounded descriptor/xpub import and discovery, archive/restore | Capability-driven source inventory and clearer account/target hierarchy | EVM, exchanges and additional chain families |
+| Local tracking | Owners, account groups, portfolios, Bitcoin mainnet addresses, bounded descriptor/xpub import and discovery, EVM addresses, Bybit, Binance and MEXC exchange accounts, archive/restore | Capability-driven source inventory and clearer account/target hierarchy | Additional chain families |
 | Connection | Public Bitcoin validation, configured Esplora endpoint, explicit query consent, refresh and recovery actions | Separate saved/validated/connected/synced status; structured per-target progress | Secure exchange permission verification and generalized provider routing |
 | Portfolio | Exact quantities, priced subtotal with missing/stale price notices, portfolio selection, historical value chart and asset-list filters | Dashboard grouping, accessibility and full traceability | Richer grouping and interactive comparisons |
 | Activity | Search, account/kind filters, pagination, movements, provenance, corrections, rules and reconciliation review | Preserve workflows through presentation extraction; audit scope of every action | Additional date/network/status filters and broader source decoders |

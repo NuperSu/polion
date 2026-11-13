@@ -113,9 +113,9 @@ class InteractiveChartTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.setLandingPage(LandingPage.PORTFOLIO)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.settings.setLandingPage(LandingPage.PORTFOLIO)
                 runDesktopComposeUiTest(width = 600, height = 1600) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("portfolio-stats").fetchSemanticsNodes().isNotEmpty() }
@@ -123,9 +123,9 @@ class InteractiveChartTest {
                     onNodeWithTag("portfolio-allocation").performScrollTo()
                     onNodeWithText("100.0%").assertExists()
                     onNodeWithTag("chart-style-candles").performScrollTo().performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.generalPreferences().candleCharts }
+                    waitUntil(timeoutMillis = 10_000) { app.settings.general().candleCharts }
                     onNodeWithTag("chart-style-line").performClick()
-                    waitUntil(timeoutMillis = 10_000) { !app.generalPreferences().candleCharts }
+                    waitUntil(timeoutMillis = 10_000) { !app.settings.general().candleCharts }
                     assertTrue(onAllNodesWithText("Portfolio value change includes", substring = true).fetchSemanticsNodes().isEmpty())
                 }
             }

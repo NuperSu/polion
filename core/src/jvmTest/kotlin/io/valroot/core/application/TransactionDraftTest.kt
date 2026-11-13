@@ -41,9 +41,9 @@ class TransactionDraftTest {
     private fun setup(app: PortfolioApplication) {
         app.snapshot()
         val owner = OwnerId("owner")
-        app.saveOwner(Owner(owner, "Owner"))
-        app.saveAccount(Account(a, owner, "A", AccountKind.ACCOUNT))
-        app.saveAccount(Account(b, owner, "B", AccountKind.ACCOUNT))
+        app.accounts.saveOwner(Owner(owner, "Owner"))
+        app.accounts.saveAccount(Account(a, owner, "A", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(b, owner, "B", AccountKind.ACCOUNT))
     }
 
     @Test fun sharedNativeAndDesktopWorkflow() {
@@ -103,23 +103,24 @@ class TransactionDraftTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }
             setup(app)
-            app.saveTransaction(draft("buy", TransactionType.BUY, "2", "100"))
-            app.saveTransaction(draft("transfer", TransactionType.TRANSFER, "0.5", time = 2000).copy(destination = b))
-            val report = app.accountingReport().report
+            app.transactions.saveTransaction(draft("buy", TransactionType.BUY, "2", "100"))
+            app.transactions.saveTransaction(draft("transfer", TransactionType.TRANSFER, "0.5", time = 2000).copy(destination = b))
+            val report = app.accounting.report().report
             assertEquals(Rational.of("50"), report.lots.single { it.account == b && it.asset == btc }.basis)
-            app.saveTransaction(draft("external", TransactionType.TRANSFER, "0.25", time = 3000).copy(incomingExternal = true))
+            app.transactions.saveTransaction(draft("external", TransactionType.TRANSFER, "0.25", time = 3000).copy(incomingExternal = true))
             assertNull(
                 app
-                    .accountingReport()
+                    .accounting
+                    .report()
                     .report.lots
                     .single { it.acquisitionActivityId == ActivityId("external") }
                     .basis,
             )
             val other = OwnerId("other")
-            app.saveOwner(Owner(other, "Other"))
-            app.saveAccount(Account(AccountId("c"), other, "C", AccountKind.ACCOUNT))
+            app.accounts.saveOwner(Owner(other, "Other"))
+            app.accounts.saveAccount(Account(AccountId("c"), other, "C", AccountKind.ACCOUNT))
             assertFailsWith<IllegalArgumentException> {
-                app.saveTransaction(draft("wrong-owner", TransactionType.TRANSFER, "1").copy(destination = AccountId("c")))
+                app.transactions.saveTransaction(draft("wrong-owner", TransactionType.TRANSFER, "1").copy(destination = AccountId("c")))
             }
         }
     }
@@ -128,11 +129,11 @@ class TransactionDraftTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }
             setup(app)
-            app.saveTransaction(draft("fund", TransactionType.DEPOSIT, "1000", "1", usd))
-            app.saveTransaction(
+            app.transactions.saveTransaction(draft("fund", TransactionType.DEPOSIT, "1000", "1", usd))
+            app.transactions.saveTransaction(
                 draft("buy", TransactionType.BUY, "2", "100", time = 2000).copy(feeAsset = usd, feeQuantity = ExactDecimal.parse("1")),
             )
-            app.saveTransaction(
+            app.transactions.saveTransaction(
                 draft(
                     "sell",
                     TransactionType.SELL,
@@ -141,10 +142,10 @@ class TransactionDraftTest {
                     time = 3000,
                 ).copy(feeAsset = btc, feeQuantity = ExactDecimal.parse("0.01")),
             )
-            app.saveTransaction(draft("reward", TransactionType.REWARD, "0.1", "120", time = 4000))
-            app.saveTransaction(draft("withdraw", TransactionType.WITHDRAWAL, "0.05", time = 5000))
-            app.saveTransaction(draft("fee", TransactionType.FEE, "0.01", time = 6000))
-            val report = app.accountingReport().report
+            app.transactions.saveTransaction(draft("reward", TransactionType.REWARD, "0.1", "120", time = 4000))
+            app.transactions.saveTransaction(draft("withdraw", TransactionType.WITHDRAWAL, "0.05", time = 5000))
+            app.transactions.saveTransaction(draft("fee", TransactionType.FEE, "0.01", time = 6000))
+            val report = app.accounting.report().report
             assertEquals(Rational.of("25"), report.disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
             assertEquals(Rational.of("-1"), report.disposals.single { it.activityId == ActivityId("sell") && it.fee }.gain)
             assertNull(report.disposals.single { it.activityId == ActivityId("withdraw") }.gain)
@@ -160,24 +161,24 @@ class TransactionDraftTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }
             setup(app)
-            app.saveTransaction(draft("buy", TransactionType.BUY, "1", "100", time = 2000))
-            app.saveTransaction(draft("reward", TransactionType.REWARD, "0.1", "120", time = 3000))
-            app.saveTransaction(draft("unpriced", TransactionType.REWARD, "0.2", time = 3500))
-            app.saveTransaction(draft("sell", TransactionType.SELL, "1.3", "150", time = 4000))
+            app.transactions.saveTransaction(draft("buy", TransactionType.BUY, "1", "100", time = 2000))
+            app.transactions.saveTransaction(draft("reward", TransactionType.REWARD, "0.1", "120", time = 3000))
+            app.transactions.saveTransaction(draft("unpriced", TransactionType.REWARD, "0.2", time = 3500))
+            app.transactions.saveTransaction(draft("sell", TransactionType.SELL, "1.3", "150", time = 4000))
 
-            fun report() = app.accountingReport().report
+            fun report() = app.accounting.report().report
             // The unpriced reward has unknown basis, so the gain is unknown until the policy gives it zero.
             assertNull(report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
 
-            app.setZeroBasisRewards(true)
-            assertTrue(app.generalPreferences().zeroBasisRewards)
+            app.settings.setZeroBasisRewards(true)
+            assertTrue(app.settings.general().zeroBasisRewards)
             val zero = report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }
             // Proceeds 195; basis 100 bought + 0 for both rewards.
             assertEquals(Rational.of("95"), zero.gain)
 
-            app.setZeroBasisRewards(false)
+            app.settings.setZeroBasisRewards(false)
             assertNull(report().disposals.single { it.activityId == ActivityId("sell") && !it.fee }.gain)
-            assertEquals(TransactionType.REWARD, app.transactionDraft(ActivityId("reward"))?.type)
+            assertEquals(TransactionType.REWARD, app.transactions.draft(ActivityId("reward"))?.type)
         }
     }
 
@@ -188,11 +189,11 @@ class TransactionDraftTest {
             db.execute(
                 "CREATE TRIGGER reject_treatment BEFORE INSERT ON accounting_treatments BEGIN SELECT RAISE(ABORT, 'test rollback'); END",
             )
-            assertFailsWith<Exception> { app.saveTransaction(draft("rollback", TransactionType.BUY, "1", "100")) }
+            assertFailsWith<Exception> { app.transactions.saveTransaction(draft("rollback", TransactionType.BUY, "1", "100")) }
             assertTrue(ActivityRepository(db).history(ActivityId("rollback")).isEmpty())
-            assertNull(app.overlay(ActivityId("rollback")))
-            assertNull(app.transactionDraft(ActivityId("rollback")))
-            assertTrue(app.treatments(ActivityId("rollback")).isEmpty())
+            assertNull(app.transactions.overlay(ActivityId("rollback")))
+            assertNull(app.transactions.draft(ActivityId("rollback")))
+            assertTrue(app.accounting.treatments(ActivityId("rollback")).isEmpty())
         }
     }
 
@@ -203,25 +204,31 @@ class TransactionDraftTest {
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { 10000L }
                 setup(app)
-                app.saveTransaction(value.copy(notes = "  "))
-                assertEquals("  ", app.transactionDraft(value.id)?.notes)
-                assertFailsWith<IllegalArgumentException> { app.saveTransaction(value) }
-                app.saveTransaction(value.copy(quantity = ExactDecimal.parse("2"), notes = "Corrected"), editing = true)
+                app.transactions.saveTransaction(value.copy(notes = "  "))
+                assertEquals("  ", app.transactions.draft(value.id)?.notes)
+                assertFailsWith<IllegalArgumentException> { app.transactions.saveTransaction(value) }
+                app.transactions.saveTransaction(value.copy(quantity = ExactDecimal.parse("2"), notes = "Corrected"), editing = true)
                 val history = ActivityRepository(db).history(value.id)
                 assertEquals(2, history.size)
                 assertEquals(history[0].movements.map { it.id }, history[1].movements.map { it.id })
             }
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { 10000L }
-                assertEquals("2", app.transactionDraft(value.id)?.quantity.toString())
-                assertEquals("Corrected", app.overlay(value.id)?.note)
-                val backup = app.exportBackup("phase3-password".toCharArray())
+                assertEquals(
+                    "2",
+                    app.transactions
+                        .draft(value.id)
+                        ?.quantity
+                        .toString(),
+                )
+                assertEquals("Corrected", app.transactions.overlay(value.id)?.note)
+                val backup = app.backup.export("phase3-password".toCharArray())
                 JvmSqliteDatabase(":memory:").use { restored ->
-                    app.restoreToStaging(restored, backup, "phase3-password".toCharArray())
+                    app.backup.restoreToStaging(restored, backup, "phase3-password".toCharArray())
                     val copy = PortfolioApplication(restored) { 10000L }
-                    assertEquals(app.transactionDraft(value.id), copy.transactionDraft(value.id))
-                    assertEquals(app.exportCsv(), copy.exportCsv())
-                    copy.reverseManualTransaction(value.id)
+                    assertEquals(app.transactions.draft(value.id), copy.transactions.draft(value.id))
+                    assertEquals(app.csv.export(), copy.csv.export())
+                    copy.transactions.reverseManual(value.id)
                     assertEquals(ActivityStatus.REVERSED, ActivityRepository(restored).history(value.id).last().status)
                     assertEquals(3, ActivityRepository(restored).history(value.id).size)
                     assertTrue(copy.snapshot().valuations.all { it.amount.atomicUnits.sign == 0 })
@@ -236,17 +243,17 @@ class TransactionDraftTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }
             setup(app)
-            app.saveTransaction(draft("buy", TransactionType.BUY, "2", "100"))
+            app.transactions.saveTransaction(draft("buy", TransactionType.BUY, "2", "100"))
             val eur = PortfolioId("eur")
-            app.savePortfolio(Portfolio(eur, "EUR", "EUR"))
-            val view = app.accountingReport(eur)
+            app.accounts.savePortfolio(Portfolio(eur, "EUR", "EUR"))
+            val view = app.accounting.report(eur)
             assertEquals(listOf(ActivityId("buy")), view.currencyMismatch)
             assertTrue(view.invalidTreatments.isEmpty(), "a currency change must not invalidate the treatment")
             val lot = view.report.lots.single { it.acquisitionActivityId == ActivityId("buy") && it.asset == btc }
             assertEquals("200000000", lot.quantity.toString())
             assertNull(lot.basis)
             // The same ledger still reports the USD basis in its own currency.
-            val usdView = app.accountingReport()
+            val usdView = app.accounting.report()
             assertTrue(usdView.currencyMismatch.isEmpty())
             val usdLot =
                 usdView.report.lots.single {

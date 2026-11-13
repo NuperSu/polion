@@ -48,8 +48,8 @@ class PhaseThreeTransactionsTest {
 
     private fun setup(app: PortfolioApplication) {
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccount(Account(account, OwnerId("owner"), "Local account", AccountKind.ACCOUNT))
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccount(Account(account, OwnerId("owner"), "Local account", AccountKind.ACCOUNT))
     }
 
     private fun trade(
@@ -64,9 +64,11 @@ class PhaseThreeTransactionsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 10000L }
             setup(app)
-            app.saveTransaction(trade("buy1", "1", "100").copy(feeAsset = usd, feeQuantity = ExactDecimal.parse("2"), notes = "searchable"))
-            app.saveTransaction(trade("buy2", "3", "200", time = 2000))
-            app.saveTransaction(trade("sell", "0.5", "300", TransactionType.SELL, 3000))
+            app.transactions.saveTransaction(
+                trade("buy1", "1", "100").copy(feeAsset = usd, feeQuantity = ExactDecimal.parse("2"), notes = "searchable"),
+            )
+            app.transactions.saveTransaction(trade("buy2", "3", "200", time = 2000))
+            app.transactions.saveTransaction(trade("sell", "0.5", "300", TransactionType.SELL, 3000))
             val filter = ActivityFilter(asset = btc, limit = 1)
             val timeline = transactionTimeline(app, app.snapshot(), filter, "All")
             assertEquals("175.00 USD", timeline.metrics[0].value)
@@ -82,19 +84,20 @@ class PhaseThreeTransactionsTest {
             assertEquals(2, buys.total)
             val ids =
                 app
-                    .transactionEntries(filter)
+                    .transactions
+                    .entries(filter)
                     .filter {
                         it.activity.id.value
                             .startsWith("buy")
                     }.map { it.activity.id }
                     .toSet()
-            val csv = app.exportCsv(filter, ids)
+            val csv = app.csv.export(filter, ids)
             assertTrue(csv.contains("buy1") && csv.contains("buy2") && !csv.contains("sell"))
             val search = transactionTimeline(app, app.snapshot(), filter.copy(search = "searchable"), "All")
             assertEquals(1, search.total)
             assertEquals("2 USD", search.cards.single().fee)
             val feeAsset = AssetId("fixture:fee")
-            app.registerAsset(
+            app.assets.register(
                 io.valroot.core.market.AssetDefinition(
                     feeAsset,
                     io.valroot.core.market
@@ -103,7 +106,7 @@ class PhaseThreeTransactionsTest {
                 io.valroot.core.market
                     .AssetMetadata("FEE", "Fee fixture", 18, 0),
             )
-            app.saveTransaction(
+            app.transactions.saveTransaction(
                 trade(
                     "third-asset-fee",
                     "0.1",
@@ -129,7 +132,7 @@ class PhaseThreeTransactionsTest {
                     val app = PortfolioApplication(db) { 10000L }
                     setup(app)
                     // A deposit exposes the registered coin in the asset picker without a fake market feed.
-                    app.saveTransaction(
+                    app.transactions.saveTransaction(
                         TransactionDraft(ActivityId("opening"), TransactionType.DEPOSIT, btc, account, ExactDecimal.parse("1"), 0, usd),
                     )
                     val data = app.snapshot()
@@ -159,9 +162,9 @@ class PhaseThreeTransactionsTest {
                         waitUntil(timeoutMillis = 10000) { saved == 1 }
                         onNodeWithTag("transaction-confirm").performClick()
                         waitUntil(timeoutMillis = 10000) { saved == 2 }
-                        val entry = app.transactionEntries(ActivityFilter(search = "UI buy $width")).single()
+                        val entry = app.transactions.entries(ActivityFilter(search = "UI buy $width")).single()
                         assertEquals(listOf("125000000", "-25000"), entry.activity.movements.map { it.amount.atomicUnits.toString() })
-                        assertEquals(2, app.treatments(entry.activity.id).size)
+                        assertEquals(2, app.accounting.treatments(entry.activity.id).size)
                     }
                 }
             }
@@ -172,8 +175,8 @@ class PhaseThreeTransactionsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(io.valroot.core.onboarding.OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(io.valroot.core.onboarding.OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("model-PORTFOLIO").fetchSemanticsNodes().isNotEmpty() }
@@ -188,10 +191,11 @@ class PhaseThreeTransactionsTest {
                     onNodeWithTag("preview-save-transaction").performClick()
                     onNodeWithTag("transaction-confirm").performClick()
                     waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("preview-save-transaction").fetchSemanticsNodes().isEmpty() }
-                    waitUntil(timeoutMillis = 10000) { app.transactionEntries(ActivityFilter(search = "Production journey")).size == 1 }
+                    waitUntil(timeoutMillis = 10000) { app.transactions.entries(ActivityFilter(search = "Production journey")).size == 1 }
                     val id =
                         app
-                            .transactionEntries(ActivityFilter(search = "Production journey"))
+                            .transactions
+                            .entries(ActivityFilter(search = "Production journey"))
                             .single()
                             .activity.id
                     waitUntil(
@@ -212,15 +216,18 @@ class PhaseThreeTransactionsTest {
                     onNodeWithTag("preview-save-transaction").performClick()
                     onNodeWithTag("transaction-confirm").performClick()
                     waitUntil(timeoutMillis = 10000) { onAllNodesWithTag("preview-save-transaction").fetchSemanticsNodes().isEmpty() }
-                    assertEquals("Production journey reviewed", app.transactionDraft(id)?.notes)
+                    assertEquals("Production journey reviewed", app.transactions.draft(id)?.notes)
                     onNodeWithTag("transaction-card-${id.value}").performScrollTo().performClick()
                     onNodeWithText("Reverse manual transaction").performScrollTo().performClick()
                     onNodeWithText("Confirm reversal").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10000) {
-                        app.effectiveActivity(id)?.activity?.status ==
+                        app.accounting
+                            .effectiveActivity(id)
+                            ?.activity
+                            ?.status ==
                             io.valroot.core.ledger.ActivityStatus.REVERSED
                     }
-                    assertEquals(id, app.transactionDraft(id)?.id)
+                    assertEquals(id, app.transactions.draft(id)?.id)
                 }
             }
         }
@@ -231,7 +238,7 @@ class PhaseThreeTransactionsTest {
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 10000L }
                 setup(app)
-                app.saveTransaction(
+                app.transactions.saveTransaction(
                     TransactionDraft(ActivityId("opening"), TransactionType.DEPOSIT, btc, account, ExactDecimal.parse("1"), 0, usd),
                 )
                 val data = app.snapshot()

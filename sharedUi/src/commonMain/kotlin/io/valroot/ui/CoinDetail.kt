@@ -88,7 +88,7 @@ internal fun AssetDialog(
         accountingError = false
         if (!tracked) return@LaunchedEffect
         try {
-            accounting = withContext(host.dispatcher) { app.accountingReport(portfolio) }
+            accounting = withContext(host.dispatcher) { app.accounting.report(portfolio) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -452,7 +452,7 @@ private fun SavedCoinPriceChart(
             val start = now - days * 86_400_000L
             values =
                 withContext(host.dispatcher) {
-                    app.priceSeries(asset, quote, (0..30).map { start + (now - start) * it / 30 }).map { point ->
+                    app.analytics.priceSeries(asset, quote, (0..30).map { start + (now - start) * it / 30 }).map { point ->
                         point
                             .takeIf { it.priceStatus == io.valroot.core.market.PriceStatus.FRESH }
                             ?.price

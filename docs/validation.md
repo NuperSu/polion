@@ -70,7 +70,7 @@ Baseline: Kotlin 2.4.21, Compose Multiplatform plugin 1.12.2, AGP 9.2.0, Gradle 
 Install JDK 25 and Android SDK platform 37 (`platforms;android-37.0`)/build tools 36.0.0. Configure a consistent SDK location with `ANDROID_HOME` or `local.properties`; if `ANDROID_SDK_ROOT` is present it must agree.
 
 ```sh
-./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :androidApp:lintDebug :androidApp:assembleDebug :desktopApp:packageUberJarForCurrentOS
+./gradlew ktlintCheck :core:jvmTest :core:testAndroidHostTest :sharedUi:jvmTest :desktopApp:test :androidApp:lintDebug :androidApp:assembleDebug :desktopApp:packageUberJarForCurrentOS
 ./gradlew :desktopApp:run
 ```
 
@@ -191,7 +191,7 @@ On the Pixel 8 Pro, a disposable Android database fetched live public Kraken hou
 
 The integrated JDK25 run passes **270 core JVM, 47 Android-host, 81 shared UI and 28 desktop tests** (426 total; zero failures, errors or skips). Formatting checks, Android lint, app/test APK assembly and desktop JAR packaging pass: `BUILD SUCCESSFUL in 1m 27s`, 182 tasks. Evidence: `/tmp/valroot-rewrite-integrated-final.log` and the module XML reports.
 
-The shared UI suite captures **360×800, 390×844 and 1440×900**, plus 390×844 at 1.5× font scale. Main, Portfolio/holdings, all four coin tabs, Insights/allocation/exports, Accounts and Settings/appearance are captured, including scrolled sections. Rendered PNGs under `sharedUi/build/rewrite-previews` were inspected for navigation, readable metrics, holdings alignment, horizontal tab access, enlarged text and floating-action clearance. Consecutive mouse-click filter tests verify save notifications leave controls accessible. The packaged desktop JAR also launched with disposable demo data under software rendering on Xvfb; its rendered window was inspected.
+The shared UI suite captures **360×800, 390×844 and 1440×900**, plus 390×844 at 1.5× font scale. Main, Portfolio/holdings, all four coin tabs, Insights/allocation/exports, Accounts and Settings/appearance are captured, including scrolled sections. Rendered PNGs under `sharedUi/build/phase1-production-previews`, `sharedUi/build/phase1-model-production-previews`, `sharedUi/build/phase3-transaction-previews` and `sharedUi/build/phase4-account-previews` were inspected for navigation, readable metrics, holdings alignment, horizontal tab access, enlarged text and floating-action clearance. Consecutive mouse-click filter tests verify save notifications leave controls accessible. The packaged desktop JAR also launched with disposable demo data under software rendering on Xvfb; its rendered window was inspected.
 
 New regression evidence covers market prices without holdings or ownership, exact per-unit historical quotes and manual-price priority, market-only detail without owned/gain figures, persisted favorites, first-use manual-account creation, exact one-satoshi records, manual payment/fee roles and UTC timestamps, unsupported classifications and invalid-input rejection, recreation of asset/account/classification/quantity, price-only queued/running duplicate suppression, explicit consent for additional portfolio currencies, and portable refresh preference migration/restore. Existing core/host financial, backup, ledger, correction, archive/reconciliation and export checks remain green. These tests use disposable data and deterministic provider fixtures; no personal portfolio was read or refreshed.
 

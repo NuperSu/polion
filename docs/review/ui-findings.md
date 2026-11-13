@@ -1,5 +1,7 @@
 # UI and UX findings
 
+Line references are as of commit 4a77ffd; the code has since been restructured (see docs/architecture.md).
+
 Paths are relative to `sharedUi/src/commonMain/kotlin/io/valroot/ui/`. Captures are in `/tmp/valroot-phase4-review/` (seeded example data, not copied here).
 
 ## UI-1 · P2 · state loss · [V] — App lock discards the whole UI tree

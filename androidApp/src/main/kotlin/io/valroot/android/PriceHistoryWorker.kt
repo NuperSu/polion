@@ -1,5 +1,6 @@
 package io.valroot.android
 
+import io.valroot.core.market.HttpCoingeckoTransport
 import android.content.Context
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.market.CoingeckoProviderException
@@ -14,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong
 /** User-requested price history uses a separate worker and database connection. */
 internal object PriceHistoryWorker {
     private val executor = Executors.newSingleThreadExecutor()
-    private val transport = AndroidCoingeckoTransport()
+    private val transport = HttpCoingeckoTransport()
     private val generation = AtomicLong()
 
     /** Invalidates queued and in-flight requests without waiting for network I/O. */
@@ -36,7 +37,7 @@ internal object PriceHistoryWorker {
                 try {
                     AndroidSqliteDatabase(context.getDatabasePath("portfolio.sqlite").path).use { db ->
                         val count =
-                            PortfolioApplication(db, System::currentTimeMillis).fetchPriceHistory(
+                            PortfolioApplication(db, System::currentTimeMillis).prices.fetchHistory(
                                 { url ->
                                     checkGeneration(requestGeneration)
                                     transport.get(url, apiKey)
@@ -72,7 +73,7 @@ internal object PriceHistoryWorker {
                 try {
                     AndroidSqliteDatabase(context.getDatabasePath("portfolio.sqlite").path).use { db ->
                         val result =
-                            PortfolioApplication(db, System::currentTimeMillis).fetchHistoricalPrice(
+                            PortfolioApplication(db, System::currentTimeMillis).prices.fetchHistorical(
                                 { url ->
                                     checkGeneration(requestGeneration)
                                     transport.get(url, apiKey)

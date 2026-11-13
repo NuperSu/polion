@@ -34,7 +34,7 @@ internal fun ActivityEvidence(
         loading = true
         failed = false
         try {
-            evidence = withContext(host.dispatcher) { app.activitySourceEvidence(id, portfolio) }
+            evidence = withContext(host.dispatcher) { app.sources.evidence(id, portfolio) }
             if (evidence == null) failed = true
         } catch (cancelled: CancellationException) {
             throw cancelled

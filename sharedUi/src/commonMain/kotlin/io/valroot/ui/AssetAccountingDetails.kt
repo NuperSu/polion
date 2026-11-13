@@ -54,7 +54,7 @@ internal fun AssetAccountingDetails(
         view = null
         error = false
         try {
-            view = withContext(host.dispatcher) { app.accountingReport(portfolio) }
+            view = withContext(host.dispatcher) { app.accounting.report(portfolio) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -65,7 +65,7 @@ internal fun AssetAccountingDetails(
         val id = activityRequest ?: return@LaunchedEffect
         activityError = false
         try {
-            val activity = withContext(host.dispatcher) { app.effectiveActivity(id, portfolio) }
+            val activity = withContext(host.dispatcher) { app.accounting.effectiveActivity(id, portfolio) }
             if (activity == null) activityError = true else onActivity(activity)
         } catch (cancelled: CancellationException) {
             throw cancelled

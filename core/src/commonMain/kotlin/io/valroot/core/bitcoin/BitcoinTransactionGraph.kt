@@ -74,9 +74,6 @@ data class BitcoinGraphTransaction(
     val blockTime: Long?,
 ) {
     val confirmed: Boolean get() = block != null
-
-    /** BIP125 opt-in signal; a full-RBF mempool may replace transactions without it. */
-    val signalsReplacement: Boolean get() = inputs.any { it.sequence != null && it.sequence < 0xfffffffeL }
 }
 
 /** Parses one Esplora `/tx` or address-history payload, preserving outpoints and script metadata. */
@@ -234,7 +231,6 @@ class BitcoinUtxoGraph internal constructor(
     val missingParents: List<BitcoinOutpoint>,
 ) {
     val unspent: List<BitcoinOwnedOutput> get() = ownedOutputs.filter { it.unspent }
-    val unconfirmedOutputs: List<BitcoinOwnedOutput> get() = unspent.filter { !it.confirmed }
 
     fun unspent(account: AccountId): List<BitcoinOwnedOutput> = unspent.filter { it.account == account }
 

@@ -34,9 +34,9 @@ class BitcoinDeltaRefreshIntegrationTest {
     private fun application(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 1_700_000_000_000L }
         val owner = OwnerId("owner")
-        app.saveOwner(Owner(owner, "Owner"))
-        app.saveAccount(Account(scope.getValue(address), owner, "Wallet", AccountKind.WALLET))
-        app.saveTarget(
+        app.accounts.saveOwner(Owner(owner, "Owner"))
+        app.accounts.saveAccount(Account(scope.getValue(address), owner, "Wallet", AccountKind.WALLET))
+        app.accounts.saveTarget(
             TrackingTarget(
                 TrackingTargetId("address"),
                 scope.getValue(address),
@@ -45,7 +45,7 @@ class BitcoinDeltaRefreshIntegrationTest {
                 "Address",
             ),
         )
-        app.setSourceConsent(true)
+        app.sources.setConsent(true)
         return app
     }
 
@@ -103,17 +103,17 @@ class BitcoinDeltaRefreshIntegrationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = application(db)
             val provider = Provider()
-            repeat(2) { assertEquals(listOf(JobState.COMPLETED), app.refreshBitcoin(provider.transport)) }
+            repeat(2) { assertEquals(listOf(JobState.COMPLETED), app.bitcoin.refresh(provider.transport)) }
             assertEquals("2", count(db, "bitcoin_graph_snapshots"))
             assertEquals("2", count(db, "bitcoin_graph_revisions"))
             assertEquals("2", count(db, "bitcoin_graph_membership"))
             assertEquals("0", count(db, "bitcoin_graph_transactions"))
-            assertEquals(0, app.bitcoinUtxoReview().total)
+            assertEquals(0, app.bitcoin.utxoReview().total)
             val repository = BitcoinGraphRepository(db)
             val first = assertNotNull(repository.snapshot(1))
             provider.confirmed = true
             provider.wrongValue = true
-            app.refreshBitcoin(provider.transport)
+            app.bitcoin.refresh(provider.transport)
             assertEquals("3", count(db, "bitcoin_graph_revisions"))
             assertEquals("3", count(db, "bitcoin_graph_membership"))
             assertEquals(
@@ -129,7 +129,7 @@ class BitcoinDeltaRefreshIntegrationTest {
                     .getValue(spendId)
                     .block,
             )
-            val review = app.bitcoinUtxoReview(limit = 1)
+            val review = app.bitcoin.utxoReview(limit = 1)
             assertEquals(1, review.total)
             assertEquals("VALUE_DIFFERS", review.rows.single().kind)
             assertEquals(
@@ -153,7 +153,7 @@ class BitcoinDeltaRefreshIntegrationTest {
             JvmSqliteDatabase(":memory:").use { restored ->
                 val reopened = PortfolioApplication(restored) { 1_700_000_000_000L }
                 PortableBackup.discover(restored).restoreToStaging(restored, archive)
-                assertEquals(review, reopened.bitcoinUtxoReview(limit = 1))
+                assertEquals(review, reopened.bitcoin.utxoReview(limit = 1))
                 assertEquals(first.graph.ownedOutputs, BitcoinGraphRepository(restored).snapshot(1)!!.graph.ownedOutputs)
             }
         }
@@ -164,8 +164,12 @@ class BitcoinDeltaRefreshIntegrationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = application(db)
             val provider = Provider().also { it.spendAddress = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT" }
-            app.refreshBitcoin(provider.transport)
-            val row = app.bitcoinUtxoReview().rows.single()
+            app.bitcoin.refresh(provider.transport)
+            val row =
+                app.bitcoin
+                    .utxoReview()
+                    .rows
+                    .single()
             assertEquals("MISSING_FROM_RECONSTRUCTION", row.kind)
             assertEquals(scope.getValue(address), row.account)
             assertEquals(address, row.address)
@@ -182,13 +186,13 @@ class BitcoinDeltaRefreshIntegrationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = application(db)
             val provider = Provider().also { it.confirmed = true }
-            app.refreshBitcoin(provider.transport)
+            app.bitcoin.refresh(provider.transport)
             val repository = BitcoinGraphRepository(db)
             assertTrue(BitcoinBlockAnchor(100, hash(100)) in repository.anchors(scope))
             provider.reorganized = true
             provider.confirmed = false
             provider.failUtxo = true
-            assertFails { app.refreshBitcoin(provider.transport) }
+            assertFails { app.bitcoin.refresh(provider.transport) }
             assertEquals("1", count(db, "bitcoin_graph_snapshots"))
             assertEquals(
                 BitcoinBlockAnchor(101, hash(101)),
@@ -199,7 +203,7 @@ class BitcoinDeltaRefreshIntegrationTest {
                     .block,
             )
             provider.failUtxo = false
-            app.refreshBitcoin(provider.transport)
+            app.bitcoin.refresh(provider.transport)
             assertEquals("2", count(db, "bitcoin_graph_snapshots"))
             assertEquals(
                 null,
@@ -209,7 +213,7 @@ class BitcoinDeltaRefreshIntegrationTest {
                     .getValue(spendId)
                     .block,
             )
-            assertEquals(0, app.bitcoinUtxoReview().total)
+            assertEquals(0, app.bitcoin.utxoReview().total)
         }
     }
 }

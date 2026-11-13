@@ -40,8 +40,8 @@ class CsvImportFlowTest {
     private fun app(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 1_800_000_000_000L }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccount(Account(AccountId("exchange"), OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccount(Account(AccountId("exchange"), OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
         return app
     }
 
@@ -98,7 +98,7 @@ class CsvImportFlowTest {
                         "Imported 3 transactions. Skipped 0 already imported and 1 that can't be imported.",
                     ).assertIsDisplayed()
                     runOnIdle {
-                        assertEquals(3, app.transactionEntries(ActivityFilter()).size)
+                        assertEquals(3, app.transactions.entries(ActivityFilter()).size)
                         assertEquals(1, changed)
                     }
                     onNodeWithTag("csv-done").performClick()
@@ -121,7 +121,7 @@ class CsvImportFlowTest {
                         { CsvImport.utcMillis(it) },
                         mapOf("XBT" to BITCOIN_ASSET),
                     )
-                app.importCsv(app.previewCsvImport("trades.csv", trades, options))
+                app.csv.importFile(app.csv.preview("trades.csv", trades, options))
                 val host = host(delegate) { "again.csv" to trades }
                 runDesktopComposeUiTest(width = 900, height = 1600) {
                     setContent {
@@ -184,7 +184,7 @@ class CsvImportFlowTest {
                         { CsvImport.utcMillis(it) },
                         mapOf("XBT" to BITCOIN_ASSET),
                     )
-                val receipt = app.importCsv(app.previewCsvImport("trades.csv", trades, options))
+                val receipt = app.csv.importFile(app.csv.preview("trades.csv", trades, options))
                 var changed = 0
                 runDesktopComposeUiTest(width = 900, height = 1600) {
                     setContent {
@@ -208,7 +208,7 @@ class CsvImportFlowTest {
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("3 transactions undone.").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("Undone", substring = true).assertIsDisplayed()
                     runOnIdle {
-                        assertTrue(app.transactionEntries(ActivityFilter()).all { it.activity.status == ActivityStatus.REVERSED })
+                        assertTrue(app.transactions.entries(ActivityFilter()).all { it.activity.status == ActivityStatus.REVERSED })
                         assertEquals(1, changed)
                     }
                 }

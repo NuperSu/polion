@@ -40,10 +40,10 @@ class OnboardingHandoffUiTest {
             JvmSqliteDatabase(":memory:").use { db ->
                 OfflineHost().use { host ->
                     val app = PortfolioApplication(db) { 1L }
-                    app.updateOnboarding(OnboardingAction.Next)
-                    app.updateOnboarding(OnboardingAction.Next)
-                    app.updateOnboarding(OnboardingAction.ToggleSource(choice.id))
-                    app.updateOnboarding(OnboardingAction.Next)
+                    app.settings.updateOnboarding(OnboardingAction.Next)
+                    app.settings.updateOnboarding(OnboardingAction.Next)
+                    app.settings.updateOnboarding(OnboardingAction.ToggleSource(choice.id))
+                    app.settings.updateOnboarding(OnboardingAction.Next)
                     runDesktopComposeUiTest(width = 1000, height = 900) {
                         setContent { ValrootApp(app, host) }
                         waitUntil(timeoutMillis = 10_000) {
@@ -61,8 +61,8 @@ class OnboardingHandoffUiTest {
                             onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
                         }
                         onNodeWithText(title).assertIsDisplayed()
-                        assertTrue(app.onboardingState()!!.completed)
-                        assertEquals(setOf(choice.id), app.onboardingState()!!.sourceIds)
+                        assertTrue(app.settings.onboarding()!!.completed)
+                        assertEquals(setOf(choice.id), app.settings.onboarding()!!.sourceIds)
                         assertOfflineAndEmpty(app, host)
                         onNodeWithText(if (choice.workflow == SourceWorkflow.BITCOIN_PUBLIC_WALLET) "Cancel" else "Close")
                             .performScrollTo()
@@ -97,7 +97,7 @@ class OnboardingHandoffUiTest {
                             onAllNodesWithText("Choose your interests").fetchSemanticsNodes().isNotEmpty()
                         }
                         onNodeWithTag("onboarding-goal-BALANCES").performScrollTo().performClick()
-                        waitUntil(timeoutMillis = 10_000) { OnboardingGoal.BALANCES in app.onboardingState()!!.goals }
+                        waitUntil(timeoutMillis = 10_000) { OnboardingGoal.BALANCES in app.settings.onboarding()!!.goals }
                         onNodeWithTag("onboarding").performScrollToNode(hasText("Continue"))
                         onNodeWithText("Continue").performClick()
                         waitUntil(timeoutMillis = 10_000) {
@@ -105,16 +105,16 @@ class OnboardingHandoffUiTest {
                         }
                         onNodeWithTag("onboarding").performScrollToNode(hasTestTag("onboarding-source-bitcoin-public-wallet"))
                         onNodeWithTag("onboarding-source-bitcoin-public-wallet").performClick()
-                        waitUntil(timeoutMillis = 10_000) { "bitcoin-public-wallet" in app.onboardingState()!!.sourceIds }
+                        waitUntil(timeoutMillis = 10_000) { "bitcoin-public-wallet" in app.settings.onboarding()!!.sourceIds }
                         onNodeWithTag("onboarding").performScrollToNode(hasText("Guided conversation"))
                         onNodeWithText("Guided conversation").performClick()
-                        waitUntil(timeoutMillis = 10_000) { app.onboardingState()!!.presentation == OnboardingPresentation.ASSISTED }
+                        waitUntil(timeoutMillis = 10_000) { app.settings.onboarding()!!.presentation == OnboardingPresentation.ASSISTED }
                         onNodeWithTag("onboarding").performScrollToNode(hasText("Skip setup for now"))
                         onNodeWithText("Skip setup for now").performClick()
                         waitUntil(timeoutMillis = 10_000) {
                             onAllNodesWithText("Main").fetchSemanticsNodes().isNotEmpty()
                         }
-                        assertTrue(app.onboardingState()!!.skipped)
+                        assertTrue(app.settings.onboarding()!!.skipped)
                         assertOfflineAndEmpty(app, host)
                     }
                 }
@@ -138,9 +138,9 @@ class OnboardingHandoffUiTest {
                         onNodeWithText("Guided conversation").assertIsSelected()
                         onNodeWithTag("onboarding").performScrollToNode(hasTestTag("onboarding-source-bitcoin-public-wallet"))
                         onNodeWithTag("onboarding-source-bitcoin-public-wallet").assertIsSelected()
-                        assertEquals(setOf(OnboardingGoal.BALANCES), app.onboardingState()!!.goals)
-                        assertEquals(OnboardingStep.SOURCES, app.onboardingState()!!.step)
-                        assertFalse(app.onboardingState()!!.skipped)
+                        assertEquals(setOf(OnboardingGoal.BALANCES), app.settings.onboarding()!!.goals)
+                        assertEquals(OnboardingStep.SOURCES, app.settings.onboarding()!!.step)
+                        assertFalse(app.settings.onboarding()!!.skipped)
                         onNodeWithTag("onboarding").performScrollToNode(hasText("Continue"))
                         onNodeWithText("Continue").performClick()
                         waitUntil(timeoutMillis = 10_000) {
@@ -165,8 +165,8 @@ class OnboardingHandoffUiTest {
                         }
                         onNodeWithTag("onboarding").assertDoesNotExist()
                         onNodeWithText("Track a Bitcoin wallet").assertDoesNotExist()
-                        assertTrue(app.onboardingState()!!.completed)
-                        assertEquals(setOf("bitcoin-public-wallet"), app.onboardingState()!!.sourceIds)
+                        assertTrue(app.settings.onboarding()!!.completed)
+                        assertEquals(setOf("bitcoin-public-wallet"), app.settings.onboarding()!!.sourceIds)
                         assertOfflineAndEmpty(app, host)
                     }
                 }
@@ -181,8 +181,8 @@ class OnboardingHandoffUiTest {
         host: OfflineHost,
     ) {
         assertEquals(0, host.sideEffectRequests)
-        assertFalse(app.sourceConsent())
-        assertFalse(app.priceSourceConsent())
+        assertFalse(app.sources.consent())
+        assertFalse(app.prices.sourceConsent())
         val snapshot = app.snapshot()
         assertTrue(snapshot.ownership.owners.isEmpty())
         assertTrue(snapshot.ownership.accounts.isEmpty())

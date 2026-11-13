@@ -39,12 +39,12 @@ class AccountingValuationTest {
             val app = PortfolioApplication(db) { now }
             val owner = OwnerId("owner")
             val account = AccountId("account")
-            app.saveOwner(Owner(owner, "Owner"))
-            app.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
+            app.accounts.saveOwner(Owner(owner, "Owner"))
+            app.accounts.saveAccount(Account(account, owner, "Account", AccountKind.ACCOUNT))
             val unpriced = AssetId("token:unpriced")
             val stale = AssetId("token:stale")
             listOf(unpriced, stale).forEach { asset ->
-                app.registerAsset(
+                app.assets.register(
                     AssetDefinition(asset, AssetIdentity(AssetKind.CUSTOM, null, asset.value)),
                     AssetMetadata(asset.value, asset.value, 0, 0),
                 )
@@ -57,7 +57,7 @@ class AccountingValuationTest {
                 cost: String,
             ) {
                 val event = EventId(id)
-                app.saveManualActivity(
+                app.transactions.saveManualActivity(
                     Activity(
                         ActivityId(id),
                         1,
@@ -70,15 +70,15 @@ class AccountingValuationTest {
                         true,
                     ),
                 )
-                app.saveTreatments(ActivityId(id), listOf(Treatment.Acquire(event, QuoteValue(usd, Rational.of(cost)))))
+                app.accounting.saveTreatments(ActivityId(id), listOf(Treatment.Acquire(event, QuoteValue(usd, Rational.of(cost)))))
             }
             buy("priced", AssetId("bitcoin:btc"), "10")
             buy("unpriced", unpriced, "5")
             buy("stale", stale, "7")
-            app.recordManualPrice(
+            app.prices.recordManual(
                 PriceObservation("btc-fresh", Price(AssetId("bitcoin:btc"), usd, ExactDecimal.parse("100")), null, now, now, true),
             )
-            app.recordManualPrice(
+            app.prices.recordManual(
                 PriceObservation(
                     "stale-price",
                     Price(stale, usd, ExactDecimal.parse("50")),
@@ -90,7 +90,8 @@ class AccountingValuationTest {
             )
             val valuations =
                 app
-                    .accountingReport()
+                    .accounting
+                    .report()
                     .report.valuations
                     .associateBy { it.lot.asset }
             assertEquals(Rational.of("100"), valuations.getValue(AssetId("bitcoin:btc")).value)

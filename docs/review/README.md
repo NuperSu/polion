@@ -1,5 +1,7 @@
 # Code review after UI-model Phase 4 — 2026-11-06
 
+Line references are as of commit 4a77ffd; the code has since been restructured (see docs/architecture.md).
+
 This is a review report, not a certification. It does not close any roadmap gate.
 
 ## Scope

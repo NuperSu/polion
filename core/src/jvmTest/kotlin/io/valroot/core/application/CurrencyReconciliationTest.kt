@@ -41,12 +41,12 @@ class CurrencyReconciliationTest {
             JvmSqliteDatabase(file.toString()).use { db ->
                 var at = 15552000000L
                 val app = PortfolioApplication(db) { at }
-                app.seedDemo()
+                app.demo.seed()
                 at++
                 val market = MarketRepository(db)
                 for ((code, name) in listOf("USD" to "US Dollar", "EUR" to "Euro", "GBP" to "Pound Sterling")) {
                     val currency = AssetId(code)
-                    app.setCurrency(currency)
+                    app.assets.setCurrency(currency)
                     assertEquals(currency, app.snapshot().currency)
                     assertEquals(AssetIdentity(AssetKind.FIAT, null, code), market.asset(currency)?.identity)
                     assertEquals(AssetMetadata(code, name, 2, 0), market.metadataAt(currency, 0))
@@ -60,7 +60,7 @@ class CurrencyReconciliationTest {
                                 .priceStatus,
                         )
                     }
-                    app.recordManualPrice(
+                    app.prices.recordManual(
                         PriceObservation(
                             "manual-$code",
                             Price(BITCOIN_ASSET, currency, ExactDecimal.parse("100")),
@@ -93,8 +93,8 @@ class CurrencyReconciliationTest {
                         .value
                         .toString(),
                 )
-                app.wipe()
-                app.setCurrency(AssetId("EUR"))
+                app.backup.wipe()
+                app.assets.setCurrency(AssetId("EUR"))
                 assertEquals(AssetId("EUR"), app.snapshot().currency)
             }
         } finally {
@@ -109,29 +109,29 @@ class CurrencyReconciliationTest {
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { 1000L }
                 val owner = OwnerId("owner")
-                app.saveOwner(Owner(owner, "Owner"))
+                app.accounts.saveOwner(Owner(owner, "Owner"))
                 for (id in listOf("outgoing", "incoming", "competing")) {
-                    app.saveAccount(Account(AccountId(id), owner, id, AccountKind.ACCOUNT))
-                    app.saveManualActivity(activity(id, if (id == "outgoing") "-10" else "10"))
+                    app.accounts.saveAccount(Account(AccountId(id), owner, id, AccountKind.ACCOUNT))
+                    app.transactions.saveManualActivity(activity(id, if (id == "outgoing") "-10" else "10"))
                 }
                 val original = ActivityRepository(db).current()
-                val initial = app.reconciliationCandidates(1000)
+                val initial = app.accounting.reconciliationCandidates(1000)
                 assertEquals(2, initial.size)
                 assertTrue(initial.all { it.ambiguous })
-                assertEquals(0, app.setDecision(ActivityId("outgoing"), ActivityId("competing"), LinkState.REJECTED))
-                val remaining = app.reconciliationCandidates(1000).single()
+                assertEquals(0, app.transactions.setDecision(ActivityId("outgoing"), ActivityId("competing"), LinkState.REJECTED))
+                val remaining = app.accounting.reconciliationCandidates(1000).single()
                 assertEquals(setOf(ActivityId("outgoing"), ActivityId("incoming")), setOf(remaining.first, remaining.second))
                 assertFalse(remaining.ambiguous)
-                assertEquals(0, app.setDecision(ActivityId("outgoing"), ActivityId("incoming"), LinkState.ACCEPTED))
-                assertTrue(app.reconciliationCandidates(1000).isEmpty())
-                assertEquals(1, app.setDecision(ActivityId("competing"), ActivityId("outgoing"), LinkState.ACCEPTED))
-                assertTrue(app.reconciliationCandidates(1000).isEmpty())
+                assertEquals(0, app.transactions.setDecision(ActivityId("outgoing"), ActivityId("incoming"), LinkState.ACCEPTED))
+                assertTrue(app.accounting.reconciliationCandidates(1000).isEmpty())
+                assertEquals(1, app.transactions.setDecision(ActivityId("competing"), ActivityId("outgoing"), LinkState.ACCEPTED))
+                assertTrue(app.accounting.reconciliationCandidates(1000).isEmpty())
                 assertEquals(original, ActivityRepository(db).current())
                 assertTrue(original.all { ActivityRepository(db).history(it.id).size == 1 })
             }
             JvmSqliteDatabase(file.toString()).use { db ->
                 val app = PortfolioApplication(db) { 1000L }
-                assertTrue(app.reconciliationCandidates(1000).isEmpty())
+                assertTrue(app.accounting.reconciliationCandidates(1000).isEmpty())
                 assertEquals(3, ActivityRepository(db).current().size)
             }
         } finally {

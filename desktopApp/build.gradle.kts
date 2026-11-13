@@ -14,6 +14,8 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "io.valroot.desktop.MainKt"
+        // sqlite-jdbc loads its native library; allow it so newer JDKs do not warn about restricted methods.
+        jvmArgs += "--enable-native-access=ALL-UNNAMED"
         nativeDistributions {
             // A self-contained folder with its own Java runtime; `createDistributable` builds it, and the Deb needs dpkg.
             targetFormats(

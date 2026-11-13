@@ -70,7 +70,7 @@ internal fun applyAutomaticRefresh(
     host: PlatformActions,
     enabled: Boolean,
 ) {
-    app.setAutomaticRefresh(enabled)
+    app.prices.setAutomaticRefresh(enabled)
     host.updateRefreshPreferences(RefreshPreferences(enabled, host.refreshPreferences().wifiOnly))
 }
 
@@ -209,7 +209,7 @@ interface PlatformActions {
     }
 
     /**
-     * Runs a notification check in the background now (see [io.valroot.core.application.PortfolioApplication.runNotificationCheck])
+     * Runs a notification check in the background now (see [io.valroot.core.alerts.NotificationService.runCheck])
      * and shows what it finds as system notifications; [onResult] receives how many were shown, on the main thread.
      */
     fun checkNotifications(onResult: (Int) -> Unit = {}) {
@@ -218,7 +218,7 @@ interface PlatformActions {
 
     /**
      * Alerts or notification settings changed. Hosts schedule background checks while
-     * [io.valroot.core.application.PortfolioApplication.notificationsActive] is true, cancel them otherwise, and on Android
+     * [io.valroot.core.alerts.NotificationService.active] is true, cancel them otherwise, and on Android
      * ask for notification permission. Main thread.
      */
     fun notificationSettingsChanged() {}
@@ -229,14 +229,6 @@ interface PlatformActions {
         onResult: (OrderBookResult) -> Unit,
     ) {
         onResult(OrderBookResult.Failed("Order books are not available here."))
-    }
-
-    /**
-     * Loads CoinGecko's chain and token catalog in the background when it is missing or older than a week, then links held
-     * EVM assets to coins. [onResult] receives null on success or a message, on the main thread. Needs market data consent.
-     */
-    fun refreshEvmCatalog(onResult: (String?) -> Unit) {
-        onResult("EVM chains are not available here.")
     }
 
     /** How long the app may be left before it locks. Main thread; hosts keep the saved value in memory. */
@@ -318,11 +310,11 @@ fun loadOrderBook(
     kraken: (url: String) -> String,
 ): OrderBookResult =
     try {
-        val pair = app.krakenPair(coinId, coingecko)
+        val pair = app.market.krakenPair(coinId, coingecko)
         if (pair == null) {
-            OrderBookResult.NoMarket("Kraken has no ${app.currency().value} market for this coin.")
+            OrderBookResult.NoMarket("Kraken has no ${app.assets.currency().value} market for this coin.")
         } else {
-            OrderBookResult.Loaded(app.orderBook(pair, kraken))
+            OrderBookResult.Loaded(app.market.orderBook(pair, kraken))
         }
     } catch (failure: io.valroot.core.market.CoingeckoProviderException) {
         OrderBookResult.Failed(

@@ -108,7 +108,7 @@ class RestorePreservationTest {
         btcChange24h: String,
         ethPrice: String,
     ) {
-        assertNull(app.refreshMarketFeeds(market(btcPrice, btcChange24h, ethPrice), maxAgeMillis = 0L).failure)
+        assertNull(app.market.refreshFeeds(market(btcPrice, btcChange24h, ethPrice), maxAgeMillis = 0L).failure)
     }
 
     /** Decrypts an archive to its plain body, using the same streaming read as BackupTest. */
@@ -134,12 +134,12 @@ class RestorePreservationTest {
     ): PortfolioApplication {
         clock.millis = T0
         val app = PortfolioApplication(db) { clock.millis }
-        app.saveOwner(Owner(owner, "Alice"))
-        app.saveAccount(Account(walletA, owner, "Wallet A", AccountKind.WALLET))
-        app.saveAccount(Account(walletB, owner, "Wallet B", AccountKind.WALLET))
-        app.savePortfolio(Portfolio(PortfolioId("main"), "Main", "USD"))
+        app.accounts.saveOwner(Owner(owner, "Alice"))
+        app.accounts.saveAccount(Account(walletA, owner, "Wallet A", AccountKind.WALLET))
+        app.accounts.saveAccount(Account(walletB, owner, "Wallet B", AccountKind.WALLET))
+        app.accounts.savePortfolio(Portfolio(PortfolioId("main"), "Main", "USD"))
 
-        app.saveTransaction(
+        app.transactions.saveTransaction(
             TransactionDraft(
                 id = ActivityId("tx-buy"),
                 type = TransactionType.BUY,
@@ -153,7 +153,7 @@ class RestorePreservationTest {
             ),
         )
         // Withdrawal and deposit with the same quantity, opposite sides, and different accounts: a transfer link candidate.
-        app.saveTransaction(
+        app.transactions.saveTransaction(
             TransactionDraft(
                 id = ActivityId("tx-withdraw"),
                 type = TransactionType.WITHDRAWAL,
@@ -165,7 +165,7 @@ class RestorePreservationTest {
                 notes = "Sent to cold storage",
             ),
         )
-        app.saveTransaction(
+        app.transactions.saveTransaction(
             TransactionDraft(
                 id = ActivityId("tx-receive"),
                 type = TransactionType.DEPOSIT,
@@ -176,7 +176,7 @@ class RestorePreservationTest {
                 quote = usd,
             ),
         )
-        app.saveTransaction(
+        app.transactions.saveTransaction(
             TransactionDraft(
                 id = ActivityId("tx-transfer"),
                 type = TransactionType.TRANSFER,
@@ -191,7 +191,7 @@ class RestorePreservationTest {
         )
         // Two identical deposits: a duplicate pair, where the second is suppressed by the accepted decision.
         for (id in listOf("tx-dup-a", "tx-dup-b")) {
-            app.saveTransaction(
+            app.transactions.saveTransaction(
                 TransactionDraft(
                     id = ActivityId(id),
                     type = TransactionType.DEPOSIT,
@@ -204,7 +204,7 @@ class RestorePreservationTest {
                 ),
             )
         }
-        app.saveTransaction(
+        app.transactions.saveTransaction(
             TransactionDraft(
                 id = ActivityId("tx-reversed"),
                 type = TransactionType.BUY,
@@ -217,10 +217,10 @@ class RestorePreservationTest {
                 notes = "Entered by mistake",
             ),
         )
-        app.reverseManualTransaction(ActivityId("tx-reversed"))
+        app.transactions.reverseManual(ActivityId("tx-reversed"))
 
         // A label and note with a corrected quantity, and a classification kind override on a different entry.
-        app.saveOverlay(
+        app.transactions.saveOverlay(
             ActivityOverlay(
                 activityId = ActivityId("tx-buy"),
                 label = "Exchange buy",
@@ -228,55 +228,61 @@ class RestorePreservationTest {
                 amounts = mapOf(EventId("tx-buy-asset") to AtomicAmount(BITCOIN_ASSET, ExactInteger.parse("49000000"))),
             ),
         )
-        app.saveOverlay(ActivityOverlay(activityId = ActivityId("tx-receive"), kind = ActivityKind.OTHER, note = "Reviewed by hand"))
+        app.transactions.saveOverlay(
+            ActivityOverlay(activityId = ActivityId("tx-receive"), kind = ActivityKind.OTHER, note = "Reviewed by hand"),
+        )
 
         // Rules are stored as revisions: saving an existing ID again adds one. rules() reads the latest; the backup keeps all.
-        app.saveRule(ClassificationRule("rule-bitcoin-deposits", 5, ActivityKind.TRANSFER, ActivityKind.DEPOSIT, BITCOIN_ASSET))
-        app.saveRule(ClassificationRule("rule-bitcoin-deposits", 7, ActivityKind.TRANSFER, ActivityKind.DEPOSIT, BITCOIN_ASSET))
-        app.saveRule(ClassificationRule("rule-disabled-other", 1, ActivityKind.OTHER, enabled = false))
+        app.transactions.saveRule(
+            ClassificationRule("rule-bitcoin-deposits", 5, ActivityKind.TRANSFER, ActivityKind.DEPOSIT, BITCOIN_ASSET),
+        )
+        app.transactions.saveRule(
+            ClassificationRule("rule-bitcoin-deposits", 7, ActivityKind.TRANSFER, ActivityKind.DEPOSIT, BITCOIN_ASSET),
+        )
+        app.transactions.saveRule(ClassificationRule("rule-disabled-other", 1, ActivityKind.OTHER, enabled = false))
 
-        app.setDecision(ActivityId("tx-withdraw"), ActivityId("tx-receive"), LinkState.ACCEPTED)
-        app.setDuplicateDecision(ActivityId("tx-dup-a"), ActivityId("tx-dup-b"), ActivityId("tx-dup-a"), LinkState.ACCEPTED)
+        app.transactions.setDecision(ActivityId("tx-withdraw"), ActivityId("tx-receive"), LinkState.ACCEPTED)
+        app.transactions.setDuplicateDecision(ActivityId("tx-dup-a"), ActivityId("tx-dup-b"), ActivityId("tx-dup-a"), LinkState.ACCEPTED)
 
-        app.recordManualPrice(
+        app.prices.recordManual(
             PriceObservation("manual-btc-usd", Price(BITCOIN_ASSET, usd, ExactDecimal.parse("90500")), null, T0 - DAY, T0 - DAY, true),
         )
 
         // Two imports: the second is undone, so its entry is kept as a reversed entry.
-        app.importCsv(app.previewCsvImport("statement.csv", csvKept, csvOptions()))
-        val undone = app.importCsv(app.previewCsvImport("statement-undone.csv", csvUndone, csvOptions()))
-        assertEquals(1, app.reverseCsvImport(undone.id))
+        app.csv.importFile(app.csv.preview("statement.csv", csvKept, csvOptions()))
+        val undone = app.csv.importFile(app.csv.preview("statement-undone.csv", csvUndone, csvOptions()))
+        assertEquals(1, app.csv.reverse(undone.id))
 
-        app.setMarketDataConsent(true)
+        app.market.setConsent(true)
         refresh(app, "90000", "1.0", "3000")
-        app.savePriceAlert("bitcoin", AlertCondition.ABOVE, ExactDecimal.parse("100000"))
-        app.savePriceAlert("ethereum", AlertCondition.MOVE, ExactDecimal.parse("5"))
-        val below = app.savePriceAlert("bitcoin", AlertCondition.BELOW, ExactDecimal.parse("50000"))
-        app.setPriceAlertEnabled(below.id, false)
+        app.notifications.saveAlert("bitcoin", AlertCondition.ABOVE, ExactDecimal.parse("100000"))
+        app.notifications.saveAlert("ethereum", AlertCondition.MOVE, ExactDecimal.parse("5"))
+        val below = app.notifications.saveAlert("bitcoin", AlertCondition.BELOW, ExactDecimal.parse("50000"))
+        app.notifications.setAlertEnabled(below.id, false)
 
-        app.setLandingPage(LandingPage.INSIGHTS)
-        app.setSecondaryCurrency(eur)
-        app.setShowPortfolioChart(false)
-        app.setZeroBasisRewards(true)
-        app.setDeviceName("Anton's Pixel")
-        app.setHideAmounts(true)
-        app.setCandleCharts(true)
-        app.setAppearanceTheme("light")
-        app.setMarketFavorites(setOf(BITCOIN_ASSET, AssetId("coingecko:ethereum")))
-        app.setOrderBookConsent(true)
-        app.setAssetListPreference(AssetListPreference(AssetSort.NAME, hideEmpty = true, hideSmall = true))
-        app.setRefreshPreferences(automatic = false, wifiOnly = true)
-        app.setSourceConsent(true)
-        app.setNotificationPreferences(NotificationPreferences(dailyUpdate = true, priceMoves = true, highsAndLows = false))
+        app.settings.setLandingPage(LandingPage.INSIGHTS)
+        app.settings.setSecondaryCurrency(eur)
+        app.settings.setShowPortfolioChart(false)
+        app.settings.setZeroBasisRewards(true)
+        app.settings.setDeviceName("Anton's Pixel")
+        app.settings.setHideAmounts(true)
+        app.settings.setCandleCharts(true)
+        app.settings.setTheme("light")
+        app.market.setFavorites(setOf(BITCOIN_ASSET, AssetId("coingecko:ethereum")))
+        app.market.setOrderBookConsent(true)
+        app.settings.setAssetList(AssetListPreference(AssetSort.NAME, hideEmpty = true, hideSmall = true))
+        app.settings.setRefreshPreferences(automatic = false, wifiOnly = true)
+        app.sources.setConsent(true)
+        app.notifications.setPreferences(NotificationPreferences(dailyUpdate = true, priceMoves = true, highsAndLows = false))
 
         // The first snapshot after the alerts were set: the ABOVE and MOVE alerts fire, and so do the price move and daily update.
         // The daily update needs a fresh end value, and the market feed does not supply valuations, so a manual quote is saved at T1.
         clock.millis = T1
-        app.recordManualPrice(
+        app.prices.recordManual(
             PriceObservation("manual-btc-usd-t1", Price(BITCOIN_ASSET, usd, ExactDecimal.parse("110000")), null, T1, T1, true),
         )
         refresh(app, "110000", "12.5", "3300")
-        val delivered = app.evaluateNotifications(LOCAL_DAY, 10)
+        val delivered = app.notifications.evaluate(LOCAL_DAY, 10)
         assertEquals(2, delivered.count { it.kind == NotificationKind.PRICE_ALERT })
         assertEquals(1, delivered.count { it.kind == NotificationKind.PRICE_MOVE })
         assertEquals(1, delivered.count { it.kind == NotificationKind.DAILY_UPDATE })
@@ -289,16 +295,16 @@ class RestorePreservationTest {
         JvmSqliteDatabase(":memory:").use { source ->
             val app = populate(source, clock)
             // Fixture check: each record kind is present before export, so an empty restore cannot pass.
-            assertEquals(3, app.priceAlerts().size)
-            assertEquals(2, app.priceAlerts().count { it.enabled })
-            assertEquals(2, app.csvImportReceipts().size)
-            assertEquals(1, app.csvImportReceipts().count { it.reversedAtMillis != null })
-            assertEquals(2, app.rules().size)
+            assertEquals(3, app.notifications.alerts().size)
+            assertEquals(2, app.notifications.alerts().count { it.enabled })
+            assertEquals(2, app.csv.receipts().size)
+            assertEquals(1, app.csv.receipts().count { it.reversedAtMillis != null })
+            assertEquals(2, app.transactions.rules().size)
             assertEquals(1, OverlayRepository(source).replayForLedger(ActivityRepository(source).current()).transferLinks.size)
 
-            val archive = app.exportBackup(password())
+            val archive = app.backup.export(password())
             JvmSqliteDatabase(":memory:").use { staging ->
-                app.restoreToStaging(staging, archive, password())
+                app.backup.restoreToStaging(staging, archive, password())
                 val restored = PortfolioApplication(staging) { clock.millis }
 
                 assertEquals(app.snapshot(), restored.snapshot())
@@ -322,9 +328,9 @@ class RestorePreservationTest {
                 assertEquals(sourceLedger, restoredLedger)
                 assertEquals(1, restoredLedger.suppressed.size)
 
-                val entries = app.transactionEntries(ActivityFilter())
-                assertEquals(entries, restored.transactionEntries(ActivityFilter()))
-                val byId = restored.transactionEntries(ActivityFilter()).associateBy { it.activity.id.value }
+                val entries = app.transactions.entries(ActivityFilter())
+                assertEquals(entries, restored.transactions.entries(ActivityFilter()))
+                val byId = restored.transactions.entries(ActivityFilter()).associateBy { it.activity.id.value }
                 assertEquals("Exchange buy", byId.getValue("tx-buy").label)
                 assertEquals("Quantity corrected from statement", byId.getValue("tx-buy").note)
                 assertEquals(
@@ -342,19 +348,25 @@ class RestorePreservationTest {
                 assertEquals(ClassificationOrigin.RULE, byId.getValue("tx-dup-a").classificationOrigin)
                 assertNull(byId["tx-dup-b"])
 
-                assertEquals(app.rules(), restored.rules())
-                assertEquals(7, restored.rules().single { it.id == "rule-bitcoin-deposits" }.priority)
-                assertEquals(app.overlay(ActivityId("tx-buy")), restored.overlay(ActivityId("tx-buy")))
-                assertEquals(app.overlay(ActivityId("tx-receive")), restored.overlay(ActivityId("tx-receive")))
+                assertEquals(app.transactions.rules(), restored.transactions.rules())
+                assertEquals(
+                    7,
+                    restored.transactions
+                        .rules()
+                        .single { it.id == "rule-bitcoin-deposits" }
+                        .priority,
+                )
+                assertEquals(app.transactions.overlay(ActivityId("tx-buy")), restored.transactions.overlay(ActivityId("tx-buy")))
+                assertEquals(app.transactions.overlay(ActivityId("tx-receive")), restored.transactions.overlay(ActivityId("tx-receive")))
 
-                assertEquals(app.priceAlerts(), restored.priceAlerts())
-                assertEquals(app.notificationPreferences(), restored.notificationPreferences())
-                assertEquals(app.notificationHistory(), restored.notificationHistory())
-                assertTrue(restored.notificationHistory().any { it.kind == NotificationKind.PRICE_MOVE })
+                assertEquals(app.notifications.alerts(), restored.notifications.alerts())
+                assertEquals(app.notifications.preferences(), restored.notifications.preferences())
+                assertEquals(app.notifications.history(), restored.notifications.history())
+                assertTrue(restored.notifications.history().any { it.kind == NotificationKind.PRICE_MOVE })
 
-                assertEquals(app.csvImportReceipts(), restored.csvImportReceipts())
-                for (receipt in app.csvImportReceipts()) {
-                    assertEquals(app.csvImportRows(receipt.id), restored.csvImportRows(receipt.id))
+                assertEquals(app.csv.receipts(), restored.csv.receipts())
+                for (receipt in app.csv.receipts()) {
+                    assertEquals(app.csv.rows(receipt.id), restored.csv.rows(receipt.id))
                 }
 
                 val expectedPreferences =
@@ -367,20 +379,20 @@ class RestorePreservationTest {
                         hideAmounts = true,
                         candleCharts = true,
                     )
-                assertEquals(expectedPreferences, restored.generalPreferences())
-                assertEquals(app.generalPreferences(), restored.generalPreferences())
-                assertEquals("light", restored.appearanceTheme())
-                assertEquals(app.marketFavorites(), restored.marketFavorites())
-                assertEquals(setOf(BITCOIN_ASSET, AssetId("coingecko:ethereum")), restored.marketFavorites())
-                assertTrue(restored.orderBookConsent())
-                assertTrue(restored.sourceConsent())
-                assertTrue(restored.marketDataConsent())
-                assertEquals(AssetListPreference(AssetSort.NAME, hideEmpty = true, hideSmall = true), restored.assetListPreference())
-                assertEquals(false, restored.automaticRefreshPreference())
-                assertTrue(restored.wifiOnlyRefreshPreference())
+                assertEquals(expectedPreferences, restored.settings.general())
+                assertEquals(app.settings.general(), restored.settings.general())
+                assertEquals("light", restored.settings.theme())
+                assertEquals(app.market.favorites(), restored.market.favorites())
+                assertEquals(setOf(BITCOIN_ASSET, AssetId("coingecko:ethereum")), restored.market.favorites())
+                assertTrue(restored.market.orderBookConsent())
+                assertTrue(restored.sources.consent())
+                assertTrue(restored.market.consent())
+                assertEquals(AssetListPreference(AssetSort.NAME, hideEmpty = true, hideSmall = true), restored.settings.assetList())
+                assertEquals(false, restored.settings.automaticRefresh())
+                assertTrue(restored.settings.wifiOnlyRefresh())
 
-                assertEquals(app.exportCsv(), restored.exportCsv())
-                assertEquals(app.accountingReport(), restored.accountingReport())
+                assertEquals(app.csv.export(), restored.csv.export())
+                assertEquals(app.accounting.report(), restored.accounting.report())
                 assertEquals(app.snapshot(), restored.snapshot())
             }
         }
@@ -391,38 +403,38 @@ class RestorePreservationTest {
         val clock = TestClock(T0)
         JvmSqliteDatabase(":memory:").use { source ->
             val app = populate(source, clock)
-            val alerts = app.priceAlerts()
-            val history = app.notificationHistory()
+            val alerts = app.notifications.alerts()
+            val history = app.notifications.history()
             val above = alerts.single { it.condition == AlertCondition.ABOVE }
-            val archive = app.exportBackup(password())
+            val archive = app.backup.export(password())
             JvmSqliteDatabase(":memory:").use { staging ->
-                app.restoreToStaging(staging, archive, password())
+                app.backup.restoreToStaging(staging, archive, password())
                 val restoredClock = TestClock(T1)
                 val restored = PortfolioApplication(staging) { restoredClock.millis }
-                assertEquals(alerts, restored.priceAlerts())
-                assertEquals(history, restored.notificationHistory())
+                assertEquals(alerts, restored.notifications.alerts())
+                assertEquals(history, restored.notifications.history())
 
                 // The same snapshot at the same clock time. Each enabled alert's lastObservedMillis equals this observedAt, and
                 // AlertRules.step ignores a snapshot that is not newer than lastObservedMillis. The history is a second guard:
                 // a price alert's key is its ID plus observedAt, and the price move and daily update keys are already recorded,
                 // so NotificationRepository.record refuses them.
                 refresh(restored, "110000", "12.5", "3300")
-                assertEquals(emptyList(), restored.evaluateNotifications(LOCAL_DAY, 10))
-                assertEquals(alerts, restored.priceAlerts())
-                assertEquals(history, restored.notificationHistory())
+                assertEquals(emptyList(), restored.notifications.evaluate(LOCAL_DAY, 10))
+                assertEquals(alerts, restored.notifications.alerts())
+                assertEquals(history, restored.notifications.history())
 
                 // A later snapshot where the ABOVE alert still holds: it fired and is disarmed, so the crossing is not repeated.
                 restoredClock.millis = T1 + 2 * HOUR
                 refresh(restored, "110000", "12.5", "3300")
-                assertEquals(emptyList(), restored.evaluateNotifications(LOCAL_DAY, 10))
+                assertEquals(emptyList(), restored.notifications.evaluate(LOCAL_DAY, 10))
 
                 // The restored alert still works: a fall below the threshold re-arms it, and the next crossing fires once.
                 restoredClock.millis = T1 + 3 * HOUR
                 refresh(restored, "95000", "-3.0", "3300")
-                assertEquals(emptyList(), restored.evaluateNotifications(LOCAL_DAY, 10))
+                assertEquals(emptyList(), restored.notifications.evaluate(LOCAL_DAY, 10))
                 restoredClock.millis = T1 + 5 * HOUR
                 refresh(restored, "105000", "12.5", "3300")
-                val fired = restored.evaluateNotifications(LOCAL_DAY, 10)
+                val fired = restored.notifications.evaluate(LOCAL_DAY, 10)
                 assertEquals(listOf(NotificationKind.PRICE_ALERT), fired.map { it.kind })
                 assertEquals(above.id, fired.single().alertId)
                 assertEquals("alert:${above.id}:${T1 + 5 * HOUR}", fired.single().key)
@@ -435,12 +447,12 @@ class RestorePreservationTest {
         val clock = TestClock(T0)
         JvmSqliteDatabase(":memory:").use { source ->
             val app = populate(source, clock)
-            val firstArchive = app.exportBackup(password())
+            val firstArchive = app.backup.export(password())
             val firstBody = plainBody(firstArchive)
             assertTrue(firstBody.decodeToString().contains("Quantity corrected from statement"))
             JvmSqliteDatabase(":memory:").use { staging ->
-                app.restoreToStaging(staging, firstArchive, password())
-                val second = PortfolioApplication(staging) { clock.millis }.exportBackup(password())
+                app.backup.restoreToStaging(staging, firstArchive, password())
+                val second = PortfolioApplication(staging) { clock.millis }.backup.export(password())
                 assertContentEquals(firstBody, plainBody(second))
             }
         }

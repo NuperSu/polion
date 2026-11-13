@@ -112,29 +112,29 @@ class ExchangeCoinsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
             app.snapshot()
-            app.setMarketDataConsent(true)
-            app.refreshEvmCatalog({ url, _ -> if (url.contains("asset_platforms")) PLATFORMS else coins }, "https://example.test")
+            app.market.setConsent(true)
+            app.evm.refreshCatalog({ url, _ -> if (url.contains("asset_platforms")) PLATFORMS else coins }, "https://example.test")
             assertEquals(
                 mapOf("USDT" to AssetId("coin:tether"), "SOLO" to AssetId("coin:solo")),
-                app.exchangeAssets("bybit", setOf("USDT", "SOLO", "ABC")),
+                app.exchanges.assets("bybit", setOf("USDT", "SOLO", "ABC")),
             )
-            assertEquals("tether", app.marketCoinId(AssetId("coin:tether")))
+            assertEquals("tether", app.market.coinId(AssetId("coin:tether")))
             assertEquals(
                 mapOf("ABC" to listOf("alpha-one" to "Alpha One", "alpha-two" to "Alpha Two")),
-                app.unresolvedExchangeCoins("bybit"),
+                app.exchanges.unresolvedCoins("bybit"),
             )
-            app.chooseExchangeCoin("bybit", "ABC", "alpha-two")
-            app.chooseExchangeCoin("bybit", "SOLO", "alpha-one")
+            app.exchanges.chooseCoin("bybit", "ABC", "alpha-two")
+            app.exchanges.chooseCoin("bybit", "SOLO", "alpha-one")
             assertEquals(
                 mapOf("ABC" to AssetId("coin:alpha-two"), "SOLO" to AssetId("coin:alpha-one")),
-                app.exchangeAssets("bybit", setOf("ABC", "SOLO")),
+                app.exchanges.assets("bybit", setOf("ABC", "SOLO")),
             )
-            assertEquals(emptyMap(), app.unresolvedExchangeCoins("bybit"))
+            assertEquals(emptyMap(), app.exchanges.unresolvedCoins("bybit"))
             // A symbol no CoinGecko coin carries is counted without a price, and is not offered as a choice.
-            assertEquals(mapOf("NONE" to AssetId("unlisted:bybit:NONE")), app.exchangeAssets("bybit", setOf("NONE")))
-            assertEquals(emptyMap(), app.unresolvedExchangeCoins("bybit"))
+            assertEquals(mapOf("NONE" to AssetId("unlisted:bybit:NONE")), app.exchanges.assets("bybit", setOf("NONE")))
+            assertEquals(emptyMap(), app.exchanges.unresolvedCoins("bybit"))
             // Another exchange matches its own symbols.
-            assertEquals(mapOf("SOLO" to AssetId("coin:solo")), app.exchangeAssets("other", setOf("SOLO")))
+            assertEquals(mapOf("SOLO" to AssetId("coin:solo")), app.exchanges.assets("other", setOf("SOLO")))
         }
     }
 

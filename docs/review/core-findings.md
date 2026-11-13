@@ -1,5 +1,7 @@
 # Core findings
 
+Line references are as of commit 4a77ffd; the code has since been restructured (see docs/architecture.md).
+
 Paths are relative to `core/src/commonMain/kotlin/io/valroot/core/` unless stated. `PA` = `application/PortfolioApplication.kt`.
 
 ## CORE-1 · P1 · correctness · [V] — Display currency and accounting currency are conflated

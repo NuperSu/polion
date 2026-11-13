@@ -100,7 +100,7 @@ internal fun TransactionEntry(
     fun ticker(id: String) = options.find { it.id == id }?.ticker ?: id
     var type by rememberSaveable { mutableStateOf(initialDraft?.type?.name ?: "BUY") }
     var date by rememberSaveable {
-        mutableStateOf(Instant.fromEpochMilliseconds(initialDraft?.atMillis ?: app.evaluationTimeMillis()).toString())
+        mutableStateOf(Instant.fromEpochMilliseconds(initialDraft?.atMillis ?: app.analytics.evaluationTimeMillis()).toString())
     }
     var price by rememberSaveable { mutableStateOf(initialDraft?.unitPrice?.toString().orEmpty()) }
     var amount by rememberSaveable { mutableStateOf(initialDraft?.quantity?.toString().orEmpty()) }
@@ -271,14 +271,14 @@ internal fun TransactionEntry(
                 try {
                     val value =
                         withContext(host.dispatcher) {
-                            val ownerId = owner ?: OwnerId(transactionIdentity()).also { app.saveOwner(Owner(it, "Local owner")) }
+                            val ownerId = owner ?: OwnerId(transactionIdentity()).also { app.accounts.saveOwner(Owner(it, "Local owner")) }
                             owner = ownerId
                             Account(
                                 AccountId(transactionIdentity()),
                                 ownerId,
                                 accountName.trim(),
                                 AccountKind.ACCOUNT,
-                            ).also { app.saveAccount(it) }
+                            ).also { app.accounts.saveAccount(it) }
                         }
                     newAccounts = newAccounts + value
                     account = value.id.value
@@ -357,10 +357,10 @@ internal fun TransactionEntry(
                             // A recreated form may retry after the commit succeeded but its UI callback was cancelled.
                             val recorded =
                                 initialDraft == null &&
-                                    app.transactionDraft(value.id) == value &&
-                                    app.effectiveActivity(value.id)?.activity == expected.activity &&
-                                    app.treatments(value.id) == expected.treatments
-                            if (!recorded) app.saveTransaction(value, editing = initialDraft != null)
+                                    app.transactions.draft(value.id) == value &&
+                                    app.accounting.effectiveActivity(value.id)?.activity == expected.activity &&
+                                    app.accounting.treatments(value.id) == expected.treatments
+                            if (!recorded) app.transactions.saveTransaction(value, editing = initialDraft != null)
                         }
                         onSaved()
                     } catch (

@@ -28,10 +28,10 @@ class BitcoinMultiAddressAccountTest {
     private fun application(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 15_552_000_000L }
         val owner = OwnerId("owner")
-        app.saveOwner(Owner(owner, "Owner"))
-        app.saveAccount(Account(account, owner, "Wallet", AccountKind.WALLET))
+        app.accounts.saveOwner(Owner(owner, "Owner"))
+        app.accounts.saveAccount(Account(account, owner, "Wallet", AccountKind.WALLET))
         addresses.forEachIndexed { index, address ->
-            app.saveTarget(
+            app.accounts.saveTarget(
                 TrackingTarget(
                     TrackingTargetId("address-$index"),
                     account,
@@ -41,7 +41,7 @@ class BitcoinMultiAddressAccountTest {
                 ),
             )
         }
-        app.setSourceConsent(true)
+        app.sources.setConsent(true)
         return app
     }
 
@@ -107,7 +107,7 @@ class BitcoinMultiAddressAccountTest {
         )
         assertEquals((count * 2).toString(), db.query("SELECT COUNT(*) FROM ledger_activities").single().single())
         assertEquals((count * 2).toString(), db.query("SELECT COUNT(*) FROM raw_records").single().single())
-        assertEquals(0, app.bitcoinUtxoReview().total)
+        assertEquals(0, app.bitcoin.utxoReview().total)
         assertTrue(db.query("PRAGMA foreign_key_check").isEmpty())
     }
 
@@ -117,7 +117,7 @@ class BitcoinMultiAddressAccountTest {
             val app = application(db)
             val provider = Provider(1)
             repeat(2) {
-                assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), app.refreshBitcoin(provider.transport))
+                assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), app.bitcoin.refresh(provider.transport))
                 assertComplete(db, app, 1)
             }
             // The repeat finds unchanged counts for both addresses, so it fetches no history again.
@@ -133,7 +133,7 @@ class BitcoinMultiAddressAccountTest {
             val app = application(db)
             val provider = Provider(26)
             provider.failAddress = addresses[1]
-            assertEquals(listOf(JobState.COMPLETED, JobState.READY), app.refreshBitcoin(provider.transport))
+            assertEquals(listOf(JobState.COMPLETED, JobState.READY), app.bitcoin.refresh(provider.transport))
             assertTrue(
                 app
                     .snapshot()
@@ -142,13 +142,13 @@ class BitcoinMultiAddressAccountTest {
             )
             provider.failAddress = null
             val resumed = PortfolioApplication(db) { 15_552_000_000L }
-            assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), resumed.refreshBitcoin(provider.transport))
+            assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), resumed.bitcoin.refresh(provider.transport))
             assertComplete(db, resumed, 26)
             addresses.forEach { address ->
                 assertTrue(provider.historyCalls.any { it == "/address/$address/txs/chain" })
                 assertTrue(provider.historyCalls.any { it.startsWith("/address/$address/txs/chain/") })
             }
-            assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), resumed.refreshBitcoin(provider.transport))
+            assertEquals(listOf(JobState.COMPLETED, JobState.COMPLETED), resumed.bitcoin.refresh(provider.transport))
             assertComplete(db, resumed, 26)
         }
     }

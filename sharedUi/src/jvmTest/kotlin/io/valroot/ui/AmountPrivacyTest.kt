@@ -21,16 +21,16 @@ class AmountPrivacyTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.setLandingPage(LandingPage.PORTFOLIO)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.settings.setLandingPage(LandingPage.PORTFOLIO)
                 runDesktopComposeUiTest(width = 600, height = 1400) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("balance-visibility").fetchSemanticsNodes().isNotEmpty() }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("$", substring = true).fetchSemanticsNodes().isNotEmpty() }
                     assertTrue(onAllNodesWithText(HIDDEN_AMOUNT).fetchSemanticsNodes().isEmpty())
                     onNodeWithTag("balance-visibility").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.generalPreferences().hideAmounts }
+                    waitUntil(timeoutMillis = 10_000) { app.settings.general().hideAmounts }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText(HIDDEN_AMOUNT).fetchSemanticsNodes().size >= 2 }
                     // No money amount remains on the Portfolio page; market prices next to quantities stay public.
                     val dollars =
@@ -43,7 +43,7 @@ class AmountPrivacyTest {
                             }
                     assertTrue(dollars.all { it.contains("·") || it.contains("<$") }, dollars.toString())
                     onNodeWithTag("balance-visibility").performClick()
-                    waitUntil(timeoutMillis = 10_000) { !app.generalPreferences().hideAmounts }
+                    waitUntil(timeoutMillis = 10_000) { !app.settings.general().hideAmounts }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText(HIDDEN_AMOUNT).fetchSemanticsNodes().isEmpty() }
                 }
             }

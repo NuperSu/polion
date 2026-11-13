@@ -25,9 +25,9 @@ class PhaseTwoControlsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.savePortfolio(
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.accounts.savePortfolio(
                     io.valroot.core.ownership
                         .Portfolio(
                             io.valroot.core.model
@@ -62,8 +62,8 @@ class PhaseTwoControlsTest {
         JvmSqliteDatabase(":memory:").use { db ->
             ModelWorkspaceRestorationTest.RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 390, height = 844) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("model-PORTFOLIO").fetchSemanticsNodes().isNotEmpty() }
@@ -74,17 +74,17 @@ class PhaseTwoControlsTest {
                     onNodeWithText("Close").performClick()
                     onNodeWithText("Highest Holdings").performScrollTo().performClick()
                     onNodeWithText("name").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.assetListPreference().sort == AssetSort.NAME }
+                    waitUntil(timeoutMillis = 10_000) { app.settings.assetList().sort == AssetSort.NAME }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Name").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("☷").performScrollTo().performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("Hide empty: false").fetchSemanticsNodes().isNotEmpty() }
                     onNodeWithText("Hide empty: false").performClick()
-                    waitUntil(timeoutMillis = 10_000) { app.assetListPreference().hideEmpty }
+                    waitUntil(timeoutMillis = 10_000) { app.settings.assetList().hideEmpty }
                     onNodeWithText("USD").performScrollTo().performClick()
                     onNodeWithText("EUR").performClick()
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("EUR").fetchSemanticsNodes().isNotEmpty() }
                     assertEquals(AssetId("EUR"), app.snapshot().currency)
-                    assertTrue(PortfolioApplication(db) { 1_800_000_000_000L }.assetListPreference().hideEmpty)
+                    assertTrue(PortfolioApplication(db) { 1_800_000_000_000L }.settings.assetList().hideEmpty)
                 }
             }
         }

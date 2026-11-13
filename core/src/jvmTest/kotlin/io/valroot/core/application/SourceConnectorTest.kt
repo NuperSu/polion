@@ -72,7 +72,7 @@ class SourceConnectorTest {
         override fun refresh(
             app: PortfolioApplication,
             options: SourceRefreshOptions,
-        ) = SourceRefreshOutcome(manifest.id, app.ingestHistory(manifest.id, this, this, network, listOf(account)))
+        ) = SourceRefreshOutcome(manifest.id, app.sources.ingestHistory(manifest.id, this, this, network, listOf(account)))
 
         override fun fetch(request: HistoryRequest): HistoryPage {
             pages++
@@ -119,9 +119,9 @@ class SourceConnectorTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
             app.snapshot()
-            app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-            app.saveAccount(Account(account, OwnerId("owner"), "EVM wallet", AccountKind.WALLET))
-            app.saveTarget(
+            app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+            app.accounts.saveAccount(Account(account, OwnerId("owner"), "EVM wallet", AccountKind.WALLET))
+            app.accounts.saveTarget(
                 TrackingTarget(
                     TrackingTargetId("evm-target"),
                     account,
@@ -130,7 +130,7 @@ class SourceConnectorTest {
                     "EVM",
                 ),
             )
-            app.registerAsset(
+            app.assets.register(
                 AssetDefinition(token, AssetIdentity(AssetKind.TOKEN, network, "0xtoken")),
                 AssetMetadata("TKN", "Token", 2, 0),
             )
@@ -138,7 +138,7 @@ class SourceConnectorTest {
             val registry = SourceRegistry(listOf(fake))
             assertSame(fake, registry.forNetwork(network))
 
-            val outcome = app.refreshSources(registry).single()
+            val outcome = app.sources.refresh(registry).single()
             assertEquals(listOf(JobState.COMPLETED), outcome.jobs)
             assertEquals(
                 "250",
@@ -149,10 +149,10 @@ class SourceConnectorTest {
                     .amount.atomicUnits
                     .toString(),
             )
-            assertTrue(app.exportCsv().contains("fake-evm:tx-1"))
+            assertTrue(app.csv.export().contains("fake-evm:tx-1"))
             // A second refresh reads the saved cursor's completed job and does not duplicate the activity.
-            app.refreshSources(registry)
-            assertEquals(1, app.transactionEntries(ActivityFilter()).size)
+            app.sources.refresh(registry)
+            assertEquals(1, app.transactions.entries(ActivityFilter()).size)
             assertEquals(
                 "250",
                 app
@@ -172,9 +172,9 @@ class SourceConnectorTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
             app.snapshot()
-            app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-            app.saveAccount(Account(account, OwnerId("owner"), "EVM wallet", AccountKind.WALLET))
-            app.saveTarget(
+            app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+            app.accounts.saveAccount(Account(account, OwnerId("owner"), "EVM wallet", AccountKind.WALLET))
+            app.accounts.saveTarget(
                 TrackingTarget(
                     TrackingTargetId("evm-target"),
                     account,
@@ -184,8 +184,14 @@ class SourceConnectorTest {
                 ),
             )
             // A tracked network without a connector is reported, not skipped silently.
-            assertEquals(listOf("No connector is available for fake-evm."), app.refreshSources(SourceRegistry(emptyList())).single().notes)
-            assertFails { app.ingestHistory("bitcoin-esplora", FakeEvmConnector(), FakeEvmConnector(), network, listOf(account)) }
+            assertEquals(
+                listOf("No connector is available for fake-evm."),
+                app.sources
+                    .refresh(SourceRegistry(emptyList()))
+                    .single()
+                    .notes,
+            )
+            assertFails { app.sources.ingestHistory("bitcoin-esplora", FakeEvmConnector(), FakeEvmConnector(), network, listOf(account)) }
         }
     }
 }

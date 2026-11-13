@@ -37,6 +37,7 @@ The wrapper pins Gradle 9.8.1 with a distribution checksum. Dependency versions 
 - `sharedUi`: shared responsive Compose portfolio workflows for Android and JVM.
 - `androidApp`: activity, foreground sync service and notification, document picker, WorkManager refresh and native reliability harness.
 - `desktopApp`: Compose desktop window, file dialogs, scheduled refresh and runnable JAR packaging.
+- `uiModel`: deterministic Compose fixture host (`./gradlew :uiModel:run`) that renders the shared presentation layer with illustrative crypto-only data and preview actions; it reads no ledger and calls no provider.
 
 Source requests require consent and disclose watched addresses to the chosen HTTPS indexer. The live database is plaintext; the optional privacy lock is a screen barrier, while portable backups are encrypted. Logs use fixed event names without free-form messages, exception payloads or portfolio data. There is no analytics or telemetry integration.
 

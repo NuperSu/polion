@@ -44,8 +44,8 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val visible = mutableStateOf(true)
                 var registry = SaveableStateRegistry(restoredValues = null, canBeSaved = { true })
                 runDesktopComposeUiTest(width = 600, height = 900) {
@@ -83,8 +83,8 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val before = app.snapshot().activityTotal
                 val visible = mutableStateOf(true)
                 var registry = SaveableStateRegistry(restoredValues = null, canBeSaved = { true })
@@ -129,9 +129,9 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.savePortfolio(
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.accounts.savePortfolio(
                     io.valroot.core.ownership
                         .Portfolio(
                             io.valroot.core.model
@@ -176,8 +176,8 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { ValrootApp(app, host) }
                     openAdvancedTools()
@@ -204,14 +204,14 @@ class ModelWorkspaceRestorationTest {
             RestorationHost().use { host ->
                 var now = 1_800_000_000_000L
                 val app = PortfolioApplication(db) { now }
-                app.updateOnboarding(OnboardingAction.Skip)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
                 val btc = AssetId("bitcoin:btc")
 
                 fun savePrice(
                     id: String,
                     value: String,
                 ) {
-                    app.recordManualPrice(
+                    app.prices.recordManual(
                         io.valroot.core.market.PriceObservation(
                             id,
                             io.valroot.core.model
@@ -229,7 +229,7 @@ class ModelWorkspaceRestorationTest {
                     )
                 }
                 savePrice("first-price", "64000")
-                app.setMarketFavorites(setOf(btc))
+                app.market.setFavorites(setOf(btc))
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { ValrootApp(app, host) }
                     waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("BTC").fetchSemanticsNodes().isNotEmpty() }
@@ -256,8 +256,8 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { ValrootApp(app, host) }
                     onNodeWithTag("model-PORTFOLIO").performClick()
@@ -278,9 +278,9 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
-                app.setAutomaticPriceConsent(true)
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
+                app.prices.setAutomaticConsent(true)
                 val before = app.snapshot().valuations
                 runDesktopComposeUiTest(width = 600, height = 900) {
                     setContent { ValrootApp(app, host) }
@@ -301,8 +301,8 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 runDesktopComposeUiTest(width = 1200, height = 900) {
                     setContent { ValrootApp(app, host) }
                     onNodeWithTag("model-MAIN").performSemanticsAction(SemanticsActions.RequestFocus)
@@ -335,8 +335,8 @@ class ModelWorkspaceRestorationTest {
         JvmSqliteDatabase(":memory:").use { db ->
             RestorationHost().use { host ->
                 val app = PortfolioApplication(db) { 1_800_000_000_000L }
-                app.updateOnboarding(OnboardingAction.Skip)
-                app.seedDemo()
+                app.settings.updateOnboarding(OnboardingAction.Skip)
+                app.demo.seed()
                 val visible = mutableStateOf(true)
                 var registry = SaveableStateRegistry(restoredValues = null, canBeSaved = { true })
                 runDesktopComposeUiTest(width = 800, height = 900) {

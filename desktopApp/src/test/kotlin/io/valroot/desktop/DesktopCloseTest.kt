@@ -73,7 +73,7 @@ class DesktopCloseTest {
                     } catch (cancelled: BitcoinProviderException) {
                         assertEquals(BitcoinProviderFailure.CANCELLED, cancelled.reason)
                         Thread.interrupted()
-                        application.saveOwner(Owner(OwnerId("cleanup"), "Worker cleanup"))
+                        application.accounts.saveOwner(Owner(OwnerId("cleanup"), "Worker cleanup"))
                         assertEquals(
                             listOf(OwnerId("cleanup")),
                             application

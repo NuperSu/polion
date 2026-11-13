@@ -56,18 +56,18 @@ class EvmConnector(
         app: PortfolioApplication,
         options: SourceRefreshOptions,
     ): SourceRefreshOutcome {
-        val targets = app.evmTargets()
+        val targets = app.evm.targets()
         if (targets.isEmpty()) return SourceRefreshOutcome(manifest.id, emptyList())
-        require(app.evmConsent()) { "EVM consent required" }
+        require(app.evm.consent()) { "EVM consent required" }
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
         targets.forEach { (account, address) ->
             // Chains the address has started to use are added on the first refresh and then weekly; chosen chains stay.
-            if (options.recoverHistory || app.evmDiscoveryDue(address)) {
-                app.addEvmChains(address, discover(address))
-                app.recordEvmDiscovery(address)
+            if (options.recoverHistory || app.evm.discoveryDue(address)) {
+                app.evm.addChains(address, discover(address))
+                app.evm.recordDiscovery(address)
             }
-            val states = app.evmChainStates(address)
+            val states = app.evm.chainStates(address)
             if (states.isEmpty()) notes += "No activity found yet for ${address.take(10)}…"
             states.forEachIndexed { index, state ->
                 options.onProgress("${Alchemy.network(state.chainId)?.name ?: "Chain ${state.chainId}"} · ${index + 1}/${states.size}")
@@ -77,7 +77,7 @@ class EvmConnector(
                         refreshChain(app, account, address, state, force = options.recoverHistory)
                         JobState.COMPLETED
                     } catch (failure: Exception) {
-                        app.recordEvmChainError(address, state.chainId, failure.message ?: "Could not refresh this chain")
+                        app.evm.recordChainError(address, state.chainId, failure.message ?: "Could not refresh this chain")
                         JobState.FAILED
                     }
             }
@@ -131,7 +131,7 @@ class EvmConnector(
                     ?.transactionHash,
                 "n$sent",
             ).joinToString("|") { it ?: "-" }
-        val recovered = app.evmRecovered()
+        val recovered = app.evm.recovered()
         val recheck =
             oneInch != null &&
                 chain in OneInch.CHAINS &&
@@ -149,7 +149,7 @@ class EvmConnector(
             if (!paid && !closable) {
                 // A rebasing token's balance changes without a transfer, so it is read on every refresh; a difference
                 // left by an earlier check is settled too.
-                if (state.balanceDifference != null || app.holdsRebasing(account, chain)) checkBalances(app, account, address, chain)
+                if (state.balanceDifference != null || app.evm.holdsRebasing(account, chain)) checkBalances(app, account, address, chain)
                 return
             }
         }
@@ -202,14 +202,14 @@ class EvmConnector(
                         receipt.success,
                     )
                 } + found
-        app.applyEvmChainHistory(account, address, chain, EvmDecoder.group(chain, withFees, internal, tokens), head)
+        app.evm.applyChainHistory(account, address, chain, EvmDecoder.group(chain, withFees, internal, tokens), head)
 
         val searched = recovered.nonces(address, chain)
         val unresolved = searched.count { it.value == null }
         val pending = (sent - receipts.size - found.size - unresolved).coerceAtLeast(0)
 
         fun count(n: Long) = "$n sent transaction${if (n == 1L) "" else "s"}"
-        app.recordEvmCoverage(
+        app.evm.recordCoverage(
             address,
             chain,
             listOfNotNull(
@@ -239,10 +239,10 @@ class EvmConnector(
         val (balances, errors) = Alchemy.parseTokenBalances(post(Alchemy.tokensUrl(), Alchemy.tokensBody(address, listOf(chain))))
         require(errors.isEmpty()) { "Alchemy could not report balances on this chain" }
         val tokens = balances.map { it.second }
-        app.reconcileRebasingBalances(account, address, chain, tokens)
+        app.evm.reconcileRebasingBalances(account, address, chain, tokens)
         val native = tokens.firstOrNull { it.standard == EvmTokenStandard.NATIVE }?.value ?: ExactInteger.ZERO
-        app.reconcileNativeBalance(account, address, chain, native)
-        app.checkEvmBalances(account, address, chain, native, tokens)
+        app.evm.reconcileNativeBalance(account, address, chain, native)
+        app.evm.checkBalances(account, address, chain, native, tokens)
     }
 
     /**
@@ -257,7 +257,7 @@ class EvmConnector(
         internalListed: Boolean,
     ): Boolean {
         val fetch = oneInch ?: return false
-        val recovered = app.evmRecovered()
+        val recovered = app.evm.recovered()
         val events = mutableListOf<OneInchEvent>()
         var before: Long? = null
         do {
@@ -302,7 +302,7 @@ class EvmConnector(
         sent: Long,
         known: Set<String>,
     ): List<EvmTransaction> {
-        val recovered = app.evmRecovered()
+        val recovered = app.evm.recovered()
         val searched = recovered.nonces(address, chain)
         val gap = sent - known.size - searched.size
         if (gap > 0) {

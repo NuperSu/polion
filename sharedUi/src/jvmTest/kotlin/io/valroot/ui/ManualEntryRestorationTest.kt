@@ -39,10 +39,10 @@ class ManualEntryRestorationTest {
     fun recreationPreservesAssetAccountClassificationAndAmountInRecordedActivity() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
-            app.seedDemo()
+            app.demo.seed()
             val initial = app.snapshot()
             val secondAccount = AccountId("second-wallet")
-            app.saveAccount(
+            app.accounts.saveAccount(
                 Account(
                     secondAccount,
                     initial.ownership.owners
@@ -131,7 +131,7 @@ class ManualEntryRestorationTest {
     fun manualFormRejectsWrongSignsAndInvalidFeesWithoutWritingActivity() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
-            app.seedDemo()
+            app.demo.seed()
             val data = app.snapshot()
             val initialCount = data.activityTotal
             val host = manualHost()
@@ -181,7 +181,7 @@ class ManualEntryRestorationTest {
     fun manualPaymentRecordsExactPrincipalFeeAndEnteredTimestamp() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = PortfolioApplication(db) { 1_800_000_000_000L }
-            app.seedDemo()
+            app.demo.seed()
             val data = app.snapshot()
             val host = manualHost()
             val enteredTime = "2026-11-01T12:34:56.789Z"

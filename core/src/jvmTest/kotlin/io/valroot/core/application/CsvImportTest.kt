@@ -69,8 +69,8 @@ class CsvImportTest {
     private fun app(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { 1_800_000_000_000L }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccount(Account(account, OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccount(Account(account, OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
         return app
     }
 
@@ -88,7 +88,7 @@ class CsvImportTest {
     @Test fun importsOnceUndoesAndRestores() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = app(db)
-            val preview = app.previewCsvImport("trades.csv", file, options)
+            val preview = app.csv.preview("trades.csv", file, options)
             assertEquals(
                 listOf(CsvRowStatus.NEW, CsvRowStatus.NEW, CsvRowStatus.NEW, CsvRowStatus.NEW, CsvRowStatus.INVALID, CsvRowStatus.INVALID),
                 preview.rows.map { it.status },
@@ -98,11 +98,11 @@ class CsvImportTest {
             assertNotEquals(preview.rows[2].draft!!.id, preview.rows[3].draft!!.id)
             assertTrue(preview.rows[5].message!!.contains("DOGE"))
             // Nothing is saved by a preview.
-            assertTrue(app.transactionEntries(ActivityFilter()).isEmpty())
+            assertTrue(app.transactions.entries(ActivityFilter()).isEmpty())
 
-            val receipt = app.importCsv(preview)
+            val receipt = app.csv.importFile(preview)
             assertEquals(listOf(6, 4, 0, 2), listOf(receipt.rows, receipt.imported, receipt.alreadyImported, receipt.invalid))
-            assertEquals(4, app.transactionEntries(ActivityFilter()).size)
+            assertEquals(4, app.transactions.entries(ActivityFilter()).size)
             val btc = {
                 app
                     .snapshot()
@@ -114,25 +114,25 @@ class CsvImportTest {
             }
             assertEquals("7000000", btc())
             // The same stale preview imported again saves nothing new.
-            assertEquals(0, app.importCsv(preview).imported)
-            assertEquals(4, app.transactionEntries(ActivityFilter()).size)
+            assertEquals(0, app.csv.importFile(preview).imported)
+            assertEquals(4, app.transactions.entries(ActivityFilter()).size)
 
-            val again = app.previewCsvImport("copy.csv", file, options)
+            val again = app.csv.preview("copy.csv", file, options)
             assertEquals(4, again.count(CsvRowStatus.ALREADY_IMPORTED))
             assertTrue(again.previousImports.any { it.id == receipt.id })
-            assertFails { app.importCsv(app.previewCsvImport("none.csv", file.lines().take(2).joinToString("\n"), options)) }
+            assertFails { app.csv.importFile(app.csv.preview("none.csv", file.lines().take(2).joinToString("\n"), options)) }
 
-            assertEquals(4, app.reverseCsvImport(receipt.id))
-            assertFails { app.reverseCsvImport(receipt.id) }
-            assertTrue(app.transactionEntries(ActivityFilter()).all { it.activity.status == ActivityStatus.REVERSED })
+            assertEquals(4, app.csv.reverse(receipt.id))
+            assertFails { app.csv.reverse(receipt.id) }
+            assertTrue(app.transactions.entries(ActivityFilter()).all { it.activity.status == ActivityStatus.REVERSED })
             assertEquals(null, btc()?.takeIf { it != "0" })
 
-            val restored = app.previewCsvImport("trades.csv", file, options)
+            val restored = app.csv.preview("trades.csv", file, options)
             assertEquals(4, restored.count(CsvRowStatus.RESTORE))
-            assertEquals(4, app.importCsv(restored).imported)
+            assertEquals(4, app.csv.importFile(restored).imported)
             assertEquals("7000000", btc())
-            assertEquals(3, app.csvImportReceipts().size)
-            assertEquals(6, app.csvImportRows(receipt.id).size)
+            assertEquals(3, app.csv.receipts().size)
+            assertEquals(6, app.csv.rows(receipt.id).size)
         }
     }
 
@@ -143,7 +143,7 @@ class CsvImportTest {
                 "date,type,asset,quantity,price,fee,fee_currency,reference\n" +
                     "2026-01-15,buy,XBT,1,40000,0.001,,A1\n2026-01-15,sell,BTC,1,1,,,A1\n"
             val preview =
-                app.previewCsvImport(
+                app.csv.preview(
                     "ref.csv",
                     text,
                     options.copy(assets = mapOf("XBT" to BITCOIN_ASSET), feeDefault = CsvFeeDefault.ASSET),
@@ -151,7 +151,7 @@ class CsvImportTest {
             assertEquals(listOf(CsvRowStatus.INVALID, CsvRowStatus.INVALID), preview.rows.map { it.status })
             assertEquals("Another row has the same reference", preview.rows.first().message)
             val single =
-                app.previewCsvImport(
+                app.csv.preview(
                     "ref.csv",
                     text.lines().take(2).joinToString("\n"),
                     options.copy(
@@ -169,8 +169,8 @@ class CsvImportTest {
                     .draft!!
                     .feeAsset,
             )
-            assertFails { app.previewCsvImport("x.csv", text, options.copy(account = AccountId("missing"))) }
-            assertFails { app.previewCsvImport("x.csv", "date,type,quantity\n", options) }
+            assertFails { app.csv.preview("x.csv", text, options.copy(account = AccountId("missing"))) }
+            assertFails { app.csv.preview("x.csv", "date,type,quantity\n", options) }
         }
     }
 }

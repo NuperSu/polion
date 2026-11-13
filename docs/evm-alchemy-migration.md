@@ -1,5 +1,7 @@
 # EVM provider migration: Blockscout to Alchemy Portfolio APIs
 
+**Status:** Implemented 2026-11-08 (see docs/evm.md).
+
 ## Context
 
 L2 shipped on branch `l2-evm` with Blockscout as the EVM provider. Live testing with Anton's key showed that Blockscout's free tier misses the chains that matter:
@@ -25,13 +27,13 @@ These pieces are provider-neutral and stay as they are:
 - `EvmIdentity.kt`: addresses, EIP-55, `eip155:<chain>` asset IDs, `evmQuantity`.
 - The decoder model (`EvmTransaction`, `EvmInternalTransfer`, `EvmTokenTransfer`) and `EvmDecoder` grouping.
 - CoinGecko coin links, hidden assets and linked-coin prices.
-- The `evm_chains` state and `applyEvmChainHistory` (raw provenance, supersede, one transaction).
-- `checkEvmBalances` and the connector shape (`SourceConnector`, head check, balance check).
+- The `evm_chains` state and `EvmService.applyChainHistory` (raw provenance, supersede, one transaction).
+- `EvmService.checkBalances` and the connector shape (`SourceConnector`, head check, balance check).
 - The UI: connect flow, chain status, hidden review, coin aggregation.
 
 ## Changes
 
-### 1. Alchemy client (`core/…/evm/Alchemy.kt`, replaces `Blockscout.kt`)
+### 1. Alchemy client (`core/…/evm/Alchemy.kt`)
 - **Network table:** each Alchemy slug with its chain ID, for the 16 transfer networks. Chain IDs are checked once per network with `eth_chainId` and cached; an unknown slug is never guessed.
 - **Requests and parsers, strict like the current ones:**
   - transfers (body: `address`, ≤5 `networks`, all categories the network supports, `order: desc`, `maxCount: 1000`, `pageKey`);
@@ -49,7 +51,7 @@ These pieces are provider-neutral and stay as they are:
 - **Failed transactions:** Alchemy lists value transfers, so a failed transaction may not appear and its gas would be missing. After reading history, the connector compares `eth_getTransactionCount` (the nonce) with the number of distinct sent hashes. A gap is stored as "N sent transactions not listed (likely failed); their gas is not counted" and shown on the account.
 - **Contract-made (internal) transfers on BNB, Arbitrum, OP and other chains without the internal category:** not available. The chain is marked "contract payments not covered".
 - **Staking withdrawals (Ethereum, Gnosis):** not available from Alchemy. The balance check reports the difference.
-- **Balance check:** native and token balances from Tokens By Wallet are compared with the ledger after each full read (existing `checkEvmBalances`). Any gap above shows up as a difference instead of a silently wrong total.
+- **Balance check:** native and token balances from Tokens By Wallet are compared with the ledger after each full read (`EvmService.checkBalances`). Any gap above shows up as a difference instead of a silently wrong total.
 
 ### 3. Discovery and refresh (`EvmConnector`)
 - **Discovery:** one Tokens By Wallet request per 5 networks (2 addresses per request) over the 16 networks. Chains with a balance or with any transfer (transfers request with `maxCount: 1` per 5-network group) are added. This replaces the Blockscout multichain search.
@@ -59,7 +61,7 @@ These pieces are provider-neutral and stay as they are:
 ### 4. Key, consent, hosts and UI
 - **Key:** the Alchemy key replaces the Blockscout key as a device setting (`alchemy_api_key`) in Settings › API Keys › External services. Help text: "Free key from alchemy.com. Reads the history of EVM addresses on Ethereum, Base, BNB Chain, Polygon, Arbitrum, OP and other chains." Remove the Blockscout key row and setting.
 - **Consent text:** "Alchemy receives this address and your IP address."
-- **Hosts:** `AlchemyTransport` on Android and desktop replaces `BlockscoutTransport`:
+- **Transport:** `AlchemyTransport` (`core/src/jvmSharedMain/kotlin/io/valroot/core/evm/AlchemyTransport.kt`), shared by Android and desktop:
   - HTTPS only, to `api.g.alchemy.com/data/v1/{key}/(transfers|assets/tokens)/by-address` and `{slug}.g.alchemy.com/v2/{key}` (slug from the network table);
   - POST with a JSON body, the key inserted into the path by the transport;
   - the key and full URLs never logged;
@@ -68,7 +70,7 @@ These pieces are provider-neutral and stay as they are:
 - **UI:** the chain picker lists the 16 supported networks, named from the CoinGecko catalog. Per-chain status shows the coverage notes from step 2.
 
 ### 5. Removal
-Delete `Blockscout.kt`, `BlockscoutTransport` (both hosts), their tests and fixtures, and the Blockscout key setting. Keep `EvmWithdrawal` and its decoder support (dormant until a provider supplies withdrawals). Update `docs/evm.md`, `release.md` and `plan-2026-11.md`.
+The Blockscout client, transport, tests, fixtures and key setting are removed from the code. Keep `EvmWithdrawal` and its decoder support (dormant until a provider supplies withdrawals). Update `docs/evm.md`, `release.md` and `plan-2026-11.md`.
 
 ## Build split
 

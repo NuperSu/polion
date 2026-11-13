@@ -48,13 +48,13 @@ class MoneyWeightedReturnTest {
     private fun setUp(db: JvmSqliteDatabase): PortfolioApplication {
         val app = PortfolioApplication(db) { now }
         app.snapshot()
-        app.saveOwner(Owner(OwnerId("owner"), "Owner"))
-        app.saveAccount(Account(a, OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
-        app.saveAccount(Account(b, OwnerId("owner"), "Cold wallet", AccountKind.WALLET))
+        app.accounts.saveOwner(Owner(OwnerId("owner"), "Owner"))
+        app.accounts.saveAccount(Account(a, OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
+        app.accounts.saveAccount(Account(b, OwnerId("owner"), "Cold wallet", AccountKind.WALLET))
         mapOf(10 to "10000", 100 to "20000", 200 to "15000", 250 to "20000", 260 to "20000").forEach { (at, price) ->
-            app.recordManualPrice(PriceObservation("p$at", Price(btc, usd, ExactDecimal.parse(price)), null, at * day, at * day, true))
+            app.prices.recordManual(PriceObservation("p$at", Price(btc, usd, ExactDecimal.parse(price)), null, at * day, at * day, true))
         }
-        app.recordManualPrice(PriceObservation("now", Price(btc, usd, ExactDecimal.parse("40000")), null, now - 3_600_000L, now, true))
+        app.prices.recordManual(PriceObservation("now", Price(btc, usd, ExactDecimal.parse("40000")), null, now - 3_600_000L, now, true))
         return app
     }
 
@@ -80,19 +80,19 @@ class MoneyWeightedReturnTest {
     )
 
     private fun record(app: PortfolioApplication) {
-        app.saveTransaction(draft("deposit", TransactionType.DEPOSIT, usd, "1000", 10))
-        app.saveTransaction(draft("buy", TransactionType.BUY, btc, "0.1", 10, "10000"))
-        app.saveTransaction(draft("move", TransactionType.TRANSFER, btc, "0.05", 100, destination = b))
-        app.saveTransaction(draft("withdraw", TransactionType.WITHDRAWAL, btc, "0.02", 200))
-        app.saveTransaction(draft("reward", TransactionType.REWARD, btc, "0.01", 250, "20000", account = b))
-        app.saveTransaction(draft("fee", TransactionType.FEE, btc, "0.001", 260))
+        app.transactions.saveTransaction(draft("deposit", TransactionType.DEPOSIT, usd, "1000", 10))
+        app.transactions.saveTransaction(draft("buy", TransactionType.BUY, btc, "0.1", 10, "10000"))
+        app.transactions.saveTransaction(draft("move", TransactionType.TRANSFER, btc, "0.05", 100, destination = b))
+        app.transactions.saveTransaction(draft("withdraw", TransactionType.WITHDRAWAL, btc, "0.02", 200))
+        app.transactions.saveTransaction(draft("reward", TransactionType.REWARD, btc, "0.01", 250, "20000", account = b))
+        app.transactions.saveTransaction(draft("fee", TransactionType.FEE, btc, "0.001", 260))
     }
 
     @Test fun contributionsWithdrawalsAndGainFollowTheDefinitions() {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
             record(app)
-            val result = app.moneyWeightedReturn(null, 5 * day, now)
+            val result = app.analytics.moneyWeightedReturn(null, 5 * day, now)
             // Only the cash deposit and the external withdrawal are flows: the buy, the move between own accounts,
             // the reward and the fee are part of the return.
             assertEquals(ReturnStatus.OK, result.status)
@@ -113,7 +113,7 @@ class MoneyWeightedReturnTest {
             assertTrue(abs(npv) < 1e-6, "npv $npv")
             assertEquals(rate, result.annualReturn!!, 1e-9)
 
-            val activity = app.activityInsights(null, 5 * day, now)
+            val activity = app.analytics.insights(null, 5 * day, now)
             assertEquals(1, activity.trades)
             assertEquals(2, activity.tradedAssets)
             val fee = activity.fees.single()
@@ -128,13 +128,13 @@ class MoneyWeightedReturnTest {
         JvmSqliteDatabase(":memory:").use { db ->
             val app = setUp(db)
             record(app)
-            app.saveTransaction(draft("late", TransactionType.WITHDRAWAL, btc, "0.001", 320))
-            val missing = app.moneyWeightedReturn(null, 5 * day, now)
+            app.transactions.saveTransaction(draft("late", TransactionType.WITHDRAWAL, btc, "0.001", 320))
+            val missing = app.analytics.moneyWeightedReturn(null, 5 * day, now)
             assertEquals(ReturnStatus.MISSING_PRICES, missing.status)
             assertEquals(1, missing.unpricedFlows)
             assertNull(missing.periodReturn)
             assertNull(missing.gain)
-            val month = app.moneyWeightedReturn(null, now - 30 * day, now)
+            val month = app.analytics.moneyWeightedReturn(null, now - 30 * day, now)
             assertNull(month.annualReturn)
         }
     }

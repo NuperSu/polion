@@ -55,10 +55,10 @@ internal fun NotificationSettingsSection(
             loaded =
                 withContext(host.dispatcher) {
                     NotificationSettingsLoad(
-                        preferences = app.notificationPreferences(),
-                        marketConsent = app.marketDataConsent(),
-                        alertsOn = app.priceAlerts().count { it.enabled },
-                        history = app.notificationHistory(HISTORY_SHOWN),
+                        preferences = app.notifications.preferences(),
+                        marketConsent = app.market.consent(),
+                        alertsOn = app.notifications.alerts().count { it.enabled },
+                        history = app.notifications.history(HISTORY_SHOWN),
                     )
                 }
             loadFailed = false
@@ -70,11 +70,11 @@ internal fun NotificationSettingsSection(
     }
 
     fun change(update: (NotificationPreferences) -> NotificationPreferences) {
-        val current = loaded?.preferences ?: return
-        val updated = update(current)
+        if (loaded == null) return
         scope.launch {
             try {
-                withContext(host.dispatcher) { app.setNotificationPreferences(updated) }
+                // Applied to the saved preferences, so quick changes in a row do not undo each other.
+                withContext(host.dispatcher) { app.notifications.setPreferences(update(app.notifications.preferences())) }
                 notice = null
                 host.notificationSettingsChanged()
                 reload++

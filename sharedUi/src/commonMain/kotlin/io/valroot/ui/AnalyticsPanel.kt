@@ -52,7 +52,7 @@ internal fun AnalyticsPanel(
     LaunchedEffect(portfolio, revision, days) {
         runCatching {
             val at = Clock.System.now().toEpochMilliseconds() - days * 86_400_000L
-            withContext(host.dispatcher) { app.analytics(at, portfolio) }
+            withContext(host.dispatcher) { app.analytics.report(at, portfolio) }
         }.fold({
             data = it
             error = false
