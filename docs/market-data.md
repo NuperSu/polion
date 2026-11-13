@@ -2,7 +2,7 @@
 
 Main's market sections come from CoinGecko's public API. Kraken still prices owned Bitcoin for portfolio values.
 
-Code: `core/…/market/MarketFeeds.kt` (parsing and cache), `MarketService.refreshFeeds` / `overview` (`app.market`), `sharedUi/…/MarketPresentation.kt` (sections), and the host CoinGecko transports.
+Code: `core/…/market/MarketFeeds.kt` (parsing and cache), `MarketService.refreshFeeds` / `overview` (`app.market`), `sharedUi/…/MarketPresentation.kt` (sections), and `HttpCoingeckoTransport` in `core/src/jvmSharedMain/kotlin/io/valroot/core/market/`.
 
 ## Provider
 

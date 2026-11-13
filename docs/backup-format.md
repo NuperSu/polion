@@ -2,7 +2,7 @@
 
 A Valroot backup file is an encryption envelope around a stream of table rows. Export and restore both stream: neither holds the whole backup in memory, so backup size is limited by storage, not by memory. Earlier formats are not readable; there were no public releases that produced them.
 
-Code: `core/…/backup/Backup.kt` (body), `ByteStreams.kt` (field encoding), and `BackupEncryption.kt` (envelope; JVM and Android copies are identical).
+Code: `core/…/backup/Backup.kt` (body), `ByteStreams.kt` (field encoding), and the `BackupEncryption` envelope: `expect object` in `core/…/backup/Backup.kt` (commonMain), with a single `actual` in `core/src/jvmSharedMain/kotlin/io/valroot/core/backup/BackupEncryption.kt` shared by JVM and Android.
 
 ## Envelope
 

@@ -2,7 +2,7 @@
 
 ## Ledger and accounting contract
 
-`TransactionDrafts` constructs exact movements and explicit accounting treatments. `PortfolioApplication.saveTransaction` validates current account ownership and historical asset precision, then commits all legs, treatments, notes and execution evidence in one SQLite transaction. Draft evidence uses existing portable application settings; ledger and source identities retain their existing storage.
+`TransactionDrafts` constructs exact movements and explicit accounting treatments. `TransactionService.saveTransaction` (`app.transactions`) validates current account ownership and historical asset precision, then commits all legs, treatments, notes and execution evidence in one SQLite transaction. Draft evidence uses existing portable application settings; ledger and source identities retain their existing storage.
 
 - Buy acquires the gross executed base quantity and disposes the exact quote consideration. Sell disposes base and acquires quote. The product of quantity and unit price must fit the quote asset's atomic precision; unsupported fractional consideration is rejected rather than rounded.
 - Fees are separate negative movements with zero disposal proceeds: their consumed basis is expensed, rather than capitalized or deducted from gross execution consideration. Fees in the base or quote are supported; another registered asset requires an explicit evidenced quote conversion price, retained with the execution evidence. Missing fee acquisition basis remains unknown. This is an explicit local accounting policy, not a jurisdictional tax specification.

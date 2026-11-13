@@ -14,18 +14,19 @@ Authoritative user data resides locally. Public explorer requests disclose watch
 
 ## Decisions
 
-Four modules separate platform entry points from shared UI and core. The Gradle wrapper and dependency versions are pinned; JDK 25 is the development baseline. Linux and Android are initial acceptance targets; other desktop platforms need independent validation. [Validation evidence](validation.md) distinguishes automated checks from device and hosted CI verification.
+Five modules separate platform entry points from shared UI and core; `uiModel` is a fixture host for previewing the shared presentation layer. The Gradle wrapper and dependency versions are pinned; JDK 25 is the development baseline. Linux and Android are initial acceptance targets; other desktop platforms need independent validation. [Validation evidence](validation.md) distinguishes automated checks from device and hosted CI verification.
 
 ## Code layout
 
 - **`core/src/commonMain`**: domain and application logic for every platform.
   - `application/PortfolioApplication` is the composition root. It holds `snapshot()`, `reload()` and the feature services, which share one `AppContext` (database, clock, repositories, replayed-ledger cache, settings): `assets`, `linkedCoins`, `evm`, `exchanges`, `bitcoin`, `bitcoinWallets`, `sources`, `analytics`, `accounting`, `prices`, `settings`, `market`, `notifications`, `accounts`, `transactions`, `csv`, `backup`, `demo`. Each service lives in its feature package (`exchange.ExchangeService`, `evm.EvmService`, …). A write calls `invalidate()`, so the ledger is replayed on the next read.
-  - Sources implement `SourceConnector` and run through a `SourceRegistry` (`sources.refresh`). They write only through their service, never into holdings or accounting.
+  - Sources implement `SourceConnector` and run through a `SourceRegistry` (`app.sources.refresh`). They write only through their service, never into holdings or accounting.
   - `exchange/` is the layer shared by exchanges: `ExchangeProvider` and the `ExchangeProviders` registry, `ExchangeConnector` (refresh loop, windowed stream reader, request budget), `ExchangeHistory` (decoding saved rows plus an `ExchangeSnapshot`), `TradeSymbols`, `ExchangeLedgerBuilder` and `HmacQuery`. `exchange/bybit`, `exchange/binance` and `exchange/mexc` hold each exchange's client, parsers, connector with its provider, and decoder.
 - **`core/src/jvmSharedMain`**: code for both JVM hosts (desktop and Android). It holds the `HttpURLConnection` transports next to their features, platform cryptography, `JvmExchanges` (each provider bound to its transport) and `HostRefresh` (consent gates, connectors, progress text and the summary both hosts show).
 - **`core/src/jvmMain`, `androidMain`**: the SQLite driver and other platform-only code.
 - **`sharedUi`**: the Compose UI. `PlatformActions` is everything the UI asks of a host.
 - **`desktopApp`, `androidApp`**: entry points, storage locations, scheduling, locking and notifications. Neither holds source logic.
+- **`uiModel`**: deterministic Compose fixture host (`./gradlew :uiModel:run`) for the shared presentation layer. It renders illustrative crypto-only data and preview actions, and makes no database or provider requests.
 
 No Kotlin file may exceed 800 lines (`checkFileSizes`, run by `ktlintCheck`). Keep files under 500 lines where practical.
 
@@ -34,7 +35,7 @@ No Kotlin file may exceed 800 lines (`checkFileSizes`, run by `ktlintCheck`). Ke
 1. Add an `ExchangeKind` entry with its identity rule.
 2. Add a package `core/…/exchange/<name>/` containing:
    - the client (requests, signing and parsers, raising an `ExchangeApiException` subclass);
-   - an `ExchangeConnector` subclass whose `sync` reads streams through `readStream` and ends with `exchanges.applyHistory`;
+   - an `ExchangeConnector` subclass whose `sync` reads streams through `readStream` and ends with `app.exchanges.applyHistory`;
    - an `ExchangeHistory` decoder;
    - an `ExchangeProvider` object, listed in `ExchangeProviders.all`.
 3. Add the transport in `core/src/jvmSharedMain/…/exchange/<name>/`, implementing `ExchangeTransport`, and bind it in `JvmExchanges`.
@@ -44,6 +45,6 @@ No Kotlin file may exceed 800 lines (`checkFileSizes`, run by `ktlintCheck`). Ke
 ### Adding a chain family
 
 1. Add an identity, a client and a decoder in a core package, with a `SourceConnector` that declares an `IntegrationManifest`.
-2. Add a feature service on `PortfolioApplication` for its settings and history writes.
+2. Add a service in its feature package, exposed as a property of `PortfolioApplication`, for its settings and history writes.
 3. Add the transport in `jvmSharedMain`, and add its connector and consent gate to `HostRefresh`.
 4. Add a connect flow in `sharedUi`, offered from `SupportedSourceDialog`.

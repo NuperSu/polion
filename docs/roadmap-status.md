@@ -23,4 +23,4 @@ This is a progress map for the crypto-first roadmap. A working feature does not 
 
 The 100,000-transaction snapshot memory limit is a known open issue and is deferred. The bounded reconciliation work is not connected to portfolio snapshots. Large-wallet acceptance remains open; see [validation](validation.md) for the measured behavior.
 
-The tracked architecture and detailed milestone records are linked from the [documentation index](../README.md). The active detailed crypto-first roadmap is maintained in the project workspace as `valroot_roadmap_wealthfolio_references.md`.
+The tracked architecture and detailed milestone records are linked from the [documentation index](../README.md). The active detailed crypto-first roadmap is a local planning document and is not tracked in this repository.

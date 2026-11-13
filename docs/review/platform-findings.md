@@ -1,5 +1,7 @@
 # Platform findings (Bitcoin, Android, desktop, build/CI, docs)
 
+Line references are as of commit 4a77ffd; the code has since been restructured (see docs/architecture.md).
+
 ## PLAT-1 · P1 · reliability · [V] — Android UI database work shares the sync thread
 
 - Where: `androidApp/…/MainActivity.kt:99-100` (`executor = RefreshWorker.executor`, `dispatcher = executor.asCoroutineDispatcher()`); `BitcoinRefreshService.kt:25` (`workExecutor = RefreshWorker.executor`); `RefreshWorker.kt:44`.
