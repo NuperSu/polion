@@ -85,4 +85,63 @@ class TransferLinkAccountingTest {
             assertNull(walletLot().basis)
         }
     }
+
+    @Test fun aWithdrawalOfAnExchangeCoinCarriesItsCostToTheSameCoinOnAChain() {
+        JvmSqliteDatabase(":memory:").use { db ->
+            val app = PortfolioApplication(db) { 400 * day }
+            app.snapshot()
+            app.saveOwner(Owner(OwnerId("owner"), "Owner"))
+            app.saveAccount(Account(exchange, OwnerId("owner"), "Exchange", AccountKind.ACCOUNT))
+            app.saveAccount(Account(wallet, OwnerId("owner"), "Wallet", AccountKind.WALLET))
+            app.setMarketDataConsent(true)
+
+            fun fixture(name: String) = requireNotNull(javaClass.getResource("/coingecko/$name")).readText()
+            val token =
+                io.valroot.core.evm.EvmAssets
+                    .token(1, "0xdac17f958d2ee523a2206206994597c13d831ec7")
+            app.registerAsset(
+                io.valroot.core.market.AssetDefinition(
+                    token,
+                    io.valroot.core.market.AssetIdentity(
+                        io.valroot.core.market.AssetKind.TOKEN,
+                        io.valroot.core.evm
+                            .evmNetwork(1),
+                        "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                    ),
+                ),
+                io.valroot.core.market
+                    .AssetMetadata("USDT", "Tether", 6, 0),
+            )
+            app.refreshEvmCatalog(
+                { url, _ -> if (url.contains("asset_platforms")) fixture("asset_platforms.json") else fixture("coins_list.json") },
+            )
+            // The exchange's USDT has 18 decimals, the token 6.
+            val coin = app.exchangeAssets("bybit", setOf("USDT")).getValue("USDT")
+            app.saveTransaction(draft("buy", TransactionType.BUY, coin, "100.5", 11, exchange, price = "1"))
+            app.saveTransaction(draft("out", TransactionType.WITHDRAWAL, coin, "60.25", 20, exchange))
+            app.saveTransaction(draft("in", TransactionType.TRANSFER, token, "60.25", 20, wallet, incoming = true))
+            app.saveTransaction(draft("odd", TransactionType.TRANSFER, token, "60.250001", 20, wallet, incoming = true))
+
+            val suggested = app.reconciliationCandidates(day).map { it.first.value to it.second.value }
+            assertTrue(("in" to "out") in suggested)
+            assertTrue(("odd" to "out") !in suggested)
+
+            app.setDecision(ActivityId("out"), ActivityId("in"), LinkState.ACCEPTED)
+            val report = app.accountingReport().report
+            val lot = report.lots.single { it.asset == token && it.account == wallet && it.acquiredAt == 11 * day }
+            assertEquals(
+                io.valroot.core.model.ExactInteger
+                    .parse("60250000"),
+                lot.quantity,
+            )
+            assertEquals(Rational.fromDecimal(ExactDecimal.parse("60.25")), lot.basis)
+            assertEquals(11 * day, lot.acquiredAt)
+            assertTrue(report.disposals.none { it.asset == coin })
+            assertEquals(Rational.fromDecimal(ExactDecimal.parse("40.25")), report.lots.single { it.asset == coin }.basis)
+
+            // A link between different amounts is refused.
+            app.setDecision(ActivityId("out"), ActivityId("odd"), LinkState.ACCEPTED)
+            assertTrue(app.transferLinks().none { it.incomingActivity == ActivityId("odd") })
+        }
+    }
 }

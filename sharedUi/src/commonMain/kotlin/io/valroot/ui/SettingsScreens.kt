@@ -213,8 +213,12 @@ internal fun ColumnScope.ProductSettings(
         "keys" -> {
             SettingsSubHeader("API Keys", back)
             SettingsSectionLabel("Exchanges")
-            SettingsNote("Exchange accounts are planned. Kraken prices need no key.")
-            SettingsActionRow("Add Exchange API Key", enabled = false)
+            SettingsNote(
+                "Each Bybit account has its own read-only key: add the account from Add, then Bybit account, and replace " +
+                    "its key from the account. Kraken prices need no key.",
+            )
+            SettingsActionRow("Binance", enabled = false)
+            SettingsActionRow("MEXC", enabled = false)
             SettingsSectionLabel("External services")
             var editing by remember { mutableStateOf(false) }
             SettingsValueRow(

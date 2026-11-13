@@ -11,6 +11,8 @@ import io.valroot.core.application.SourceRegistry
 import io.valroot.core.bitcoin.BitcoinProviderException
 import io.valroot.core.bitcoin.BitcoinProviderFailure
 import io.valroot.core.evm.EVM_MANIFEST
+import io.valroot.core.exchange.BYBIT_MANIFEST
+import io.valroot.core.exchange.BybitConnector
 import io.valroot.core.evm.EvmConnector
 import io.valroot.core.storage.AndroidSqliteDatabase
 import io.valroot.core.sync.JobState
@@ -63,7 +65,7 @@ class RefreshWorker(
             recoverHistory: Boolean = false,
             ensureActive: () -> Unit = {},
             onProgress: (String) -> Unit = {},
-            evmOnly: Boolean = false,
+            withoutBitcoin: Boolean = false,
         ): SyncStatus {
             // The stage and exception class name the failing step without revealing addresses or provider payloads.
             var stage = "setup"
@@ -73,9 +75,10 @@ class RefreshWorker(
                 AndroidSqliteDatabase(file.path).use { db ->
                     val app = PortfolioApplication(db, System::currentTimeMillis)
                     // Each source needs its own consent. Wallet discovery and order verification are Bitcoin-only.
-                    val bitcoinOn = app.sourceConsent() && !evmOnly
+                    val bitcoinOn = app.sourceConsent() && !withoutBitcoin
                     val evmOn = app.evmConsent() && app.evmTargets().isNotEmpty()
-                    if (!bitcoinOn && (!evmOn || walletId != null || verifyOrder)) {
+                    val bybitOn = app.bybitTargets().isNotEmpty()
+                    if (!bitcoinOn && (!(evmOn || bybitOn) || walletId != null || verifyOrder)) {
                         SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
                     } else {
                         val endpoint = app.sourceEndpoint()
@@ -167,14 +170,21 @@ class RefreshWorker(
                                 }
                             connectors += EvmConnector(alchemy::post, oneInch?.let { it::get })
                         }
+                        if (bybitOn) {
+                            // Exchange symbols are matched to coins through the catalog, so it is current before Bybit's records.
+                            MarketFeedRefresher.refreshCatalog(app)
+                            val bybit = BybitTransport(credentials = { app.bybitKey(it) }, beforeRequest = ensureActive)
+                            connectors += BybitConnector(bybit::get)
+                        }
                         val outcomes =
                             app.refreshSources(
                                 SourceRegistry(connectors),
                                 SourceRefreshOptions(
                                     recoverHistory = recoverHistory,
                                     onProgress = { detail ->
-                                        syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = "EVM · $detail")
-                                        onProgress("EVM · $detail")
+                                        val shown = if (detail.startsWith("Bybit")) detail else "EVM · $detail"
+                                        syncStatus.value = syncStatus.value.copy(phase = SyncPhase.SYNCING, message = shown)
+                                        onProgress(shown)
                                     },
                                     withoutConsent =
                                         setOfNotNull(
@@ -186,7 +196,7 @@ class RefreshWorker(
                         val states = outcomes.flatMap { it.jobs }
                         val sourceNotes = outcomes.flatMap { it.notes }.joinToString(" ").ifEmpty { null }
                         // Once a chain has refreshed, new tokens are linked to coins and priced.
-                        if (outcomes.any { it.connector == EVM_MANIFEST.id && it.jobs.contains(JobState.COMPLETED) }) {
+                        if (outcomes.any { (it.connector == EVM_MANIFEST.id || it.connector == BYBIT_MANIFEST.id) && it.jobs.contains(JobState.COMPLETED) }) {
                             MarketFeedRefresher.refreshEvmCatalogAndPrices(app)
                         }
                         when {

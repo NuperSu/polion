@@ -146,8 +146,17 @@ interface PlatformActions {
 
     fun recoverBitcoinHistory(onResult: (String) -> Unit)
 
-    /** Refreshes only EVM addresses, for example right after one is connected, without waiting for Bitcoin. */
-    fun refreshEvm(onResult: (String) -> Unit) = refresh(onResult)
+    /**
+     * Asks Bybit what an API key may do and whose account it reads, before the key is saved. Throws
+     * [IllegalStateException] with a short message when Bybit cannot be reached or rejects the key.
+     */
+    fun bybitKeyInfo(
+        key: String,
+        secret: String,
+    ): io.valroot.core.exchange.BybitKeyInfo = throw IllegalStateException("Exchange accounts are not available here.")
+
+    /** Refreshes EVM addresses and exchange accounts, for example right after one is connected, without waiting for Bitcoin. */
+    fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(onResult)
 
     val wifiOnlyRefreshSupported: Boolean get() = false
 

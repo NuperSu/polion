@@ -33,6 +33,8 @@ internal fun SupportedSourceDialog(
     onDismiss: () -> Unit,
     /** Opens the EVM address flow; null hides the choice. */
     onEvm: (() -> Unit)? = null,
+    /** Opens the Bybit account flow; null hides the choice. */
+    onBybit: (() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -67,6 +69,19 @@ internal fun SupportedSourceDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Text("Provider queries require your consent.", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                onBybit?.let { openBybit ->
+                    item {
+                        OutlinedButton(
+                            onClick = openBybit,
+                            modifier = Modifier.fillMaxWidth().testTag("source-choice-bybit"),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Bybit account", style = MaterialTheme.typography.titleSmall)
+                                Text("Balances and history through a read-only API key.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }

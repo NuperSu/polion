@@ -211,6 +211,7 @@ internal fun WalletKindDialog(
     onBitcoin: () -> Unit,
     onEvm: () -> Unit,
     onDismiss: () -> Unit,
+    onBybit: (() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -227,6 +228,14 @@ internal fun WalletKindDialog(
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("EVM address (Ethereum and other chains)", style = MaterialTheme.typography.titleSmall)
                         Text("One public address on Ethereum, Base, Arbitrum and other chains", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                onBybit?.let { open ->
+                    OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth().testTag("connect-kind-bybit")) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Bybit account", style = MaterialTheme.typography.titleSmall)
+                            Text("Balances and history through a read-only API key", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
@@ -371,7 +380,7 @@ internal fun EvmConnectDialog(
         baseline = syncStatus
         hostReply = null
         requested = true
-        host.refreshEvm { hostReply = it }
+        host.refreshWithoutBitcoin { hostReply = it }
     }
 
     fun submit(valid: String) {
