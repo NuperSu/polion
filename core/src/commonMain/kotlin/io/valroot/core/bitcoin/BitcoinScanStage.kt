@@ -455,7 +455,7 @@ class BitcoinScanStage(
                                 previous.orderingKey.split(':').getOrNull(1) == row[11]?.padStart(20, '0') &&
                                 previous.sources.any { it.value == "bitcoin-block:$block" } &&
                                 previous.copy(orderingKey = activity.orderingKey, sources = activity.sources) == activity
-                        activities.saveInTransaction(if (sameVerifiedPosition) previous!! else activity)
+                        activities.saveInTransaction(if (sameVerifiedPosition) previous else activity)
                     }
                 }
                 after = rows.last()[0]!!

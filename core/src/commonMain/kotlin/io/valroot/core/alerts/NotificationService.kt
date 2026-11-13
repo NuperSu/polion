@@ -50,7 +50,7 @@ class NotificationService internal constructor(
                 .lowercase()
         val feed = marketFeeds.markets(code)
         val listing = requireNotNull(feed?.items?.firstOrNull { it.coinId == coinId }) { "Alerts need this coin's market price" }
-        val fresh = feed!!.observedAtMillis.takeIf { now() - it <= AlertRules.MAX_PRICE_AGE_MILLIS }
+        val fresh = feed.observedAtMillis.takeIf { now() - it <= AlertRules.MAX_PRICE_AGE_MILLIS }
         val existing =
             id?.let { key ->
                 notifications.alerts().firstOrNull { it.id == key }

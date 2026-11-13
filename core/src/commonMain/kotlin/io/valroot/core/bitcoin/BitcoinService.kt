@@ -297,7 +297,7 @@ class BitcoinService internal constructor(
                 orchestrator.enqueue(SyncJob(jobId, providerSource, BITCOIN_MAINNET, scan.accountId))
             }
             orchestrator.retry(jobId)
-            while (orchestrator.runOne()) Unit
+            while (orchestrator.runOne()) { }
             val state = orchestrator.status(jobId)?.state ?: JobState.FAILED
             result.add(state)
             if (state != JobState.COMPLETED) break

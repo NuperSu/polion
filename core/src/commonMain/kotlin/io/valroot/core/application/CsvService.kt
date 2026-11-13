@@ -151,7 +151,7 @@ class CsvService internal constructor(
                         .lastOrNull()
                         ?.status
                         .let { it == null || it == ActivityStatus.REVERSED }
-                }.associate { it.draft!!.id to app.transactions.prepareTransaction(it.draft!!, editing = false, restoring = true) }
+                }.associate { it.draft!!.id to app.transactions.prepareTransaction(it.draft, editing = false, restoring = true) }
         val receipt =
             db.transaction {
                 val outcomes =

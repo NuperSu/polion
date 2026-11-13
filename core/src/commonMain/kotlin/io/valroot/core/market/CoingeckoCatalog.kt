@@ -117,7 +117,7 @@ class CoingeckoCatalog(
                                 )
                         if (known) {
                             val map = seen.getOrPut(platform) { mutableMapOf() }
-                            val key = contract!!.lowercase()
+                            val key = contract.lowercase()
                             map[key] = if (key in map && map[key] != id) null else id
                         }
                     }

@@ -263,7 +263,7 @@ internal class DesktopHost(
         state.syncQueue.shutdown()
         state.executor.execute {
             // The network worker must finish cancellation and release SQLite before either connection closes.
-            while (!state.syncQueue.awaitTermination(1_000)) Unit
+            while (!state.syncQueue.awaitTermination(1_000)) { }
             state.closeSyncConnection()
             state.db.close()
         }

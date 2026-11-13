@@ -183,8 +183,8 @@ object Alchemy {
                                 requireNotNull(
                                     fungible?.text("decimals")?.toIntOrNull()?.takeIf { it in 0..255 },
                                 ) { "Token without decimals" },
-                                cleanLabel(fungible?.text("asset"), "?", 20),
-                                cleanLabel(fungible?.text("asset"), "Unknown token", 100),
+                                cleanLabel(fungible.text("asset"), "?", 20),
+                                cleanLabel(fungible.text("asset"), "Unknown token", 100),
                                 flagged = false,
                             )
                     } else {

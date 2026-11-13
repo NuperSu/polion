@@ -169,11 +169,11 @@ internal class ProductPresenter(
             update { copy(chart = emptyList(), chartCurrency = null, chartLoading = false, chartError = true) }
             return
         }
-        val key = ChartKey(selected.selectedPortfolio, selected.period, selected.snapshot?.currency, selected.revision, hostRevision)
+        val key = ChartKey(selected.selectedPortfolio, selected.period, selected.snapshot.currency, selected.revision, hostRevision)
         val currentTime = now()
         val cached = charts[key]
         if (cached != null &&
-            cached.currency == selected.snapshot?.currency &&
+            cached.currency == selected.snapshot.currency &&
             currentTime >= cached.at &&
             currentTime - cached.at < CHART_CACHE_MILLIS
         ) {

@@ -152,7 +152,7 @@ class SourceService internal constructor(
         putSetting("connector_refresh:$connector", generation.toString())
         val jobs = accounts.map { SyncJobId("$connector-$generation-${sha256(it.value).take(16)}") }
         accounts.zip(jobs).forEach { (account, job) -> orchestrator.enqueue(SyncJob(job, source, network, account)) }
-        while (orchestrator.runOne()) Unit
+        while (orchestrator.runOne()) { }
         val activitiesToSave = fetched.distinctBy { it.id to it.checksum }.flatMap(decoder::decode)
         require(activitiesToSave.all { activity -> activity.movements.all { it.accountId in known } && !activity.manual }) {
             "A connector may only record source activity in tracked accounts"

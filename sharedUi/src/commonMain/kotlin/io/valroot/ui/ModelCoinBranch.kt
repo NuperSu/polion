@@ -284,7 +284,7 @@ internal fun ColumnScope.ModelCoinBranch(
                 } ?: "—",
             change =
                 if (useListing) {
-                    "Price change · 7D · ${percentChange(listing?.change7d)}"
+                    "Price change · 7D · ${percentChange(listing.change7d)}"
                 } else if (observationCount >= 2) {
                     unitPriceChange(observed.firstOrNull(), observed.lastOrNull(), coinRange)
                 } else {
@@ -303,13 +303,13 @@ internal fun ColumnScope.ModelCoinBranch(
             chartPoints = if (useListing) listingPoints else priceCoordinates,
             chartTopLabel =
                 if (useListing) {
-                    listing?.sparkline?.maxOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
+                    listing.sparkline.maxOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
                 } else {
                     observed.filterNotNull().maxOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
                 },
             chartBottomLabel =
                 if (useListing) {
-                    listing?.sparkline?.minOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
+                    listing.sparkline.minOrNull()?.let { sparklinePrice(it, data.currency) } ?: "—"
                 } else {
                     observed.filterNotNull().minOrNull()?.let { quotePrice(it, data.currency) } ?: "—"
                 },
@@ -356,7 +356,7 @@ internal fun ColumnScope.ModelCoinBranch(
                     coinId == null -> "Order books are available for coins with market data."
                     else -> orderBook.noMarket
                 },
-            orderConsentNeeded = coinId != null && coinLoad?.orderConsent == false,
+            orderConsentNeeded = coinId != null && coinLoad.orderConsent == false,
             orderIssue = orderBook.issue,
             orderOutOfDate = orderBook.outOfDate,
             orderNotice = orderNotice,

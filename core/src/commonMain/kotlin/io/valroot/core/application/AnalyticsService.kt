@@ -232,7 +232,7 @@ class AnalyticsService internal constructor(
                 }
         }
         val priced = startValue != null && endValue != null && unpriced == 0
-        val gain = if (priced) endValue!! - startValue!! - contributions + withdrawals else null
+        val gain = if (priced) endValue - startValue - contributions + withdrawals else null
         val year = 365.25 * 86_400_000.0
         val span = (endMillis - startMillis) / year
         val (rate, status) =
@@ -241,9 +241,9 @@ class AnalyticsService internal constructor(
             } else {
                 // Investor view: money put in is negative, money taken out and the final value are positive.
                 val dated =
-                    listOf(DatedFlow(0.0, -startValue!!.toString().toDouble())) +
+                    listOf(DatedFlow(0.0, -startValue.toString().toDouble())) +
                         flows.map { (at, value) -> DatedFlow((at - startMillis) / year, -value.toString().toDouble()) } +
-                        DatedFlow(span, endValue!!.toString().toDouble())
+                        DatedFlow(span, endValue.toString().toDouble())
                 InternalRate.solve(dated.filter { it.amount != 0.0 })
             }
         return MoneyWeightedReturn(
