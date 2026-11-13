@@ -21,12 +21,6 @@ internal class AndroidPrices(
         }
     }
 
-    fun refreshEvmCatalog(onResult: (String?) -> Unit) {
-        MarketFeedRefresher.refreshEvmCatalog(state.activity, closing = { state.closed }) { message ->
-            state.main.post { if (!state.closed) onResult(message) }
-        }
-    }
-
     fun fetchOrderBook(
         coinId: String,
         onResult: (OrderBookResult) -> Unit,

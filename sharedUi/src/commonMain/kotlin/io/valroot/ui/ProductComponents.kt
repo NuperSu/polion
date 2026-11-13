@@ -33,17 +33,6 @@ import androidx.compose.ui.unit.sp
 import io.valroot.core.application.PortfolioSnapshot
 import io.valroot.core.model.PortfolioId
 
-@Composable private fun QuickActions(
-    account: () -> Unit,
-    activity: () -> Unit,
-) {
-    Panel {
-        Text("Keep things in order", fontWeight = FontWeight.SemiBold)
-        TextButton(onClick = account) { Text("+  Track an account") }
-        TextButton(onClick = activity) { Text("+  Record an activity") }
-    }
-}
-
 @Composable internal fun Panel(content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier

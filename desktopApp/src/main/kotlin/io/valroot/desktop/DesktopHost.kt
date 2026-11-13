@@ -208,8 +208,6 @@ internal class DesktopHost(
         onResult: (String) -> Unit,
     ) = prices.refreshMarkets(maxAgeMillis, onResult)
 
-    override fun refreshEvmCatalog(onResult: (String?) -> Unit) = prices.refreshEvmCatalog(onResult)
-
     override fun refreshAutomaticPrices(onResult: (String) -> Unit) = notifications.refreshAutomaticPrices(onResult)
 
     override fun fetchOrderBook(

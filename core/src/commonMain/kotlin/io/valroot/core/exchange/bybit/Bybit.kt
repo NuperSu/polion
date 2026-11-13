@@ -185,8 +185,6 @@ object Bybit {
 
     fun keyInfo() = BybitRequest("/v5/user/query-api")
 
-    fun serverTime() = BybitRequest("/v5/market/time")
-
     fun unifiedBalance() = BybitRequest("/v5/account/wallet-balance", listOf("accountType" to "UNIFIED"))
 
     fun fundingBalance() = BybitRequest("/v5/asset/transfer/query-account-coins-balance", listOf("accountType" to "FUND"))

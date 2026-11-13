@@ -65,36 +65,6 @@ internal class DesktopPrices(
         }
     }
 
-    /** Loads the CoinGecko chain catalog on the market worker, under the same pause and closing guards as market refreshes. */
-    fun refreshEvmCatalog(onResult: (String?) -> Unit) {
-        if (state.closing.get()) {
-            onResult("The app is closing.")
-            return
-        }
-        try {
-            state.priceExecutor.execute {
-                val message =
-                    synchronized(state.priceGate) {
-                        if (state.priceRestorePaused || state.closing.get()) {
-                            MARKET_PAUSED_MESSAGE
-                        } else {
-                            runCatching {
-                                JvmSqliteDatabase(state.file.toString()).use { connection ->
-                                    val application = PortfolioApplication(connection, System::currentTimeMillis)
-                                    application.evm.refreshCatalog(state.priceTransport::feed)
-                                }
-                                null
-                            }.getOrElse { "Could not load the chain list from CoinGecko." }
-                        }
-                    }
-                state.dataRevision.update { it + 1 }
-                SwingUtilities.invokeLater { onResult(message) }
-            }
-        } catch (_: RejectedExecutionException) {
-            onResult("Could not schedule a chain list refresh.")
-        }
-    }
-
     fun fetchOrderBook(
         coinId: String,
         onResult: (OrderBookResult) -> Unit,

@@ -2,21 +2,11 @@ package io.valroot.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import io.valroot.core.application.PortfolioSnapshot
 import io.valroot.core.model.AssetId
 import io.valroot.core.model.ExactDecimal
 import io.valroot.core.model.ExactInteger
 import io.valroot.core.model.Rounding
-import kotlin.time.Clock
 import kotlin.time.Instant
-
-private fun symbol(
-    asset: AssetId,
-    data: PortfolioSnapshot,
-) = data.valuations
-    .find { it.asset == asset }
-    ?.metadata
-    ?.symbol ?: asset.value.substringAfterLast(':').uppercase()
 
 internal fun formatUnits(
     units: ExactInteger,
@@ -97,5 +87,3 @@ internal fun money(
 }
 
 internal fun date(millis: Long) = Instant.fromEpochMilliseconds(millis).toString().take(10)
-
-private fun newId(prefix: String) = "$prefix-${Clock.System.now().toEpochMilliseconds()}-${kotlin.random.Random.nextInt(1_000_000)}"

@@ -24,20 +24,6 @@ data class EsploraUtxoSnapshot(
     val payloadByAddress: Map<String, String>,
 )
 
-/**
- * Retrieves the provider's view of unspent outputs. Esplora may cap this list for heavily used addresses;
- * such a provider rejects the request, which fails the fetch rather than producing a partial set.
- */
-class EsploraUtxoFetcher(
-    private val transport: EsploraTransport,
-) {
-    fun fetch(addresses: Collection<String>): EsploraUtxoSnapshot {
-        val canonical = addresses.map(::bitcoinMainnetAddress).distinct().sorted()
-        val payloads = canonical.associateWith { transport.get("/address/$it/utxo") }
-        return EsploraUtxoSnapshot(payloads.flatMap { (address, payload) -> parseEsploraUtxos(address, payload) }, payloads)
-    }
-}
-
 fun parseEsploraUtxos(
     address: String,
     payload: String,

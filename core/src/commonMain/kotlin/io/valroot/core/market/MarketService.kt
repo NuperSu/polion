@@ -65,14 +65,6 @@ class MarketService internal constructor(
         marketFeeds.saveLogo(url, bytes, now())
     }
 
-    /** Bitcoin and any provider-mapped coin use the portfolio asset ID, so favorites and coin pages match holdings. */
-    fun assetKey(coinId: String): AssetId =
-        if (coinId == "bitcoin") {
-            BITCOIN_ASSET
-        } else {
-            market.resolveProvider(ProviderId(CoingeckoPrices.PROVIDER_ID), coinId) ?: AssetId("coingecko:$coinId")
-        }
-
     fun consent(): Boolean = setting("market_data_consent") == "true"
 
     fun setConsent(accepted: Boolean) = putSetting("market_data_consent", accepted.toString())

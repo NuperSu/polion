@@ -45,33 +45,6 @@ internal object MarketFeedRefresher {
         }
     }
 
-    /** Loads the CoinGecko chain catalog on this executor, under the same pause gate and closing check as market refreshes. */
-    fun refreshEvmCatalog(
-        context: Context,
-        closing: () -> Boolean,
-        onResult: (String?) -> Unit,
-    ) {
-        val path = context.applicationContext.getDatabasePath("portfolio.sqlite").path
-        executor.execute {
-            val message =
-                synchronized(AutomaticPriceGate.lock) {
-                    when {
-                        closing() -> "The app is closing."
-                        AutomaticPriceGate.paused -> "Market data is paused while data is restored."
-                        else ->
-                            runCatching {
-                                AndroidSqliteDatabase(path).use { db ->
-                                    PortfolioApplication(db, System::currentTimeMillis).evm.refreshCatalog(transport::feed)
-                                }
-                                null
-                            }.getOrElse { "Could not load the chain list from CoinGecko." }
-                    }
-                }
-            RefreshWorker.dataRevision.update { it + 1 }
-            onResult(message)
-        }
-    }
-
     /** Refreshes the CoinGecko catalog when it is due, so exchange symbols can be matched to coins. Never fails the caller. */
     fun refreshCatalog(app: PortfolioApplication) {
         if (app.market.consent()) runCatching { app.evm.refreshCatalog(transport::feed) }

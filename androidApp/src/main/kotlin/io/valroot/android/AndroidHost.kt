@@ -156,8 +156,6 @@ internal class AndroidHost(
         onResult: (String) -> Unit,
     ) = prices.refreshMarkets(maxAgeMillis, onResult)
 
-    override fun refreshEvmCatalog(onResult: (String?) -> Unit) = prices.refreshEvmCatalog(onResult)
-
     override fun fetchOrderBook(
         coinId: String,
         onResult: (OrderBookResult) -> Unit,
