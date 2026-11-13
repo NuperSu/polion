@@ -147,13 +147,14 @@ interface PlatformActions {
     fun recoverBitcoinHistory(onResult: (String) -> Unit)
 
     /**
-     * Asks Bybit what an API key may do and whose account it reads, before the key is saved. Throws
-     * [IllegalStateException] with a short message when Bybit cannot be reached or rejects the key.
+     * Asks an exchange what an API key may do and whose account it reads, before the key is saved. Throws
+     * [IllegalStateException] with a short message when the exchange cannot be reached or rejects the key.
      */
-    fun bybitKeyInfo(
+    fun exchangeKeyInfo(
+        kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.BybitKeyInfo = throw IllegalStateException("Exchange accounts are not available here.")
+    ): io.valroot.core.exchange.ExchangeKeyInfo = throw IllegalStateException("Exchange accounts are not available here.")
 
     /** Refreshes EVM addresses and exchange accounts, for example right after one is connected, without waiting for Bitcoin. */
     fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(onResult)

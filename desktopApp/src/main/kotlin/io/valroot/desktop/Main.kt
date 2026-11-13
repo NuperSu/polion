@@ -538,18 +538,53 @@ internal class DesktopHost(
 
     override fun refreshWithoutBitcoin(onResult: (String) -> Unit) = refresh(false, onResult, withoutBitcoin = true)
 
-    override fun bybitKeyInfo(
+    override fun exchangeKeyInfo(
+        kind: io.valroot.core.exchange.ExchangeKind,
         key: String,
         secret: String,
-    ): io.valroot.core.exchange.BybitKeyInfo =
-        io.valroot.core.exchange.Bybit.parseKeyInfo(
-            BybitTransport({ key to secret }).get(
-                io.valroot.core.model
-                    .AccountId("bybit-key-check"),
+    ): io.valroot.core.exchange.ExchangeKeyInfo =
+        when (kind) {
+            io.valroot.core.exchange.ExchangeKind.BYBIT ->
                 io.valroot.core.exchange.Bybit
-                    .keyInfo(),
-            ),
-        )
+                    .parseKeyInfo(
+                        BybitTransport({ key to secret })
+                            .get(
+                                io.valroot.core.model
+                                    .AccountId("key-check"),
+                                io.valroot.core.exchange.Bybit
+                                    .keyInfo(),
+                            ),
+                    ).let {
+                        io.valroot.core.exchange
+                            .ExchangeKeyInfo(it.uid, it.readOnly, it.expiresAtMillis)
+                    }
+            io.valroot.core.exchange.ExchangeKind.BINANCE -> {
+                val transport = BinanceTransport({ key to secret })
+                val check =
+                    io.valroot.core.model
+                        .AccountId("key-check")
+                val readOnly =
+                    io.valroot.core.exchange.Binance
+                        .parseReadOnly(
+                            transport.get(
+                                check,
+                                io.valroot.core.exchange.Binance
+                                    .restrictions(),
+                            ),
+                        )
+                val (uid, _) =
+                    io.valroot.core.exchange.Binance
+                        .parseAccount(
+                            transport.get(
+                                check,
+                                io.valroot.core.exchange.Binance
+                                    .account(),
+                            ),
+                        )
+                io.valroot.core.exchange
+                    .ExchangeKeyInfo(uid, readOnly, null)
+            }
+        }
 
     private fun refresh(
         recoverHistory: Boolean,
@@ -564,8 +599,15 @@ internal class DesktopHost(
                 // Each source refreshes only with its own consent; with neither, nothing is fetched.
                 val bitcoinOn = application.sourceConsent() && !withoutBitcoin
                 val evmOn = application.evmConsent() && application.evmTargets().isNotEmpty()
-                val bybitOn = application.bybitTargets().isNotEmpty()
-                if (!bitcoinOn && !evmOn && !bybitOn) return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
+                val bybitOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).isNotEmpty()
+                val binanceOn = application.exchangeTargets(io.valroot.core.exchange.ExchangeKind.BINANCE).isNotEmpty()
+                if (!bitcoinOn &&
+                    !evmOn &&
+                    !bybitOn &&
+                    !binanceOn
+                ) {
+                    return@runCatching SyncStatus(SyncPhase.IDLE, "Allow a provider before syncing")
+                }
                 // Sources refresh through the connector registry; Bitcoin discovers pending wallets before history.
                 val connectors = mutableListOf<SourceConnector>()
                 if (bitcoinOn) {
@@ -601,12 +643,26 @@ internal class DesktopHost(
                         }
                     connectors += EvmConnector(alchemyTransport(application)::post, oneInch?.let { it::get })
                 }
+                // Exchange symbols are matched to coins through the catalog, so it is current before their records.
+                if ((bybitOn || binanceOn) &&
+                    application.marketDataConsent()
+                ) {
+                    runCatching { application.refreshEvmCatalog(priceTransport::feed) }
+                }
+                if (binanceOn) {
+                    val transport =
+                        BinanceTransport(
+                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.BINANCE, it) },
+                            beforeRequest = { check(!closing.get()) { "Binance refresh was cancelled. Retry if needed." } },
+                        )
+                    connectors +=
+                        io.valroot.core.exchange
+                            .BinanceConnector(transport::get)
+                }
                 if (bybitOn) {
-                    // Exchange symbols are matched to coins through the catalog, so it is current before Bybit's records.
-                    if (application.marketDataConsent()) runCatching { application.refreshEvmCatalog(priceTransport::feed) }
                     val transport =
                         BybitTransport(
-                            credentials = { application.bybitKey(it) },
+                            credentials = { application.exchangeKey(io.valroot.core.exchange.ExchangeKind.BYBIT, it) },
                             beforeRequest = { check(!closing.get()) { "Bybit refresh was cancelled. Retry if needed." } },
                         )
                     connectors += BybitConnector(transport::get)
@@ -620,7 +676,7 @@ internal class DesktopHost(
                                 syncStatus.value =
                                     SyncStatus(
                                         SyncPhase.SYNCING,
-                                        if (it.startsWith("Bybit")) it else "EVM · $it",
+                                        if (it.startsWith("Bybit") || it.startsWith("Binance")) it else "EVM · $it",
                                     )
                             },
                             withoutConsent =
@@ -636,7 +692,7 @@ internal class DesktopHost(
                 val discoveryNotes = outcomes.flatMap { it.notes }
                 // Once a chain has refreshed, new tokens are linked to coins and priced.
                 if (outcomes.any {
-                        (it.connector == EVM_MANIFEST.id || it.connector == BYBIT_MANIFEST.id) &&
+                        it.connector in setOf(EVM_MANIFEST.id, BYBIT_MANIFEST.id, io.valroot.core.exchange.BINANCE_MANIFEST.id) &&
                             it.jobs.contains(JobState.COMPLETED)
                     }
                 ) {

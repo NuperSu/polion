@@ -237,7 +237,9 @@ private fun Product(
     var connectChooser by rememberSaveable { mutableStateOf(false) }
     var modelConnect by rememberSaveable { mutableStateOf(false) }
     var modelEvmConnect by rememberSaveable { mutableStateOf(false) }
-    var modelBybitConnect by rememberSaveable { mutableStateOf(false) }
+
+    /** The exchange whose connect flow is open, by ID. */
+    var exchangeConnect by rememberSaveable { mutableStateOf<String?>(null) }
     var modelHistory by rememberSaveable { mutableStateOf(false) }
     val sourceFlowState = rememberSaveableStateHolder()
     var modelAdd by rememberSaveable { mutableStateOf(false) }
@@ -599,9 +601,9 @@ private fun Product(
                 dialog = null
                 modelEvmConnect = true
             },
-            onBybit = {
+            onExchange = { kind ->
                 dialog = null
-                modelBybitConnect = true
+                exchangeConnect = kind.id
             },
             onDismiss = { dialog = null },
         )
@@ -1691,22 +1693,25 @@ private fun Product(
                         modelEvmConnect = true
                     },
                     onDismiss = { connectChooser = false },
-                    onBybit = {
+                    onExchange = { kind ->
                         connectChooser = false
-                        modelBybitConnect = true
+                        exchangeConnect = kind.id
                     },
                 )
             }
-            if (modelBybitConnect && snapshot != null) {
-                BybitConnectDialog(
-                    app,
-                    host,
-                    snapshot!!,
-                    selectedPortfolio,
-                    close = { modelBybitConnect = false },
-                    onSaved = { execute("Bybit account saved") {} },
-                    notify = { presenter.notify(it) },
-                )
+            io.valroot.core.exchange.ExchangeKind.entries.firstOrNull { it.id == exchangeConnect }?.let { kind ->
+                if (snapshot != null) {
+                    ExchangeConnectDialog(
+                        kind,
+                        app,
+                        host,
+                        snapshot!!,
+                        selectedPortfolio,
+                        close = { exchangeConnect = null },
+                        onSaved = { execute("${kind.label} account saved") {} },
+                        notify = { presenter.notify(it) },
+                    )
+                }
             }
             if (modelEvmConnect && snapshot != null) {
                 sourceFlowState.SaveableStateProvider("evm-connect") {

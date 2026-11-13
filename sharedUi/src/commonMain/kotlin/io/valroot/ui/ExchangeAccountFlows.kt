@@ -23,10 +23,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.valroot.core.application.PortfolioApplication
 import io.valroot.core.application.PortfolioSnapshot
-import io.valroot.core.exchange.BYBIT_EXCHANGE
-import io.valroot.core.exchange.BYBIT_NETWORK
-import io.valroot.core.exchange.BybitKeyInfo
 import io.valroot.core.exchange.ExchangeAccountStatus
+import io.valroot.core.exchange.ExchangeKeyInfo
+import io.valroot.core.exchange.ExchangeKind
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.OwnerId
 import io.valroot.core.model.PortfolioId
@@ -41,16 +40,24 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal const val BYBIT_KEY_HELP =
-    "In Bybit, open API Management and create a system-generated key with Read-Only permission. " +
-        "Binding it to your IP address keeps it from expiring after 90 days. " +
-        "Bybit receives requests signed with this key, and your IP address. The key and secret stay on this device and are not included in backups."
+/** How to create a read-only key on [kind], and what the exchange receives. */
+internal fun exchangeKeyHelp(kind: ExchangeKind): String =
+    when (kind) {
+        ExchangeKind.BYBIT ->
+            "In Bybit, open API Management and create a system-generated key with Read-Only permission. " +
+                "Binding it to your IP address keeps it from expiring after 90 days. "
+        ExchangeKind.BINANCE ->
+            "In Binance, open API Management and create a system-generated key. Leave only Enable Reading ticked: " +
+                "Valroot refuses keys that can trade, transfer or withdraw. "
+    } + "${kind.label} receives requests signed with this key, and your IP address. " +
+        "The key and secret stay on this device and are not included in backups."
 
-private val BYBIT_KEY_TEXT = Regex("[A-Za-z0-9]{10,128}")
+private val EXCHANGE_KEY_TEXT = Regex("[A-Za-z0-9]{10,128}")
 
-/** Key and secret fields for a Bybit API key. */
+/** Key and secret fields for an exchange API key. */
 @Composable
-private fun BybitKeyFields(
+private fun ExchangeKeyFields(
+    kind: ExchangeKind,
     key: String,
     secret: String,
     enabled: Boolean,
@@ -63,10 +70,10 @@ private fun BybitKeyFields(
         enabled = enabled,
         singleLine = true,
         label = { Text("API key") },
-        isError = key.isNotEmpty() && !key.trim().matches(BYBIT_KEY_TEXT),
+        isError = key.isNotEmpty() && !key.trim().matches(EXCHANGE_KEY_TEXT),
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = SecretKeyboard,
-        modifier = Modifier.fillMaxWidth().testTag("bybit-key"),
+        modifier = Modifier.fillMaxWidth().testTag("${kind.id}-key"),
     )
     OutlinedTextField(
         secret,
@@ -74,23 +81,24 @@ private fun BybitKeyFields(
         enabled = enabled,
         singleLine = true,
         label = { Text("API secret") },
-        isError = secret.isNotEmpty() && !secret.trim().matches(BYBIT_KEY_TEXT),
+        isError = secret.isNotEmpty() && !secret.trim().matches(EXCHANGE_KEY_TEXT),
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = SecretKeyboard,
-        modifier = Modifier.fillMaxWidth().testTag("bybit-secret"),
+        modifier = Modifier.fillMaxWidth().testTag("${kind.id}-secret"),
     )
 }
 
 /** Why a key cannot be used, or null when it can. */
-private fun keyProblem(info: BybitKeyInfo): String? =
+private fun keyProblem(info: ExchangeKeyInfo): String? =
     if (info.readOnly) null else "This key can trade or withdraw. Create a key with Read-Only permission."
 
 /**
- * Track a Bybit account through a read-only API key: the key is checked with Bybit first, which also names the account,
+ * Track an exchange account through a read-only API key: the key is checked with the exchange first, which also names the account,
  * then the account is saved, the key stored on this device and a refresh started.
  */
 @Composable
-internal fun BybitConnectDialog(
+internal fun ExchangeConnectDialog(
+    kind: ExchangeKind,
     app: PortfolioApplication,
     host: PlatformActions,
     data: PortfolioSnapshot,
@@ -100,7 +108,7 @@ internal fun BybitConnectDialog(
     notify: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var label by rememberSaveable { mutableStateOf("Bybit") }
+    var label by rememberSaveable { mutableStateOf(kind.label) }
     var key by remember { mutableStateOf("") }
     var secret by remember { mutableStateOf("") }
     var portfolio by rememberSaveable { mutableStateOf(initialPortfolio?.value.orEmpty()) }
@@ -116,7 +124,7 @@ internal fun BybitConnectDialog(
     val blocker =
         when {
             label.isBlank() -> "Enter an account name."
-            !key.trim().matches(BYBIT_KEY_TEXT) || !secret.trim().matches(BYBIT_KEY_TEXT) -> "Enter the API key and its secret."
+            !key.trim().matches(EXCHANGE_KEY_TEXT) || !secret.trim().matches(EXCHANGE_KEY_TEXT) -> "Enter the API key and its secret."
             owners.isNotEmpty() && ownerChoice == null -> "No owner in this portfolio can hold the account. Choose another portfolio."
             else -> null
         }
@@ -129,31 +137,37 @@ internal fun BybitConnectDialog(
                 .nextLong()
                 .toString()
                 .removePrefix("-")
-        val accountId = AccountId("bybit-account-$suffix")
+        val accountId = AccountId("${kind.id}-account-$suffix")
         val ownerId = ownerChoice ?: OwnerId("owner-$suffix")
         val title = label.trim()
         scope.launch {
             try {
-                val info = withContext(host.dispatcher) { host.bybitKeyInfo(key.trim(), secret.trim()) }
+                val info = withContext(host.dispatcher) { host.exchangeKeyInfo(kind, key.trim(), secret.trim()) }
                 keyProblem(info)?.let {
                     error = it
                     return@launch
                 }
                 val problem =
                     withContext(host.dispatcher) {
-                        if (app.bybitTargets().any { it.second == info.uid }) return@withContext "This Bybit account is already tracked."
+                        if (app
+                                .exchangeTargets(
+                                    kind,
+                                ).any { it.second == info.uid }
+                        ) {
+                            return@withContext "This ${kind.label} account is already tracked."
+                        }
                         if (data.ownership.owners.isEmpty()) app.saveOwner(Owner(ownerId, "Personal"))
                         app.saveAccountAndTarget(
                             Account(accountId, ownerId, title, AccountKind.ACCOUNT),
                             TrackingTarget(
-                                TrackingTargetId("bybit-$suffix"),
+                                TrackingTargetId("${kind.id}-$suffix"),
                                 accountId,
-                                TargetIdentity(BYBIT_NETWORK, "uid", info.uid),
+                                TargetIdentity(kind.network, "uid", info.uid),
                                 TargetRole.LEAF,
                                 title,
                             ),
                         )
-                        app.setBybitKey(accountId, key.trim(), secret.trim())
+                        app.setExchangeKey(kind, accountId, key.trim(), secret.trim())
                         selectedPortfolio
                             ?.takeIf { it.accountIds.isNotEmpty() }
                             ?.let { app.savePortfolio(it.copy(accountIds = it.accountIds + accountId)) }
@@ -165,14 +179,14 @@ internal fun BybitConnectDialog(
                 }
                 onSaved()
                 host.refreshWithoutBitcoin {}
-                notify("Bybit account added. Its history loads in the background.")
+                notify("${kind.label} account added. Its history loads in the background.")
                 close()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (rejected: IllegalArgumentException) {
                 error = rejected.message ?: "Could not track this account. Check the key and retry."
             } catch (failed: IllegalStateException) {
-                error = failed.message ?: "Could not reach Bybit. Check the connection and retry."
+                error = failed.message ?: "Could not reach ${kind.label}. Check the connection and retry."
             } catch (_: Exception) {
                 error = "Could not save this account. Check available storage, then retry."
             } finally {
@@ -181,18 +195,18 @@ internal fun BybitConnectDialog(
         }
     }
 
-    AccountFlowDialog("Connect Bybit", saving, close) {
-        Text("Read-only · balances and history of your Bybit account")
+    AccountFlowDialog("Connect ${kind.label}", saving, close) {
+        Text("Read-only · balances and history of your ${kind.label} account")
         OutlinedTextField(
             label,
             { label = it },
             enabled = !saving,
             singleLine = true,
             label = { Text("Account name") },
-            modifier = Modifier.fillMaxWidth().testTag("bybit-connect-name"),
+            modifier = Modifier.fillMaxWidth().testTag("${kind.id}-connect-name"),
         )
-        BybitKeyFields(key, secret, !saving, { key = it }, { secret = it })
-        Text(BYBIT_KEY_HELP, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ExchangeKeyFields(kind, key, secret, !saving, { key = it }, { secret = it })
+        Text(exchangeKeyHelp(kind), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         TransactionChoice(
             "Portfolio",
             listOf("" to "All portfolios") + data.ownership.portfolios.map { it.id.value to it.label },
@@ -204,22 +218,23 @@ internal fun BybitConnectDialog(
         if (owners.isNotEmpty()) {
             TransactionChoice("Owner", owners.map { it.id.value to it.label }, ownerChoice?.value.orEmpty()) { owner = it }
         }
-        blocker?.let { Text(it, modifier = Modifier.testTag("bybit-connect-blocker")) }
+        blocker?.let { Text(it, modifier = Modifier.testTag("${kind.id}-connect-blocker")) }
         Button(
             enabled = !saving && blocker == null,
-            modifier = Modifier.fillMaxWidth().testTag("bybit-connect-confirm"),
+            modifier = Modifier.fillMaxWidth().testTag("${kind.id}-connect-confirm"),
             onClick = ::submit,
         ) { Text(if (saving) "Checking key…" else "Connect") }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("bybit-connect-error")) }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("${kind.id}-connect-error")) }
     }
 }
 
 /**
- * A tracked Bybit account: its last refresh or failure, how far back its history reaches, the key's expiry, coins
+ * A tracked exchange account: its last refresh or failure, how far back its history reaches, the key's expiry, coins
  * that need the user to choose which coin they are, and replacing the key.
  */
 @Composable
-internal fun BybitAccountDetails(
+internal fun ExchangeAccountDetails(
+    kind: ExchangeKind,
     app: PortfolioApplication,
     host: PlatformActions,
     account: AccountId,
@@ -232,57 +247,94 @@ internal fun BybitAccountDetails(
     var unresolved by remember(account) { mutableStateOf<Map<String, List<Pair<String, String>>>>(emptyMap()) }
     var replacing by remember(account) { mutableStateOf(false) }
     var choosing by remember(account) { mutableStateOf<String?>(null) }
+    var pairs by remember(account) { mutableStateOf<List<String>>(emptyList()) }
+    var addingPair by remember(account) { mutableStateOf(false) }
     LaunchedEffect(account, revision) {
+        if (kind == ExchangeKind.BINANCE) pairs = withContext(host.dispatcher) { app.binancePairs(account).keys.sorted() }
         withContext(host.dispatcher) {
-            Triple(app.exchangeStatus(account), app.hasBybitKey(account), app.unresolvedExchangeCoins(BYBIT_EXCHANGE))
+            Triple(app.exchangeStatus(account), app.hasExchangeKey(kind, account), app.unresolvedExchangeCoins(kind.id))
         }.let { (loaded, key, coins) ->
             status = loaded
             hasKey = key
             unresolved = coins
         }
     }
-    Column(Modifier.fillMaxWidth().testTag("bybit-account-details"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Bybit account", fontWeight = FontWeight.SemiBold)
+    Column(Modifier.fillMaxWidth().testTag("${kind.id}-account-details"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("${kind.label} account", fontWeight = FontWeight.SemiBold)
         Text("Last sync: ${status.checkedAtMillis?.let { evmSyncTime(it) } ?: "not yet"}", style = MaterialTheme.typography.bodySmall)
-        status.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("bybit-error")) }
+        status.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("${kind.id}-error")) }
         if (!hasKey) Text("Enter this account's API key again to refresh it.", color = MaterialTheme.colorScheme.error)
         status.historyFromMillis?.let {
             Text(
                 "History from ${evmSyncTime(it)}. Earlier balances appear as one opening amount per coin.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("bybit-coverage"),
+                modifier = Modifier.testTag("${kind.id}-coverage"),
             )
         }
         status.keyExpiresAtMillis?.let {
             Text("API key expires ${evmSyncTime(it)}", style = MaterialTheme.typography.bodySmall)
         }
         unresolved.keys.forEach { symbol ->
-            Text("$symbol is not matched to a coin yet, so it is not counted.", modifier = Modifier.testTag("bybit-unresolved-$symbol"))
-            TextButton(onClick = { choosing = symbol }, modifier = Modifier.testTag("bybit-choose-$symbol")) { Text("Choose coin") }
+            Text(
+                "$symbol is not matched to a coin yet, so it is not counted.",
+                modifier = Modifier.testTag("${kind.id}-unresolved-$symbol"),
+            )
+            TextButton(onClick = { choosing = symbol }, modifier = Modifier.testTag("${kind.id}-choose-$symbol")) { Text("Choose coin") }
         }
-        TextButton(onClick = { replacing = true }, modifier = Modifier.testTag("bybit-replace-key")) {
+        if (kind == ExchangeKind.BINANCE) {
+            Text("Trading pairs", fontWeight = FontWeight.SemiBold)
+            Text(
+                if (pairs.isEmpty()) {
+                    "Pairs are chosen on the first sync from the coins this account holds or moved."
+                } else {
+                    pairs
+                        .joinToString(
+                            ", ",
+                        )
+                },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("binance-pairs"),
+            )
+            Text(
+                "Trades in pairs Binance no longer lists cannot be read; their effect shows as a balance adjustment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = { addingPair = true }, modifier = Modifier.testTag("binance-add-pair")) { Text("Add pair") }
+        }
+        TextButton(onClick = { replacing = true }, modifier = Modifier.testTag("${kind.id}-replace-key")) {
             Text(if (hasKey) "Replace API key" else "Enter API key")
         }
     }
+    if (addingPair) {
+        AddPairDialog(close = { addingPair = false }) { base, quote ->
+            addingPair = false
+            scope.launch {
+                withContext(host.dispatcher) { app.addBinancePair(account, base, quote) }
+                onChanged()
+                host.refreshWithoutBitcoin {}
+            }
+        }
+    }
     if (replacing) {
-        BybitKeyDialog(app, host, account, close = { replacing = false }) {
+        ExchangeKeyDialog(kind, app, host, account, close = { replacing = false }) {
             replacing = false
             onChanged()
             host.refreshWithoutBitcoin {}
         }
     }
     choosing?.let { symbol ->
-        CoinChoiceDialog(symbol, unresolved[symbol].orEmpty(), close = { choosing = null }) { coin ->
+        CoinChoiceDialog(kind, symbol, unresolved[symbol].orEmpty(), close = { choosing = null }) { coin ->
             choosing = null
             scope.launch {
                 withContext(host.dispatcher) {
                     if (coin ==
                         null
                     ) {
-                        app.markExchangeCoinUnlisted(BYBIT_EXCHANGE, symbol)
+                        app.markExchangeCoinUnlisted(kind.id, symbol)
                     } else {
-                        app.chooseExchangeCoin(BYBIT_EXCHANGE, symbol, coin)
+                        app.chooseExchangeCoin(kind.id, symbol, coin)
                     }
                 }
                 onChanged()
@@ -292,9 +344,10 @@ internal fun BybitAccountDetails(
     }
 }
 
-/** Replaces a tracked account's key; the new key must be read-only and belong to the same Bybit account. */
+/** Replaces a tracked account's key; the new key must be read-only and belong to the same exchange account. */
 @Composable
-private fun BybitKeyDialog(
+private fun ExchangeKeyDialog(
+    kind: ExchangeKind,
     app: PortfolioApplication,
     host: PlatformActions,
     account: AccountId,
@@ -306,21 +359,21 @@ private fun BybitKeyDialog(
     var secret by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val ready = key.trim().matches(BYBIT_KEY_TEXT) && secret.trim().matches(BYBIT_KEY_TEXT)
-    AccountFlowDialog("Bybit API key", busy, close) {
-        BybitKeyFields(key, secret, !busy, { key = it }, { secret = it })
-        Text(BYBIT_KEY_HELP, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(enabled = ready && !busy, modifier = Modifier.fillMaxWidth().testTag("bybit-key-save"), onClick = {
+    val ready = key.trim().matches(EXCHANGE_KEY_TEXT) && secret.trim().matches(EXCHANGE_KEY_TEXT)
+    AccountFlowDialog("${kind.label} API key", busy, close) {
+        ExchangeKeyFields(kind, key, secret, !busy, { key = it }, { secret = it })
+        Text(exchangeKeyHelp(kind), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(enabled = ready && !busy, modifier = Modifier.fillMaxWidth().testTag("${kind.id}-key-save"), onClick = {
             busy = true
             error = null
             scope.launch {
                 try {
-                    val info = withContext(host.dispatcher) { host.bybitKeyInfo(key.trim(), secret.trim()) }
-                    val uid = withContext(host.dispatcher) { app.bybitTargets().firstOrNull { it.first == account }?.second }
+                    val info = withContext(host.dispatcher) { host.exchangeKeyInfo(kind, key.trim(), secret.trim()) }
+                    val uid = withContext(host.dispatcher) { app.exchangeTargets(kind).firstOrNull { it.first == account }?.second }
                     error =
-                        keyProblem(info) ?: if (info.uid != uid) "This key belongs to another Bybit account." else null
+                        keyProblem(info) ?: if (info.uid != uid) "This key belongs to another ${kind.label} account." else null
                     if (error == null) {
-                        withContext(host.dispatcher) { app.setBybitKey(account, key.trim(), secret.trim()) }
+                        withContext(host.dispatcher) { app.setExchangeKey(kind, account, key.trim(), secret.trim()) }
                         onSaved()
                     }
                 } catch (cancelled: CancellationException) {
@@ -333,13 +386,14 @@ private fun BybitKeyDialog(
                 }
             }
         }) { Text(if (busy) "Checking key…" else "Save key") }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("bybit-key-error")) }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("${kind.id}-key-error")) }
     }
 }
 
 /** Picks which CoinGecko coin an exchange symbol is, among the coins that carry the symbol, or none (null). */
 @Composable
 private fun CoinChoiceDialog(
+    kind: ExchangeKind,
     symbol: String,
     candidates: List<Pair<String, String>>,
     close: () -> Unit,
@@ -350,12 +404,40 @@ private fun CoinChoiceDialog(
             Text("No known coin uses the symbol $symbol. Once market data is allowed and loaded, the choices appear here.")
         }
         candidates.forEach { (id, name) ->
-            TextButton(onClick = { choose(id) }, modifier = Modifier.fillMaxWidth().testTag("bybit-coin-$id")) {
+            TextButton(onClick = { choose(id) }, modifier = Modifier.fillMaxWidth().testTag("${kind.id}-coin-$id")) {
                 Text("$name ($id)")
             }
         }
-        TextButton(onClick = { choose(null) }, modifier = Modifier.fillMaxWidth().testTag("bybit-coin-none")) {
+        TextButton(onClick = { choose(null) }, modifier = Modifier.fillMaxWidth().testTag("${kind.id}-coin-none")) {
             Text("None of these · count it without a price")
+        }
+    }
+}
+
+/** Adds a Binance trading pair to read, as its two coins (for example SOL and USDT for SOLUSDT). */
+@Composable
+private fun AddPairDialog(
+    close: () -> Unit,
+    add: (String, String) -> Unit,
+) {
+    var base by remember { mutableStateOf("") }
+    var quote by remember { mutableStateOf("") }
+    val symbol = Regex("[A-Za-z0-9]{1,20}")
+    val ready = base.trim().matches(symbol) && quote.trim().matches(symbol) && !base.trim().equals(quote.trim(), ignoreCase = true)
+    AccountFlowDialog("Add trading pair", false, close) {
+        Text("The coin you traded and the coin you paid or received, for example SOL and USDT.")
+        OutlinedTextField(base, {
+            base = it
+        }, singleLine = true, label = { Text("Coin") }, modifier = Modifier.fillMaxWidth().testTag("binance-pair-base"))
+        OutlinedTextField(quote, {
+            quote = it
+        }, singleLine = true, label = { Text("Paid or received in") }, modifier = Modifier.fillMaxWidth().testTag("binance-pair-quote"))
+        Button(
+            enabled = ready,
+            modifier = Modifier.fillMaxWidth().testTag("binance-pair-save"),
+            onClick = { add(base.trim(), quote.trim()) },
+        ) {
+            Text("Add pair")
         }
     }
 }

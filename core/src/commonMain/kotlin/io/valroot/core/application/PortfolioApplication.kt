@@ -356,8 +356,11 @@ private const val ONE_INCH_LISTING_MARGIN_MILLIS = 3_600_000L
 /** US dollars, the only currency DefiLlama quotes. */
 private val USD = AssetId("USD")
 
-/** Bybit API keys and secrets: letters and digits. */
-private val BYBIT_KEY = Regex("[A-Za-z0-9]{10,128}")
+/** An exchange coin symbol. */
+private val EXCHANGE_SYMBOL = Regex("[A-Z0-9]{1,20}")
+
+/** Exchange API keys and secrets: letters and digits. */
+private val EXCHANGE_KEY = Regex("[A-Za-z0-9]{10,128}")
 
 /** Currencies exchanges hold; each is an exchange currency asset worth one of the portfolio currency. */
 private val EXCHANGE_CURRENCIES = io.valroot.core.exchange.ExchangeAssets.CURRENCIES
@@ -1101,21 +1104,112 @@ class PortfolioApplication(
     }
 
     /** The coin symbols in an exchange account's saved records. */
-    fun exchangeRowSymbols(account: AccountId): Set<String> =
+    fun exchangeRowSymbols(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+    ): Set<String> {
+        val rows = exchangeSync.rows(account)
+        return when (kind) {
+            io.valroot.core.exchange.ExchangeKind.BINANCE ->
+                io.valroot.core.exchange.BinanceDecoder
+                    .coins(rows, binancePairs(account))
+            io.valroot.core.exchange.ExchangeKind.BYBIT ->
+                rows
+                    .flatMap { row ->
+                        val o =
+                            io.valroot.core.exchange.Bybit
+                                .row(row.payload)
+                        listOf(
+                            "currency",
+                            "coin",
+                            "fromCoin",
+                            "toCoin",
+                        ).mapNotNull { (o[it] as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                    }.filter { it.isNotBlank() }
+                    .toSet()
+        }
+    }
+
+    /** The Binance symbols an account's trades are read for, with their base and quote coins. */
+    fun binancePairs(account: AccountId): Map<String, Pair<String, String>> =
         exchangeSync
-            .rows(account)
-            .flatMap { row ->
-                val o =
-                    io.valroot.core.exchange.Bybit
-                        .row(row.payload)
-                listOf(
-                    "currency",
-                    "coin",
-                    "fromCoin",
-                    "toCoin",
-                ).mapNotNull { (o[it] as? kotlinx.serialization.json.JsonPrimitive)?.content }
-            }.filter { it.isNotBlank() }
-            .toSet()
+            .cursors(account)
+            .filterKeys {
+                it.startsWith(io.valroot.core.exchange.BinanceConnector.PAIR) ||
+                    it.startsWith(io.valroot.core.exchange.BinanceConnector.USER_PAIR)
+            }.mapNotNull { (key, value) ->
+                val coins = value.split('/')
+                if (coins.size != 2) {
+                    null
+                } else {
+                    key.substringAfter(':') to (coins[0] to coins[1])
+                }
+            }.toMap()
+
+    /** Adds a Binance symbol to read trades for, as its base and quote coins; read on the next refresh. */
+    fun addBinancePair(
+        account: AccountId,
+        base: String,
+        quote: String,
+    ) {
+        val b = base.trim().uppercase()
+        val q = quote.trim().uppercase()
+        require(b.matches(EXCHANGE_SYMBOL) && q.matches(EXCHANGE_SYMBOL) && b != q) { "Enter two coin symbols, such as BTC and USDT" }
+        exchangeSync.saveCursor(account, io.valroot.core.exchange.BinanceConnector.USER_PAIR + b + q, "$b/$q")
+    }
+
+    /**
+     * Derives a Binance account's activities again from every saved record and the current [balances] (each coin's
+     * total over every wallet), read at [atMillis]. [pairs] names each traded symbol's coins; [contracts] are Binance's
+     * token contracts for symbols not matched yet.
+     */
+    fun applyBinanceHistory(
+        account: AccountId,
+        uid: String,
+        balances: Map<String, ExactDecimal>,
+        atMillis: Long,
+        pairs: Map<String, Pair<String, String>>,
+        contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
+    ): io.valroot.core.exchange.ExchangeDecoded {
+        val kind = io.valroot.core.exchange.ExchangeKind.BINANCE
+        require(exchangeTargets(kind).any { it.first == account && it.second == uid }) { "Unknown Binance account" }
+        val rows = exchangeSync.rows(account)
+        val held = balances.filterValues { it.coefficient.sign != 0 }
+        val assets =
+            exchangeAssets(
+                kind.id,
+                io.valroot.core.exchange.BinanceDecoder
+                    .coins(rows, pairs) + held.keys,
+                contracts,
+            )
+        val snapshot = "binance-balances-1\n" + held.entries.sortedBy { it.key }.joinToString("\n") { "${it.key}|${it.value}" }
+        val decoded =
+            db.transaction {
+                val source = ingestExchangeRecord(kind, account, uid, "balances", snapshot, io.valroot.core.exchange.BinanceDecoder.VERSION)
+                val decoded =
+                    io.valroot.core.exchange.BinanceDecoder.decode(
+                        account,
+                        uid,
+                        rows,
+                        assets,
+                        pairs,
+                        io.valroot.core.exchange.BinanceDecoder
+                            .Balances(atMillis, held, source),
+                    ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
+                val historyFrom =
+                    exchangeSync
+                        .streams(account)
+                        .values
+                        .filter {
+                            it.stream == io.valroot.core.exchange.BinanceDecoder.DEPOSITS ||
+                                it.stream == io.valroot.core.exchange.BinanceDecoder.WITHDRAWALS
+                        }.minOfOrNull { it.fromMillis }
+                saveExchangeDecode(kind, account, uid, decoded, historyFrom, null)
+                decoded
+            }
+        invalidate()
+        return decoded
+    }
 
     /**
      * An exchange's symbols that have no coin yet, with the catalog coins that carry each symbol. Symbols no CoinGecko
@@ -2127,25 +2221,32 @@ class PortfolioApplication(
         coverage: String?,
     ) = evmChains.recordCoverage(address, chainId, coverage)
 
-    /** Enabled Bybit accounts with their Bybit user IDs. */
-    fun bybitTargets(): List<Pair<AccountId, String>> =
+    /** Enabled accounts of an exchange with their user IDs there. */
+    fun exchangeTargets(kind: io.valroot.core.exchange.ExchangeKind): List<Pair<AccountId, String>> =
         ownership
             .load()
             .targets
-            .filter { it.enabled && it.identity.networkId == io.valroot.core.exchange.BYBIT_NETWORK && it.identity.kind == "uid" }
+            .filter { it.enabled && it.identity.networkId == kind.network && it.identity.kind == "uid" }
             .map { it.accountId to it.identity.canonicalKey }
 
-    fun hasBybitKey(account: AccountId): Boolean = bybitKey(account) != null
+    fun hasExchangeKey(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+    ): Boolean = exchangeKey(kind, account) != null
 
-    /** A Bybit account's API key and secret; device settings, not part of backups. */
-    fun bybitKey(account: AccountId): Pair<String, String>? {
-        val key = marketFeeds.deviceSetting("bybit_key:${account.value}") ?: return null
-        val secret = marketFeeds.deviceSetting("bybit_secret:${account.value}") ?: return null
+    /** An exchange account's API key and secret; device settings, not part of backups. */
+    fun exchangeKey(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+    ): Pair<String, String>? {
+        val key = marketFeeds.deviceSetting("${kind.id}_key:${account.value}") ?: return null
+        val secret = marketFeeds.deviceSetting("${kind.id}_secret:${account.value}") ?: return null
         return key to secret
     }
 
-    /** Saves or (with null) removes a Bybit account's API key and secret on this device. */
-    fun setBybitKey(
+    /** Saves or (with null) removes an exchange account's API key and secret on this device. */
+    fun setExchangeKey(
+        kind: io.valroot.core.exchange.ExchangeKind,
         account: AccountId,
         key: String?,
         secret: String?,
@@ -2153,11 +2254,11 @@ class PortfolioApplication(
         val k = key?.trim()?.takeIf { it.isNotEmpty() }
         val s = secret?.trim()?.takeIf { it.isNotEmpty() }
         require((k == null) == (s == null)) { "Enter both the API key and its secret" }
-        require(k == null || k.matches(BYBIT_KEY)) { "That does not look like a Bybit API key" }
-        require(s == null || s.matches(BYBIT_KEY)) { "That does not look like a Bybit API secret" }
+        require(k == null || k.matches(EXCHANGE_KEY)) { "That does not look like a ${kind.label} API key" }
+        require(s == null || s.matches(EXCHANGE_KEY)) { "That does not look like a ${kind.label} API secret" }
         db.transaction {
-            marketFeeds.putDeviceSetting("bybit_key:${account.value}", k)
-            marketFeeds.putDeviceSetting("bybit_secret:${account.value}", s)
+            marketFeeds.putDeviceSetting("${kind.id}_key:${account.value}", k)
+            marketFeeds.putDeviceSetting("${kind.id}_secret:${account.value}", s)
         }
     }
 
@@ -2180,33 +2281,53 @@ class PortfolioApplication(
 
     /** Saves exchange records as received, each also as a raw provider record for provenance, in one transaction. */
     fun saveExchangeRows(
+        kind: io.valroot.core.exchange.ExchangeKind,
         account: AccountId,
         uid: String,
         rows: List<io.valroot.core.exchange.ExchangeRow>,
+        version: String,
     ) {
         if (rows.isEmpty()) return
-        val retrieved = Instant.fromEpochMilliseconds(now()).toString()
         db.transaction {
             rows.forEach { row ->
-                val source =
-                    store.ingestInTransaction(
-                        io.valroot.core.storage.RawObservation(
-                            "bybit:$uid:${row.stream}:${row.key}",
-                            "bybit:$uid",
-                            "${row.stream}:${row.key}",
-                            io.valroot.core.exchange.BYBIT_NETWORK.value,
-                            io.valroot.core.exchange.BYBIT_MANIFEST.id,
-                            retrieved,
-                            row.payload,
-                            io.valroot.core.exchange.BybitDecoder.VERSION,
-                            sha256(row.payload),
-                            "account=${account.value}",
-                        ),
-                    )
+                val source = ingestExchangeRecord(kind, account, uid, "${row.stream}:${row.key}", row.payload, version)
                 exchangeSync.saveRow(account, row.copy(source = source.value))
             }
         }
     }
+
+    /** One exchange record as a raw provider record, namespaced by exchange and user ID. */
+    private fun ingestExchangeRecord(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+        uid: String,
+        externalId: String,
+        payload: String,
+        version: String,
+    ): io.valroot.core.model.SourceRecordId =
+        store.ingestInTransaction(
+            io.valroot.core.storage.RawObservation(
+                "${kind.id}:$uid:$externalId",
+                "${kind.id}:$uid",
+                externalId,
+                kind.network.value,
+                "${kind.id}-api",
+                Instant.fromEpochMilliseconds(now()).toString(),
+                payload,
+                version,
+                sha256(payload),
+                "account=${account.value}",
+            ),
+        )
+
+    /** Small per-account progress values of an exchange sync. */
+    fun exchangeCursors(account: AccountId): Map<String, String> = exchangeSync.cursors(account)
+
+    fun saveExchangeCursor(
+        account: AccountId,
+        key: String,
+        value: String,
+    ) = exchangeSync.saveCursor(account, key, value)
 
     /** Forgets an exchange account's saved records, so the next refresh reads its history again. */
     fun forgetExchangeHistory(account: AccountId) = db.transaction { exchangeSync.forget(account) }
@@ -2235,11 +2356,13 @@ class PortfolioApplication(
         keyExpiresAtMillis: Long?,
         /** Bybit's token contracts for symbols not matched yet, so CoinGecko's contract map can name their coins. */
         contracts: Map<String, List<io.valroot.core.exchange.ExchangeContract>> = emptyMap(),
-    ): io.valroot.core.exchange.BybitDecoded {
-        require(bybitTargets().any { it.first == account && it.second == uid }) { "Unknown Bybit account" }
+    ): io.valroot.core.exchange.ExchangeDecoded {
+        require(exchangeTargets(io.valroot.core.exchange.ExchangeKind.BYBIT).any { it.first == account && it.second == uid }) {
+            "Unknown Bybit account"
+        }
         val rows = exchangeSync.rows(account)
         val held = balances.filter { it.amount.coefficient.sign != 0 }
-        val symbols = exchangeRowSymbols(account) + held.map { it.coin }
+        val symbols = exchangeRowSymbols(io.valroot.core.exchange.ExchangeKind.BYBIT, account) + held.map { it.coin }
         val assets = exchangeAssets(io.valroot.core.exchange.BYBIT_EXCHANGE, symbols, contracts)
         val snapshot =
             held
@@ -2249,19 +2372,13 @@ class PortfolioApplication(
         val decoded =
             db.transaction {
                 val source =
-                    store.ingestInTransaction(
-                        io.valroot.core.storage.RawObservation(
-                            "bybit:$uid:balances",
-                            "bybit:$uid",
-                            "balances",
-                            io.valroot.core.exchange.BYBIT_NETWORK.value,
-                            io.valroot.core.exchange.BYBIT_MANIFEST.id,
-                            Instant.fromEpochMilliseconds(now()).toString(),
-                            snapshot,
-                            io.valroot.core.exchange.BybitDecoder.VERSION,
-                            sha256(snapshot),
-                            "account=${account.value}",
-                        ),
+                    ingestExchangeRecord(
+                        io.valroot.core.exchange.ExchangeKind.BYBIT,
+                        account,
+                        uid,
+                        "balances",
+                        snapshot,
+                        io.valroot.core.exchange.BybitDecoder.VERSION,
                     )
                 val wallets = held.filter { it.accountType == "UNIFIED" || it.accountType == "FUND" }
                 val elsewhere = held - wallets.toSet()
@@ -2279,29 +2396,47 @@ class PortfolioApplication(
                         ),
                         coveredFrom,
                     ) { asset -> market.metadataAt(asset, Long.MAX_VALUE)?.decimals ?: io.valroot.core.exchange.ExchangeAssets.DECIMALS }
-                val wanted = decoded.activities.map { it.id }.toSet()
-                val prefix = "bybit:$uid:"
-                activities
-                    .current()
-                    .filter { it.id.value.startsWith(prefix) && it.id !in wanted && it.status == ActivityStatus.CONFIRMED }
-                    .forEach { activities.saveInTransaction(it.copy(status = ActivityStatus.SUPERSEDED)) }
-                decoded.activities.forEach { activity ->
-                    if (activities.currentById(activity.id) != activity) activities.saveInTransaction(activity)
-                }
-                exchangeSync.replaceTransfers(account, decoded.transfers)
-                exchangeSync.saveStatus(
+                saveExchangeDecode(
+                    io.valroot.core.exchange.ExchangeKind.BYBIT,
                     account,
-                    io.valroot.core.exchange.ExchangeAccountStatus(
-                        now(),
-                        decoded.failures.firstOrNull(),
-                        coveredFrom.values.minOrNull(),
-                        keyExpiresAtMillis,
-                    ),
+                    uid,
+                    decoded,
+                    coveredFrom.values.minOrNull(),
+                    keyExpiresAtMillis,
                 )
                 decoded
             }
         invalidate()
         return decoded
+    }
+
+    /**
+     * Saves an exchange account's derived activities in the caller's transaction: changed ones get a revision,
+     * activities no longer derived are superseded, and the account's transfers and status are replaced.
+     */
+    private fun saveExchangeDecode(
+        kind: io.valroot.core.exchange.ExchangeKind,
+        account: AccountId,
+        uid: String,
+        decoded: io.valroot.core.exchange.ExchangeDecoded,
+        historyFrom: Long?,
+        keyExpiresAtMillis: Long?,
+    ) {
+        val wanted = decoded.activities.map { it.id }.toSet()
+        val prefix = "${kind.id}:$uid:"
+        activities
+            .current()
+            .filter { it.id.value.startsWith(prefix) && it.id !in wanted && it.status == ActivityStatus.CONFIRMED }
+            .forEach { activities.saveInTransaction(it.copy(status = ActivityStatus.SUPERSEDED)) }
+        decoded.activities.forEach { activity ->
+            if (activities.currentById(activity.id) != activity) activities.saveInTransaction(activity)
+        }
+        exchangeSync.replaceTransfers(account, decoded.transfers)
+        exchangeSync.saveStatus(
+            account,
+            io.valroot.core.exchange
+                .ExchangeAccountStatus(now(), decoded.failures.firstOrNull(), historyFrom, keyExpiresAtMillis),
+        )
     }
 
     fun recordEvmChainError(
@@ -4286,9 +4421,11 @@ class PortfolioApplication(
                                 .evmAddress(value.identity.canonicalKey),
                     ),
             )
-        } else if (value.identity.networkId == io.valroot.core.exchange.BYBIT_NETWORK) {
+        } else if (io.valroot.core.exchange.ExchangeKind
+                .ofNetwork(value.identity.networkId) != null
+        ) {
             require(value.identity.kind == "uid" && value.role == TargetRole.LEAF && value.identity.canonicalKey.all(Char::isDigit)) {
-                "Track a Bybit account by its user ID"
+                "Track an exchange account by its user ID"
             }
             value
         } else if (value.identity.networkId == BITCOIN_MAINNET && value.identity.kind == "wallet") {

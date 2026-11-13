@@ -2,14 +2,10 @@ package io.valroot.core.exchange
 
 import io.valroot.core.ledger.Activity
 import io.valroot.core.ledger.ActivityKind
-import io.valroot.core.ledger.ActivityStatus
-import io.valroot.core.ledger.Movement
 import io.valroot.core.ledger.MovementRole
 import io.valroot.core.model.AccountId
 import io.valroot.core.model.ActivityId
 import io.valroot.core.model.AssetId
-import io.valroot.core.model.AtomicAmount
-import io.valroot.core.model.EventId
 import io.valroot.core.model.ExactDecimal
 import io.valroot.core.model.SourceRecordId
 
@@ -30,7 +26,7 @@ data class ExchangeTransfer(
     val txId: String,
 )
 
-data class BybitDecoded(
+data class ExchangeDecoded(
     val activities: List<Activity>,
     /** Activities that move coins on chain, by activity. */
     val transfers: Map<ActivityId, ExchangeTransfer>,
@@ -160,8 +156,8 @@ object BybitDecoder {
         coveredFrom: Map<String, Long> = emptyMap(),
         /** Decimals of each asset: 18 for exchange coins, 2 for currencies. */
         decimals: (AssetId) -> Int = { ExchangeAssets.DECIMALS },
-    ): BybitDecoded {
-        val context = Context(account, uid, assets, decimals)
+    ): ExchangeDecoded {
+        val context = ExchangeLedgerBuilder(ExchangeKind.BYBIT, account, uid, assets, decimals, VERSION)
         val byStream = rows.groupBy { it.stream }
         val logs = byStream[LOG].orEmpty().map { Bybit.logEntry(Bybit.row(it.payload)) to SourceRecordId(it.source) }
         val funding = byStream[FUNDING].orEmpty().map { Bybit.fundingEntry(Bybit.row(it.payload)) to SourceRecordId(it.source) }
@@ -173,7 +169,7 @@ object BybitDecoder {
         decodeLog(context, logs, paired)
         decodeFunding(context, funding, deposits, withdrawals, converts, paired)
         if (balances != null) settle(context, logs, funding, balances, coveredFrom, rows.maxOfOrNull { it.atMillis })
-        return BybitDecoded(context.activities.sortedBy { it.orderingKey }, context.transfers, context.unresolved, context.failures)
+        return context.result()
     }
 
     /**
@@ -202,7 +198,7 @@ object BybitDecoder {
     }
 
     private fun decodeLog(
-        context: Context,
+        context: ExchangeLedgerBuilder,
         logs: List<Pair<BybitLogEntry, SourceRecordId>>,
         paired: Set<String>,
     ) {
@@ -244,7 +240,7 @@ object BybitDecoder {
     }
 
     private fun decodeFunding(
-        context: Context,
+        context: ExchangeLedgerBuilder,
         funding: List<Pair<BybitFundingEntry, SourceRecordId>>,
         deposits: List<Pair<BybitDeposit, SourceRecordId>>,
         withdrawals: List<Pair<BybitWithdrawal, SourceRecordId>>,
@@ -338,7 +334,7 @@ object BybitDecoder {
     }
 
     private fun single(
-        context: Context,
+        context: ExchangeLedgerBuilder,
         entry: BybitFundingEntry,
         source: SourceRecordId,
         kind: ActivityKind?,
@@ -350,7 +346,7 @@ object BybitDecoder {
     }
 
     private fun settle(
-        context: Context,
+        context: ExchangeLedgerBuilder,
         logs: List<Pair<BybitLogEntry, SourceRecordId>>,
         funding: List<Pair<BybitFundingEntry, SourceRecordId>>,
         balances: BybitBalances,
@@ -376,7 +372,7 @@ object BybitDecoder {
         balances.wallets.forEach { (key, amount) -> held[key.second] = (held[key.second] ?: ZERO) + amount }
         balances.elsewhere.forEach { (coin, amount) -> held[coin] = (held[coin] ?: ZERO) + amount }
         val recorded = mutableMapOf<String, ExactDecimal>()
-        context.decimals.forEach { (coin, amount) -> recorded[coin] = amount }
+        context.totals.forEach { (coin, amount) -> recorded[coin] = amount }
         (held.keys + recorded.keys).forEach { coin ->
             if (coin in context.unresolved) return@forEach
             val rest = (held[coin] ?: ZERO) - (recorded[coin] ?: ZERO)
@@ -391,101 +387,4 @@ object BybitDecoder {
     private fun negate(value: ExactDecimal) = ExactDecimal(-value.coefficient, value.scale)
 
     private val ZERO = ExactDecimal.parse("0")
-
-    /** Collects the activities of one decode, with each coin's recorded total for the remainder. */
-    private class Context(
-        val account: AccountId,
-        val uid: String,
-        val assets: Map<String, AssetId>,
-        val decimalsOf: (AssetId) -> Int,
-    ) {
-        val activities = mutableListOf<Activity>()
-        val transfers = mutableMapOf<ActivityId, ExchangeTransfer>()
-        val unresolved = mutableSetOf<String>()
-        val failures = mutableListOf<String>()
-        val decimals = mutableMapOf<String, ExactDecimal>()
-
-        /** Builds one activity from [block]'s movements; returns null when it moved nothing or could not be built. */
-        fun build(
-            key: String,
-            atMillis: Long,
-            sources: Set<SourceRecordId>,
-            block: Movements.() -> ActivityKind?,
-        ): ActivityId? {
-            val movements = Movements()
-            val chosen = movements.block()
-            val missing = movements.items.map { it.first }.filter { it !in assets }
-            if (missing.isNotEmpty()) {
-                unresolved += missing
-                return null
-            }
-            val id = ActivityId("bybit:$uid:$key")
-            val built =
-                try {
-                    movements.items.filter { it.second.coefficient.sign != 0 }.mapIndexed { index, (coin, amount, role) ->
-                        Movement(
-                            EventId("${id.value}:$index"),
-                            account,
-                            assets.getValue(coin).let { AtomicAmount.fromDecimal(it, amount, decimalsOf(it)) },
-                            role,
-                        )
-                    }
-                } catch (_: IllegalArgumentException) {
-                    failures += "An amount in Bybit record $key is finer than its coin's decimals"
-                    return null
-                }
-            if (built.isEmpty()) return null
-            movements.items.forEach { (coin, amount, _) -> decimals[coin] = (decimals[coin] ?: ZERO) + amount }
-            val legs = built.filter { it.role == MovementRole.TRADE_LEG }
-            val kind =
-                chosen ?: when {
-                    legs.any { it.amount.atomicUnits.sign < 0 } &&
-                        legs.any { it.amount.atomicUnits.sign > 0 } &&
-                        legs.map { it.amount.assetId }.distinct().size > 1 -> ActivityKind.TRADE
-                    else -> ActivityKind.OTHER
-                }
-            val final =
-                if (kind == ActivityKind.TRADE || legs.isEmpty()) {
-                    built
-                } else {
-                    built.map { if (it.role == MovementRole.TRADE_LEG) it.copy(role = MovementRole.TRANSFER) else it }
-                }
-            activities +=
-                Activity(
-                    id,
-                    atMillis,
-                    "bybit:${atMillis.toString().padStart(20, '0')}:$key",
-                    kind,
-                    ActivityStatus.CONFIRMED,
-                    final,
-                    sources,
-                    VERSION,
-                )
-            return id
-        }
-    }
-
-    /** Movements of one activity under construction, as coin, signed amount and role. */
-    private class Movements {
-        val items = mutableListOf<Triple<String, ExactDecimal, MovementRole>>()
-
-        fun add(
-            coin: String,
-            amount: ExactDecimal,
-            role: MovementRole,
-        ) {
-            items += Triple(coin, amount, role)
-        }
-
-        /** A paid fee (positive) is a fee movement; a rebate (negative fee) is a reward. */
-        fun fee(
-            coin: String,
-            fee: ExactDecimal,
-        ) {
-            when {
-                fee.coefficient.sign > 0 -> add(coin, ExactDecimal(-fee.coefficient, fee.scale), MovementRole.FEE)
-                fee.coefficient.sign < 0 -> add(coin, ExactDecimal(-fee.coefficient, fee.scale), MovementRole.REWARD)
-            }
-        }
-    }
 }

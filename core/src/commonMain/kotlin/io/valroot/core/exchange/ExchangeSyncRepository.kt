@@ -53,6 +53,9 @@ class ExchangeSyncRepository(
                 "at INTEGER NOT NULL, payload TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY(account, stream, key))",
         )
         db.execute(
+            "CREATE TABLE IF NOT EXISTS exchange_cursors (account TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(account, key))",
+        )
+        db.execute(
             "CREATE TABLE IF NOT EXISTS exchange_transfers (activity_id TEXT PRIMARY KEY, account TEXT NOT NULL, chain TEXT NOT NULL, " +
                 "tx_id TEXT NOT NULL)",
         )
@@ -142,10 +145,21 @@ class ExchangeSyncRepository(
         }
     }
 
+    /** Small per-account progress values, such as the next trade ID of each Binance symbol. */
+    fun cursors(account: AccountId): Map<String, String> =
+        db.query("SELECT key, value FROM exchange_cursors WHERE account=?", listOf(account.value)).associate { it[0]!! to it[1]!! }
+
+    fun saveCursor(
+        account: AccountId,
+        key: String,
+        value: String,
+    ) = db.execute("INSERT OR REPLACE INTO exchange_cursors VALUES (?, ?, ?)", listOf(account.value, key, value))
+
     /** Forgets an account's history, so the next refresh reads it again from the exchange. */
     fun forget(account: AccountId) {
         db.execute("DELETE FROM exchange_sync WHERE account=?", listOf(account.value))
         db.execute("DELETE FROM exchange_rows WHERE account=?", listOf(account.value))
         db.execute("DELETE FROM exchange_transfers WHERE account=?", listOf(account.value))
+        db.execute("DELETE FROM exchange_cursors WHERE account=? AND key NOT LIKE 'userpair:%'", listOf(account.value))
     }
 }

@@ -12,7 +12,7 @@ import io.valroot.core.model.NetworkId
 import io.valroot.core.sync.JobState
 
 /** Bybit accounts are tracked by their user ID on this network. */
-val BYBIT_NETWORK = NetworkId("bybit")
+val BYBIT_NETWORK: NetworkId = ExchangeKind.BYBIT.network
 
 const val BYBIT_EXCHANGE = "bybit"
 
@@ -58,8 +58,8 @@ class BybitConnector(
     ): SourceRefreshOutcome {
         val jobs = mutableListOf<JobState>()
         val notes = mutableListOf<String>()
-        app.bybitTargets().forEach { (account, uid) ->
-            if (!app.hasBybitKey(account)) {
+        app.exchangeTargets(ExchangeKind.BYBIT).forEach { (account, uid) ->
+            if (!app.hasExchangeKey(ExchangeKind.BYBIT, account)) {
                 notes += "A Bybit account needs its API key again"
                 return@forEach
             }
@@ -153,7 +153,7 @@ class BybitConnector(
         readConverts(app, account, uid, budget)
         // Symbols not matched to a coin yet: Bybit's token contracts let CoinGecko's contract map name the coin.
         val held = balances.filter { it.amount.coefficient.sign != 0 }.map { it.coin }
-        val unmatched = app.unmatchedExchangeSymbols(BYBIT_EXCHANGE, app.exchangeRowSymbols(account) + held)
+        val unmatched = app.unmatchedExchangeSymbols(BYBIT_EXCHANGE, app.exchangeRowSymbols(ExchangeKind.BYBIT, account) + held)
         val contracts = mutableMapOf<String, List<ExchangeContract>>()
         unmatched.sorted().take(MAX_COIN_LOOKUPS).forEach { symbol ->
             if (budget.left > 0) contracts += Bybit.parseCoinContracts(budget.send(Bybit.coin(symbol)))
@@ -214,7 +214,7 @@ class BybitConnector(
             count += page.size
             cursor = next.takeIf { page.isNotEmpty() && it != cursor }
         } while (cursor != null)
-        app.saveExchangeRows(account, uid, rows)
+        app.saveExchangeRows(ExchangeKind.BYBIT, account, uid, rows, BybitDecoder.VERSION)
         return count
     }
 
@@ -229,7 +229,15 @@ class BybitConnector(
         var page = 1
         while (page <= MAX_CONVERT_PAGES && budget.left > 0) {
             val converts = Bybit.parseConverts(budget.send(Bybit.converts(page)))
-            app.saveExchangeRows(account, uid, converts.map { ExchangeRow(BybitDecoder.CONVERTS, it.id, it.atMillis, it.raw, "") })
+            app.saveExchangeRows(
+                ExchangeKind.BYBIT,
+                account,
+                uid,
+                converts.map {
+                    ExchangeRow(BybitDecoder.CONVERTS, it.id, it.atMillis, it.raw, "")
+                },
+                BybitDecoder.VERSION,
+            )
             if (converts.size < CONVERT_PAGE || converts.all { it.id in known }) return
             page++
         }
